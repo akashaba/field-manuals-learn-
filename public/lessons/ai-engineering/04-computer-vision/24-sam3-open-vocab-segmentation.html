@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SAM 3 &amp; Open-Vocabulary Segmentation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/24-sam3-open-vocab-segmentation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">SAM 3 &amp; Open-Vocabulary Segmentation</h1>
+    <p class="lesson-sub">Give a model a text prompt and an image and get masks for every matching object. SAM 3 made that a single forward pass.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Use + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 07 (U-Net), Phase 4 Lesson 08 (Mask R-CNN), Phase 4 Lesson 18 (CLIP)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 24">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.5,77.4 L66.2,51.0 L83.8,77.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.7" y="44.9" width="34.0" height="34.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(243 60.7 61.9)"/>
+        <rect x="39.0" y="40.6" width="32.7" height="32.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(225 55.3 57.0)"/>
+        <rect x="34.2" y="36.4" width="31.4" height="31.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(208 49.9 52.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">24</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">SAM 3 &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Open-Vocabulary…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish SAM (visual prompts only), Grounded SAM / SAM 2 (detector + SAM), and SAM 3 (native text prompts via Promptable Concept Segmentation)</li>
+<li>Explain the SAM 3 architecture: shared backbone + image detector + memory-based video tracker + presence head + decoupled detector-tracker design</li>
+<li>Use Hugging Face <code>transformers</code> SAM 3 integration for text-prompted detection, segmentation, and video tracking</li>
+<li>Pick between SAM 3, Grounded SAM 2, YOLO-World, and SAM-MI based on latency, concept complexity, and deployment target</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The 2023 SAM was a visual-prompt-only model: you click a point or draw a box and it returns a mask. For &quot;give me all the oranges in this photo&quot; you needed a detector (Grounding DINO) to produce boxes, then SAM to segment each. Grounded SAM turned this into a pipeline, but it was a cascade of two frozen models with inevitable error accumulation.</p>
+<p>SAM 3 (Meta, Nov 2025, ICLR 2026) collapsed the cascade. It accepts a short noun phrase or an image exemplar as prompt and returns all matching masks and instance IDs in a single forward pass. That is <strong>Promptable Concept Segmentation (PCS)</strong>. Combined with the March 2026 Object Multiplex update (SAM 3.1), it tracks multiple instances of the same concept through video efficiently.</p>
+<p>This lesson is about the structural shift this represents. 2D seg, detection, and text-image grounding have merged into one model. The production question is no longer &quot;which pipeline do I chain together&quot; but &quot;which promptable model handles my use case end-to-end.&quot;</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-three-generations"><a class="anchor" href="#the-three-generations">#</a> The three generations</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph SAM1[&quot;SAM (2023)&quot;]
+        A1[&quot;Image + point/box prompt&quot;] --&gt; A2[&quot;ViT encoder&quot;] --&gt; A3[&quot;Mask decoder&quot;]
+        A3 --&gt; A4[&quot;Mask for that prompt&quot;]
+    end
+    subgraph GSAM2[&quot;Grounded SAM 2 (2024)&quot;]
+        B1[&quot;Text&quot;] --&gt; B2[&quot;Grounding DINO&quot;] --&gt; B3[&quot;Boxes&quot;] --&gt; B4[&quot;SAM 2&quot;] --&gt; B5[&quot;Masks + tracking&quot;]
+        B6[&quot;Image&quot;] --&gt; B2
+        B6 --&gt; B4
+    end
+    subgraph SAM3[&quot;SAM 3 (2025)&quot;]
+        C1[&quot;Text OR image exemplar&quot;] --&gt; C2[&quot;Shared backbone&quot;]
+        C3[&quot;Image&quot;] --&gt; C2
+        C2 --&gt; C4[&quot;Image detector + memory tracker&lt;br/&gt;+ presence head&quot;]
+        C4 --&gt; C5[&quot;All matching masks&lt;br/&gt;+ instance IDs&quot;]
+    end
+
+    style SAM1 fill:#e5e7eb,stroke:#6b7280
+    style GSAM2 fill:#fef3c7,stroke:#d97706
+    style SAM3 fill:#dcfce7,stroke:#16a34a</pre></div><h3 id="promptable-concept-segmentation"><a class="anchor" href="#promptable-concept-segmentation">#</a> Promptable Concept Segmentation</h3>
+<p>A &quot;concept prompt&quot; is a short noun phrase (<code>&quot;yellow school bus&quot;</code>, <code>&quot;striped red umbrella&quot;</code>, <code>&quot;hand holding a mug&quot;</code>) or an image exemplar. The model returns segmentation masks for every instance in the image that matches the concept, plus a unique instance ID per match.</p>
+<p>This differs from classic visual-prompt SAM in three ways:</p>
+<ol>
+<li>No per-instance prompting required — one text prompt returns all matches.</li>
+<li>Open-vocabulary — the concept can be anything describable in natural language.</li>
+<li>Returns multiple instances at once rather than one mask per prompt.</li>
+</ol>
+<h3 id="key-architectural-pieces"><a class="anchor" href="#key-architectural-pieces">#</a> Key architectural pieces</h3>
+<ul>
+<li><strong>Shared backbone</strong> — a single ViT processes the image. Both the detector head and the memory-based tracker read from it.</li>
+<li><strong>Presence head</strong> — predicts whether the concept is present in the image at all. Decouples &quot;is this here?&quot; from &quot;where is it?&quot;. Reduces false positives on absent concepts.</li>
+<li><strong>Decoupled detector-tracker</strong> — image-level detection and video-level tracking have separate heads so they do not interfere.</li>
+<li><strong>Memory bank</strong> — stores per-instance features across frames for video tracking (same mechanism SAM 2 used).</li>
+</ul>
+<h3 id="training-at-scale"><a class="anchor" href="#training-at-scale">#</a> Training at scale</h3>
+<p>SAM 3 was trained on <strong>4 million unique concepts</strong> generated by a data engine that iteratively annotates and corrects using AI + human review. The new <strong>SA-CO benchmark</strong> contains 270K unique concepts, 50x larger than prior benchmarks. SAM 3 reaches 75-80% of human performance on SA-CO and doubles existing systems on image + video PCS.</p>
+<h3 id="sam-31-object-multiplex"><a class="anchor" href="#sam-31-object-multiplex">#</a> SAM 3.1 Object Multiplex</h3>
+<p>March 2026 update: <strong>Object Multiplex</strong> introduces a shared-memory mechanism for joint tracking of many instances of the same concept at once. Previously, tracking N instances meant N separate memory banks. Multiplex collapses that into one shared memory with per-instance queries. Result: substantially faster multi-object tracking without sacrificing accuracy.</p>
+<h3 id="where-grounded-sam-still-matters-in-2026"><a class="anchor" href="#where-grounded-sam-still-matters-in-2026">#</a> Where Grounded SAM still matters in 2026</h3>
+<ul>
+<li>When you need a specific open-vocabulary detector swapped in (DINO-X, Florence-2).</li>
+<li>When the SAM 3 license (gated on HF) is a blocker.</li>
+<li>When you need more control over the detector threshold than SAM 3 exposes.</li>
+<li>For research / ablation work on the detector component.</li>
+</ul>
+<p>Modular pipelines still have a place. For most production work, SAM 3 is the simpler answer.</p>
+<h3 id="yolo-world-vs-sam-3"><a class="anchor" href="#yolo-world-vs-sam-3">#</a> YOLO-World vs SAM 3</h3>
+<ul>
+<li><strong>YOLO-World</strong> — open-vocabulary detector only (no masks). Real-time. Best when you need boxes at high fps.</li>
+<li><strong>SAM 3</strong> — full segmentation + tracking. Slower but richer output.</li>
+</ul>
+<p>Production split: YOLO-World for fast detection-only pipelines (robotics navigation, fast dashboards), SAM 3 for anything that needs masks or tracking.</p>
+<h3 id="sam-mi-efficiency"><a class="anchor" href="#sam-mi-efficiency">#</a> SAM-MI efficiency</h3>
+<p>SAM-MI (2025-2026) addresses SAM&#39;s decoder bottleneck. Key ideas:</p>
+<ul>
+<li><strong>Sparse point prompting</strong> — uses a few well-chosen points instead of dense prompts; reduces decoder calls by 96%.</li>
+<li><strong>Shallow mask aggregation</strong> — merges rough mask predictions into one sharper mask.</li>
+<li><strong>Decoupled mask injection</strong> — decoder receives pre-computed mask features instead of re-running.</li>
+</ul>
+<p>Result: ~1.6× speedup over Grounded-SAM on open-vocabulary benchmarks.</p>
+<h3 id="output-format-for-the-three-models"><a class="anchor" href="#output-format-for-the-three-models">#</a> Output format for the three models</h3>
+<p>All return the same general structure (boxes + labels + scores + masks + IDs), which is helpful — your pipeline downstream does not have to branch on which model ran.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-open-vocab</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-prompt-construction"><a class="anchor" href="#step-1-prompt-construction">#</a> Step 1: Prompt construction</h3>
+<p>Build a helper that turns a user sentence into a list of SAM 3 concept prompts. This is the boundary where &quot;what the user typed&quot; meets &quot;what the model consumes&quot;.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def split_concepts(sentence):
+    &quot;&quot;&quot;
+    Heuristic splitter for multi-concept prompts.
+    Returns list of short noun phrases.
+    &quot;&quot;&quot;
+    for sep in [&quot;,&quot;, &quot;;&quot;, &quot;and&quot;, &quot;or&quot;, &quot;&amp;&quot;]:
+        if sep in sentence:
+            parts = [p.strip() for p in sentence.replace(&quot;and &quot;, &quot;,&quot;).split(&quot;,&quot;)]
+            return [p for p in parts if p]
+    return [sentence.strip()]
+
+print(split_concepts(&quot;cats, dogs and balloons&quot;))</code></pre>
+      </div>
+    <p>SAM 3 accepts one concept per forward pass; for multi-concept queries, loop or batch them.</p>
+<h3 id="step-2-post-processing-helpers"><a class="anchor" href="#step-2-post-processing-helpers">#</a> Step 2: Post-processing helpers</h3>
+<p>Turn SAM 3&#39;s raw outputs into a clean list of detections that match our Phase 4 Lesson 16 pipeline contract.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class ConceptDetection:
+    concept: str
+    instance_id: int
+    box: tuple          # (x1, y1, x2, y2)
+    score: float
+    mask_rle: str       # run-length encoded
+
+
+def rle_encode(binary_mask):
+    flat = binary_mask.flatten().astype(&quot;uint8&quot;)
+    runs = []
+    prev, count = flat[0], 0
+    for v in flat:
+        if v == prev:
+            count += 1
+        else:
+            runs.append((int(prev), count))
+            prev, count = v, 1
+    runs.append((int(prev), count))
+    return &quot;;&quot;.join(f&quot;{v}x{c}&quot; for v, c in runs)</code></pre>
+      </div>
+    <p>RLE keeps response payloads small even for many high-resolution masks. The same format works across SAM 2, SAM 3, Grounded SAM 2.</p>
+<h3 id="step-3-a-unified-open-vocab-segmentation-interface"><a class="anchor" href="#step-3-a-unified-open-vocab-segmentation-interface">#</a> Step 3: A unified open-vocab segmentation interface</h3>
+<p>Wrap whatever backend you have (SAM 3, Grounded SAM 2, YOLO-World + SAM 2) behind a single method. Your downstream code does not change when the backend does.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from abc import ABC, abstractmethod
+import numpy as np
+
+class OpenVocabSeg(ABC):
+    @abstractmethod
+    def detect(self, image: np.ndarray, concept: str) -&gt; List[ConceptDetection]:
+        ...
+
+
+class StubOpenVocabSeg(OpenVocabSeg):
+    &quot;&quot;&quot;
+    Deterministic stub used for pipeline testing when real models are not loaded.
+    &quot;&quot;&quot;
+    def detect(self, image, concept):
+        h, w = image.shape[:2]
+        return [
+            ConceptDetection(
+                concept=concept,
+                instance_id=0,
+                box=(w * 0.2, h * 0.3, w * 0.5, h * 0.8),
+                score=0.89,
+                mask_rle=&quot;0x100;1x50;0x200&quot;,
+            ),
+            ConceptDetection(
+                concept=concept,
+                instance_id=1,
+                box=(w * 0.55, h * 0.25, w * 0.85, h * 0.75),
+                score=0.74,
+                mask_rle=&quot;0x80;1x40;0x220&quot;,
+            ),
+        ]</code></pre>
+      </div>
+    <p>The real <code>SAM3OpenVocabSeg</code> subclass would wrap <code>transformers.Sam3Model</code> and <code>Sam3Processor</code>.</p>
+<h3 id="step-4-hugging-face-sam-3-usage-reference"><a class="anchor" href="#step-4-hugging-face-sam-3-usage-reference">#</a> Step 4: Hugging Face SAM 3 usage (reference)</h3>
+<p>For the actual model, the <code>transformers</code> integration:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import Sam3Processor, Sam3Model
+import torch
+
+processor = Sam3Processor.from_pretrained(&quot;facebook/sam3&quot;)
+model = Sam3Model.from_pretrained(&quot;facebook/sam3&quot;).eval()
+
+inputs = processor(images=pil_image, return_tensors=&quot;pt&quot;)
+inputs = processor.set_text_prompt(inputs, &quot;yellow school bus&quot;)
+
+with torch.no_grad():
+    outputs = model(**inputs)
+
+masks = processor.post_process_masks(
+    outputs.masks, inputs.original_sizes, inputs.reshaped_input_sizes
+)
+boxes = outputs.boxes
+scores = outputs.scores</code></pre>
+      </div>
+    <p>One prompt, all matches returned in a single call.</p>
+<h3 id="step-5-measure-what-grounded-sam-2-gave-you-for-free"><a class="anchor" href="#step-5-measure-what-grounded-sam-2-gave-you-for-free">#</a> Step 5: Measure what Grounded SAM 2 gave you for free</h3>
+<p>An honest benchmark: what happens when you replace Grounded SAM 2 with SAM 3 in a real pipeline?</p>
+<ul>
+<li>Latency: SAM 3 saves one forward pass (no separate detector) but the model itself is heavier; usually net-neutral or a slight speedup.</li>
+<li>Accuracy: SAM 3 substantially better on rare or compositional concepts (&quot;striped red umbrella&quot;). Similar on common single-word concepts.</li>
+<li>Flexibility: Grounded SAM 2 lets you swap detectors (DINO-X, Florence-2, Grounding DINO 1.5); SAM 3 is monolithic.</li>
+</ul>
+<p>Conclusion: SAM 3 is the default for 2026 open-vocab seg. Grounded SAM 2 is still the right answer when you need detector flexibility or different license terms.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production deployment patterns:</p>
+<ul>
+<li><strong>Real-time annotation</strong> — SAM 3 + CVAT&#39;s label-as-text-prompt feature. Annotators select a label name; SAM 3 pre-labels every matching instance. Review and correct.</li>
+<li><strong>Video analytics</strong> — SAM 3.1 Object Multiplex for multi-object tracking; feed frames to the memory-based tracker.</li>
+<li><strong>Robotics</strong> — SAM 3 for open-vocab manipulation (&quot;pick up the red cup&quot;); runs as a planning primitive.</li>
+<li><strong>Medical imaging</strong> — SAM 3 fine-tuned on medical concepts; requires access request on HF.</li>
+</ul>
+<p>Ultralytics wraps SAM 3 in its Python package:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from ultralytics import SAM
+
+model = SAM(&quot;sam3.pt&quot;)
+results = model(image_path, prompts=&quot;yellow school bus&quot;)</code></pre>
+      </div>
+    <p>Same interface as YOLO and SAM 2.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-open-vocab-stack-picker.md</code> — a prompt that picks SAM 3 / Grounded SAM 2 / YOLO-World / SAM-MI based on latency, concept complexity, and licensing.</li>
+<li><code>outputs/skill-concept-prompt-designer.md</code> — a skill that turns user utterances into well-formed SAM 3 concept prompts (splitting, disambiguation, fallbacks).</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run SAM 3 on 10 images with concept prompts you choose. Compare against SAM 2 + Grounding DINO 1.5 on the same images. Report which concepts each model missed.</li>
+<li><strong>(Medium)</strong> Build a &quot;click-to-include / click-to-exclude&quot; UI on top of SAM 3: a text prompt returns candidate instances; user clicks keep which ones count as positive. Output the final concept set as JSON.</li>
+<li><strong>(Hard)</strong> Fine-tune SAM 3 on a custom concept set (e.g. 5 types of electronic components) with 20 labelled images each. Compare to zero-shot SAM 3 on the same test set; measure mask IoU improvement.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Open-vocabulary segmentation</td>
+<td>&quot;Segment by text&quot;</td>
+<td>Produce masks for objects described in natural language, not a fixed label set</td>
+</tr>
+<tr>
+<td>PCS</td>
+<td>&quot;Promptable Concept Segmentation&quot;</td>
+<td>SAM 3&#39;s core task — given a noun-phrase or image exemplar, segment all matching instances</td>
+</tr>
+<tr>
+<td>Concept prompt</td>
+<td>&quot;The text input&quot;</td>
+<td>Short noun phrase or image exemplar; not a full sentence</td>
+</tr>
+<tr>
+<td>Presence head</td>
+<td>&quot;Is it here?&quot;</td>
+<td>SAM 3 module that decides whether the concept exists in the image before localisation</td>
+</tr>
+<tr>
+<td>SA-CO</td>
+<td>&quot;SAM 3 benchmark&quot;</td>
+<td>270K-concept open-vocabulary segmentation benchmark; 50x larger than prior open-vocab benchmarks</td>
+</tr>
+<tr>
+<td>Object Multiplex</td>
+<td>&quot;SAM 3.1 update&quot;</td>
+<td>Shared-memory multi-object tracking; fast joint tracking of many instances</td>
+</tr>
+<tr>
+<td>Grounded SAM 2</td>
+<td>&quot;Modular pipeline&quot;</td>
+<td>Detector + SAM 2 cascade; still relevant when detector swap matters</td>
+</tr>
+<tr>
+<td>SAM-MI</td>
+<td>&quot;Efficient SAM variant&quot;</td>
+<td>Mask Injection for 1.6x speedup over Grounded-SAM</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2511.16719">SAM 3: Segment Anything with Concepts (arXiv 2511.16719)</a></li>
+<li><a href="https://ai.meta.com/blog/segment-anything-model-3/">SAM 3.1 Object Multiplex (Meta AI, March 2026)</a></li>
+<li><a href="https://huggingface.co/facebook/sam3">SAM 3 model page on Hugging Face</a></li>
+<li><a href="https://pyimagesearch.com/2026/01/19/grounded-sam-2-from-open-set-detection-to-segmentation-and-tracking/">Grounded SAM 2 tutorial (PyImageSearch)</a></li>
+<li><a href="https://docs.ultralytics.com/models/sam-3/">Ultralytics SAM 3 docs</a></li>
+<li><a href="https://arxiv.org/abs/2512.04585">SAM3-I: Instruction-aware SAM (arXiv 2512.04585)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./23-diffusion-transformers-rectified-flow.html"><span>← Previous</span><b>diffusion transformers rectified flow</b></a>
+      <a class="next" href="./25-vision-language-models.html"><span>Next →</span><b>vision language models</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

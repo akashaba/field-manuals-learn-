@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loading Pretrained Weights — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/37-loading-pretrained-weights/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#stack">Stack</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Loading Pretrained Weights</h1>
+    <p class="lesson-sub">Training a 124 million parameter model from scratch is a budget decision; loading a published checkpoint is a Tuesday. This lesson loads pretrained GPT-2 style weights from a safetensors file into the exact architecture from lesson 35, walks the parameter name mapping piece by piece, and sanity generates a continuation to prove the load worked. No network, no third party loaders, no opaque magic.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30 to 36</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 37">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="43.2" y="44.5" width="33.9" height="33.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(241 60.2 61.4)"/>
+        <rect x="38.5" y="40.2" width="32.6" height="32.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(223 54.8 56.5)"/>
+        <rect x="33.7" y="35.9" width="31.3" height="31.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(206 49.3 51.6)"/>
+        <rect x="28.9" y="31.6" width="30.0" height="30.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(188 43.9 46.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">37</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Loading Pretrained</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Weights</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Read a safetensors file with the <code>safetensors</code> Python library and inspect the tensor names and shapes.</li>
+<li>Map each pretrained parameter name onto a parameter inside the lesson 35 GPT model.</li>
+<li>Handle the two name conventions that differ between published GPT-2 weights and the model in this track: <code>wte/wpe/h.N.attn.c_attn/c_proj</code> and <code>mlp.c_fc/c_proj</code> versus the locally named <code>tok_embed/pos_embed/blocks.N.attn.qkv/out_proj</code> and <code>mlp.fc1/fc2</code>.</li>
+<li>Detect and refuse a shape mismatch with a clear error before any weight assignment happens.</li>
+<li>Generate a short continuation with the loaded weights and confirm the tokens come from the loaded distribution, not the randomly initialized one.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Published weights are not packaged for your architecture. They carry the names the original implementation used. The pretrained file has <code>transformer.h.0.attn.c_attn.weight</code> of shape <code>(2304, 768)</code>; your model expects <code>blocks.0.attn.qkv.weight</code> of shape <code>(2304, 768)</code> (which is the same matrix in a different layout convention) or your model uses <code>nn.Linear</code> which stores the matrix transposed. The same parameter shows up with three subtly different identities (name, shape, byte layout) and the loader has to reconcile all three.</p>
+<p>A loader that copies blindly puts the right tensor in the wrong place and you get a model that generates nonsense. A loader that refuses to copy when the shape differs but logs nothing leaves you guessing which tensor failed to land. The loader in this lesson is explicit: every assignment is logged, every shape is checked, and a <code>LoadReport</code> summarizes hits, misses, and shape mismatches so you can read what happened.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  SF[safetensors file&lt;br/&gt;gpt2-stub.safetensors] --&gt; R[Reader&lt;br/&gt;safe_open]
+  R --&gt; N[Parameter name iterator]
+  N --&gt; M[Name mapper&lt;br/&gt;pretrained -&gt; local]
+  M --&gt; S[Shape check]
+  S -- match --&gt; A[Assign tensor&lt;br/&gt;under torch.no_grad]
+  S -- mismatch --&gt; E[Log mismatch&lt;br/&gt;do not assign]
+  A --&gt; RP[LoadReport]
+  E --&gt; RP
+  RP --&gt; G[generate&lt;br/&gt;sanity sample]</pre></div><p>The name mapper is just a function from string to string. The shape check is one if. The assignment happens inside <code>torch.no_grad()</code> so autograd does not track the load. The report holds the outcome of every name.</p>
+<h3 id="the-gpt-2-naming-convention"><a class="anchor" href="#the-gpt-2-naming-convention">#</a> The GPT-2 naming convention</h3>
+<p>Published GPT-2 weights live under names like:</p>
+<table>
+<thead>
+<tr>
+<th>Pretrained name</th>
+<th>Shape</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>wte.weight</code></td>
+<td>(50257, 768)</td>
+<td>Token embedding</td>
+</tr>
+<tr>
+<td><code>wpe.weight</code></td>
+<td>(1024, 768)</td>
+<td>Position embedding</td>
+</tr>
+<tr>
+<td><code>h.N.ln_1.weight</code></td>
+<td>(768,)</td>
+<td>LayerNorm 1 scale at block N</td>
+</tr>
+<tr>
+<td><code>h.N.ln_1.bias</code></td>
+<td>(768,)</td>
+<td>LayerNorm 1 shift at block N</td>
+</tr>
+<tr>
+<td><code>h.N.attn.c_attn.weight</code></td>
+<td>(768, 2304)</td>
+<td>Fused QKV linear weight</td>
+</tr>
+<tr>
+<td><code>h.N.attn.c_attn.bias</code></td>
+<td>(2304,)</td>
+<td>Fused QKV linear bias</td>
+</tr>
+<tr>
+<td><code>h.N.attn.c_proj.weight</code></td>
+<td>(768, 768)</td>
+<td>Attention output projection</td>
+</tr>
+<tr>
+<td><code>h.N.attn.c_proj.bias</code></td>
+<td>(768,)</td>
+<td>Attention output projection bias</td>
+</tr>
+<tr>
+<td><code>h.N.ln_2.weight</code></td>
+<td>(768,)</td>
+<td>LayerNorm 2 scale</td>
+</tr>
+<tr>
+<td><code>h.N.ln_2.bias</code></td>
+<td>(768,)</td>
+<td>LayerNorm 2 shift</td>
+</tr>
+<tr>
+<td><code>h.N.mlp.c_fc.weight</code></td>
+<td>(768, 3072)</td>
+<td>MLP fc1 weight</td>
+</tr>
+<tr>
+<td><code>h.N.mlp.c_fc.bias</code></td>
+<td>(3072,)</td>
+<td>MLP fc1 bias</td>
+</tr>
+<tr>
+<td><code>h.N.mlp.c_proj.weight</code></td>
+<td>(3072, 768)</td>
+<td>MLP fc2 weight</td>
+</tr>
+<tr>
+<td><code>h.N.mlp.c_proj.bias</code></td>
+<td>(768,)</td>
+<td>MLP fc2 bias</td>
+</tr>
+<tr>
+<td><code>ln_f.weight</code></td>
+<td>(768,)</td>
+<td>Final LayerNorm scale</td>
+</tr>
+<tr>
+<td><code>ln_f.bias</code></td>
+<td>(768,)</td>
+<td>Final LayerNorm shift</td>
+</tr>
+</tbody></table>
+<p>Two surprises to plan for. The <code>c_attn</code>, <code>c_proj</code>, <code>c_fc</code> linears are stored with the matrix transposed relative to what <code>nn.Linear.weight</code> expects. The loader transposes during assignment. The LM head is not in the file at all; the model relies on weight tying with <code>wte</code>, so the head is set by aliasing once <code>wte</code> lands.</p>
+<h3 id="the-local-naming-convention"><a class="anchor" href="#the-local-naming-convention">#</a> The local naming convention</h3>
+<p>The model in this track uses descriptive names:</p>
+<table>
+<thead>
+<tr>
+<th>Local name</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tok_embed.weight</code></td>
+<td>Token embedding</td>
+</tr>
+<tr>
+<td><code>pos_embed.weight</code></td>
+<td>Position embedding</td>
+</tr>
+<tr>
+<td><code>blocks.N.ln1.scale</code></td>
+<td>LayerNorm 1 scale at block N</td>
+</tr>
+<tr>
+<td><code>blocks.N.ln1.shift</code></td>
+<td>LayerNorm 1 shift</td>
+</tr>
+<tr>
+<td><code>blocks.N.attn.qkv.weight</code></td>
+<td>Fused QKV</td>
+</tr>
+<tr>
+<td><code>blocks.N.attn.qkv.bias</code></td>
+<td>Fused QKV bias</td>
+</tr>
+<tr>
+<td><code>blocks.N.attn.out_proj.weight</code></td>
+<td>Attention output projection</td>
+</tr>
+<tr>
+<td><code>blocks.N.attn.out_proj.bias</code></td>
+<td>Output projection bias</td>
+</tr>
+<tr>
+<td><code>blocks.N.ln2.scale</code></td>
+<td>LayerNorm 2 scale</td>
+</tr>
+<tr>
+<td><code>blocks.N.ln2.shift</code></td>
+<td>LayerNorm 2 shift</td>
+</tr>
+<tr>
+<td><code>blocks.N.mlp.fc1.weight</code></td>
+<td>MLP fc1</td>
+</tr>
+<tr>
+<td><code>blocks.N.mlp.fc1.bias</code></td>
+<td>MLP fc1 bias</td>
+</tr>
+<tr>
+<td><code>blocks.N.mlp.fc2.weight</code></td>
+<td>MLP fc2</td>
+</tr>
+<tr>
+<td><code>blocks.N.mlp.fc2.bias</code></td>
+<td>MLP fc2 bias</td>
+</tr>
+<tr>
+<td><code>final_ln.scale</code></td>
+<td>Final LayerNorm scale</td>
+</tr>
+<tr>
+<td><code>final_ln.shift</code></td>
+<td>Final LayerNorm shift</td>
+</tr>
+</tbody></table>
+<p>The mapping is a fixed function. The lesson ships it as a dict that the loader iterates.</p>
+<h3 id="the-stub-fixture"><a class="anchor" href="#the-stub-fixture">#</a> The stub fixture</h3>
+<p>Real GPT-2 weights are 0.5 GB. The demo does not download them; it generates a small safetensors fixture at first run, with the exact GPT-2 naming convention and shapes appropriate to a 12-block model at d_model 192 instead of 768. The fixture has the right structure to exercise every code path in the loader. Swap the fixture for the real file and the loader works without modification.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cc-weight-remap</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li>A small replica of the lesson 35 <code>GPTModel</code> so this lesson is self contained.</li>
+<li><code>make_pretrained_to_local(num_layers)</code> which expands the per-layer entries.</li>
+<li><code>load_safetensors(model, path)</code> which iterates names, maps them, checks shape, transposes the conv1d-style weights, and assigns under <code>torch.no_grad()</code>. Returns a <code>LoadReport</code>.</li>
+<li><code>make_stub_safetensors(path, cfg)</code> which generates a fixture file with the exact pretrained naming convention.</li>
+<li>A demo that creates <code>outputs/gpt2-stub.safetensors</code> on first run, builds a fresh model, captures one generated continuation from random init, loads the stub, captures another continuation, prints both, and verifies the two are different (the load actually changed the model).</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: the fixture path, a per-name load log, a <code>LoadReport</code> summary, a continuation before the load, a continuation after the load, and a shape mismatch on a single intentionally bad tensor injected into the fixture so the failure path is exercised.</p>
+<h2 id="stack"><a class="anchor" href="#stack">#</a> Stack</h2>
+<ul>
+<li><code>safetensors</code> for the on disk format and a streaming reader.</li>
+<li><code>torch</code> for the model and the assignment math.</li>
+<li>No <code>transformers</code>, no <code>huggingface_hub</code>, no network calls.</li>
+</ul>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Three patterns make the loader survive contact with weights you did not create.</p>
+<p><strong>Always validate the file before any assignment.</strong> Open the file, list every tensor name with its dtype and shape, run the full mapping with shape checks, and only on success start assigning. Half-loaded models are silent failure machines.</p>
+<p><strong>Log every assignment with the source name and the destination name.</strong> When something looks wrong, the log tells you which tensor landed where; the alternative is reading hexdumps. The <code>LoadReport</code> dataclass in this lesson tracks <code>loaded</code>, <code>missing</code>, <code>unexpected</code>, and <code>shape_mismatch</code> lists and prints a summary at the end.</p>
+<p><strong>The LM head is a weight tying alias, not a separate copy.</strong> Setting <code>model.lm_head.weight = model.tok_embed.weight</code> after loading <code>tok_embed</code> is the canonical pattern. Copying the embedding matrix into a fresh <code>lm_head.weight</code> parameter breaks tying and quietly doubles your parameter count.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li>The loader works for any safetensors file that uses the pretrained naming convention. Real GPT-2 files (small / medium / large / xl) work without code changes; only the model config differs.</li>
+<li>The same pattern extends to LLaMA, Mistral, Qwen weights once you update the name map. The shape checks and the report stay identical.</li>
+<li>Sanity generation after a load is a quick gate: if the post-load samples look like the pre-load samples, the load did not change the model, which means the mapping silently missed every tensor.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>dtype</code> argument to the loader that casts each tensor to a target dtype (<code>bfloat16</code>, <code>float16</code>, <code>float32</code>) during assignment. Confirm a <code>float32</code> model can be downcast to <code>bfloat16</code> and still generate.</li>
+<li>Add an <code>expected_layers</code> argument that refuses to load a checkpoint whose <code>h.N</code> indices do not match the model&#39;s <code>num_layers</code>.</li>
+<li>Plug the loader into the lesson 35 generation function and produce two side by side samples: one from random init, one from the loaded fixture.</li>
+<li>Add an export path: write the current model state into a fresh safetensors file using the pretrained naming convention. Round trip the loader and confirm the report has zero shape mismatches.</li>
+<li>Extend <code>NAME_MAP</code> to handle the LLaMA naming convention (no biases, RMSNorm, fused qkv layout) and re-run the loader on a stub LLaMA fixture you generate.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Name map</td>
+<td>&quot;Key remapping&quot;</td>
+<td>The function from pretrained tensor names to local parameter names; usually a literal dict with one entry per layer index expanded over a loop</td>
+</tr>
+<tr>
+<td>Shape mismatch</td>
+<td>&quot;Bad shape&quot;</td>
+<td>The pretrained tensor exists under the mapped name but its dimensions disagree with the local parameter; the loader refuses to assign and logs the pair</td>
+</tr>
+<tr>
+<td>Transpose-on-load</td>
+<td>&quot;Conv1d layout&quot;</td>
+<td>Published GPT-2 stores attention and MLP projections in the transpose of what nn.Linear expects; the loader transposes during assignment</td>
+</tr>
+<tr>
+<td>Weight tying alias</td>
+<td>&quot;Shared LM head&quot;</td>
+<td>Setting model.lm_head.weight = model.tok_embed.weight so the head and embedding share storage; the head is not in the file because of this</td>
+</tr>
+<tr>
+<td>Load report</td>
+<td>&quot;Coverage summary&quot;</td>
+<td>A small dataclass that tracks loaded, missing, unexpected, and shape_mismatch lists; printing it is how you tell whether the load succeeded</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Phase 19 lesson 35 for the architecture that receives the weights.</li>
+<li>Phase 19 lesson 36 for the training loop that produces a checkpoint of the same shape.</li>
+<li>Phase 10 lesson 11 (quantization) for what to do with the loaded weights when memory is tight.</li>
+<li>Phase 10 lesson 13 (building a complete LLM pipeline) for the full lifecycle around load and inference.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./36-training-loop-eval.html"><span>← Previous</span><b>training loop eval</b></a>
+      <a class="next" href="./38-classifier-finetuning.html"><span>Next →</span><b>classifier finetuning</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

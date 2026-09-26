@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>End-to-End Eval Runner — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/75-end-to-end-eval-runner/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning objectives</a></li><li><a href="#the-pipeline">The pipeline</a></li><li><a href="#the-adapter-interface">The adapter interface</a></li><li><a href="#parallel-execution">Parallel execution</a></li><li><a href="#the-single-pass-scoring-loop">The single-pass scoring loop</a></li><li><a href="#aggregation">Aggregation</a></li><li><a href="#self-terminating-demo">Self-terminating demo</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">End-to-End Eval Runner</h1>
+    <p class="lesson-sub">Five lessons of plumbing, one lesson to glue them. The runner reads the task spec from lesson 70, calls a model through an adapter, scores with lessons 71 and 72, attaches the calibration report from lesson 73, and emits the leaderboard from lesson 74. Demo self-terminates.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track B foundations, lessons 70 through 74</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 75">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.6" y="118.8" width="26.2" height="26.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.7 131.9)"/>
+        <circle cx="22.3" cy="127.0" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.9" cy="122.1" r="11.8" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">75</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">End-to-End Eval</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Runner</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning objectives</h2>
+<ul>
+<li>Define a <code>ModelAdapter</code> interface that any model (mock, local, API) can satisfy with a small method surface.</li>
+<li>Run the eval over a fixture JSONL file with parallel task execution across a worker pool.</li>
+<li>Compose the metric layer (exact_match, F1, BLEU-4, ROUGE-L, code_exec) with the calibration layer in one pass.</li>
+<li>Emit per-model <code>EvalRun</code> records and feed them straight into the leaderboard aggregator.</li>
+<li>Output both a JSON report and a markdown table; self-terminate with exit zero on a clean run, non-zero on validation or runtime failure.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">eval-grid</code></pre>
+      </div>
+    <h2 id="the-pipeline"><a class="anchor" href="#the-pipeline">#</a> The pipeline</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[tasks.jsonl from lesson 70] --&gt; B[validate]
+    B --&gt; C[render prompts]
+    C --&gt; D[model adapter generate]
+    D --&gt; E[post_process]
+    E --&gt; F{metric_name}
+    F --&gt;|exact_match/f1/bleu_4/rouge_l/accuracy| G[score from lesson 71]
+    F --&gt;|code_exec| H[run_candidate from lesson 72]
+    G --&gt; R[EvalRun record]
+    H --&gt; R
+    D --&gt; S[confidence and per-token nll]
+    S --&gt; T[CalibrationReport from lesson 73]
+    R --&gt; U[aggregate from lesson 74]
+    T --&gt; V[per-model calibration block]
+    U --&gt; W[leaderboard JSON + markdown]
+    V --&gt; W</pre></div><p>The runner is the integration point. Each lesson 70 through 74 owns one module that the runner composes. The runner does not duplicate any logic from those modules: it imports them.</p>
+<h2 id="the-adapter-interface"><a class="anchor" href="#the-adapter-interface">#</a> The adapter interface</h2>
+<p>The adapter is the seam between the runner and any model. The interface is intentionally small.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ModelAdapter:
+    model_id: str
+
+    def generate(self, prompt: str, task: TaskSpec) -&gt; Generation: ...</code></pre>
+      </div>
+    <p><code>Generation</code> is a dataclass with:</p>
+<ul>
+<li><code>text</code>: the model&#39;s free-form output</li>
+<li><code>confidence</code>: a float in <code>[0, 1]</code> representing the model&#39;s self-reported probability for the answer</li>
+<li><code>token_nll</code>: optional sum of negative log-likelihoods over the generated tokens</li>
+<li><code>token_count</code>: optional number of generated tokens</li>
+</ul>
+<p>Mock adapters in the runner provide three flavours: <code>RuleBasedAdapter</code> (deterministic, near-perfect), <code>NoisyAdapter</code> (overconfident, often wrong), and <code>BiasedAdapter</code> (good at one category, terrible at another). The demo runs all three over the lesson 70 fixture.</p>
+<h2 id="parallel-execution"><a class="anchor" href="#parallel-execution">#</a> Parallel execution</h2>
+<p>The runner uses <code>concurrent.futures.ThreadPoolExecutor</code> to run tasks in parallel per model. The worker count defaults to the smaller of eight and the task count. Threads are sufficient because the bottleneck for real model calls is network I/O. The code-exec path spawns its own subprocess inside the task and the executor only schedules the wait.</p>
+<p>For deterministic tests, the runner exposes <code>run_eval(adapters, tasks, parallel=False)</code> so tests can pin the execution order.</p>
+<h2 id="the-single-pass-scoring-loop"><a class="anchor" href="#the-single-pass-scoring-loop">#</a> The single-pass scoring loop</h2>
+<p>For each task:</p>
+<ol>
+<li>Render the prompt (few-shot prefix plus the prompt body).</li>
+<li>Call the adapter and time the call.</li>
+<li>Post-process the generation per the task&#39;s rule.</li>
+<li>Dispatch to the metric layer.</li>
+<li>Build an <code>EvalRun</code> record with the score and metric metadata.</li>
+<li>Append the <code>(confidence, correct)</code> pair to the calibration buffer.</li>
+</ol>
+<p>The <code>correct</code> signal is <code>score &gt;= 1.0</code> for exact_match-style metrics (<code>exact_match</code>, <code>accuracy</code>, <code>code_exec</code>) and <code>score &gt;= 0.5</code> for graded metrics. The threshold lives in <code>_correct_from_score</code> and the runner does not expose a public override.</p>
+<h2 id="aggregation"><a class="anchor" href="#aggregation">#</a> Aggregation</h2>
+<p>After every task has a result, the runner calls <code>aggregate</code> and <code>pairwise_diffs</code> from lesson 74 and <code>CalibrationReport.from_predictions</code> from lesson 73. The output is a single JSON envelope:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;leaderboard&quot;: [...],
+  &quot;pairwise&quot;: [...],
+  &quot;calibration&quot;: {
+    &quot;model_id_a&quot;: {&quot;ece&quot;: 0.04, &quot;brier&quot;: 0.10, &quot;populated_bins&quot;: 8, ...},
+    ...
+  },
+  &quot;summary&quot;: {
+    &quot;tasks&quot;: 10,
+    &quot;models&quot;: 3,
+    &quot;wall_seconds&quot;: 1.2
+  }
+}</code></pre>
+      </div>
+    <p>The runner also writes a markdown table to stdout so the user can paste the result into a PR review.</p>
+<h2 id="self-terminating-demo"><a class="anchor" href="#self-terminating-demo">#</a> Self-terminating demo</h2>
+<p>The demo runs three mock adapters over the ten fixture tasks from lesson 70. Wall time should sit under ten seconds. The exit code is zero on a clean run.</p>
+<p>The clean-run criteria are:</p>
+<ul>
+<li>Every task validated under lesson 70.</li>
+<li>Every task scored under lessons 71 and 72.</li>
+<li>The calibration report aggregated under lesson 73 without errors.</li>
+<li>The leaderboard ranked the rule-based adapter strictly above the random adapter.</li>
+</ul>
+<p>If any of those break, the runner exits non-zero with a structured error in the JSON envelope.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not call a real model. It does not implement an API key flow or rate-limit handling. It does not implement streaming or partial generation; the adapter returns one generation per call. It does not do retries or caching. Those concerns live at the adapter layer; the runner is metric-agnostic and provider-agnostic.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> is the integration. It imports from the other five lesson modules through a small <code>_load_sibling</code> helper that resolves them by relative path. The dataclasses <code>Generation</code>, <code>EvalReport</code>, and <code>ModelAdapter</code> are defined locally. The mock adapters are at the bottom of the file.</p>
+<p>Read <code>main.py</code> top to bottom. Skim the imports, then look at <code>run_eval</code>, then <code>_score_one</code>, then the adapters. The demo at the end is the entry point.</p>
+<p>The tests in <code>code/tests/test_runner.py</code> pin the adapter interface, the single-pass loop, the parallel-vs-sequential equivalence, the calibration buffer, and the JSON envelope shape.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>This runner is the floor. A production eval system adds: a results cache keyed by <code>(task_id, model_id, model_version)</code>, a cost ledger that tracks dollars and tokens per run, a retry layer that backs off on rate limits, a sampling policy for pass-at-k tasks, and a streaming output format for long suites. Each of those is a single concern that wraps the runner without changing the metric or aggregation layers. That separation is the point of the contract.</p>
+<p>Add an adapter for a real provider after you have the mocks working. Pick one with a free tier, write thirty lines of glue, watch the leaderboard light up. Then add the second provider and let the harness do the work.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./74-leaderboard-aggregation.html"><span>← Previous</span><b>leaderboard aggregation</b></a>
+      <a class="next" href="./76-collective-ops-from-scratch.html"><span>Next →</span><b>collective ops from scratch</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

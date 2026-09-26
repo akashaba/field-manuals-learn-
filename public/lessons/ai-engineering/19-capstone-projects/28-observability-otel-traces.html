@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Lesson 28: Observability with OTel GenAI Spans and Prometheus Metrics — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/28-observability-otel-traces/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#what-you-will-build">What you will build</a></li><li><a href="#why-hand-rolled-instead-of-opentelemetry-sdk">Why hand-rolled instead of opentelemetry-sdk</a></li><li><a href="#how-this-composes-with-the-rest-of-track-a">How this composes with the rest of Track A</a></li><li><a href="#running-it">Running it</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone Lesson 28: Observability with OTel GenAI Spans and Prometheus Metrics</h1>
+    <p class="lesson-sub">An agent harness without observability is a black box that costs money. This lesson hand-rolls a span builder that emits records compliant with the OpenTelemetry GenAI semantic conventions, writes them to a JSON-Lines file one span per line, and exposes counters and histograms in Prometheus text format. The whole thing is stdlib Python and runs offline.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 19 · 25 (verification gates), Phase 19 · 26 (sandbox), Phase 19 · 27 (eval harness), Phase 13 · 20 (OpenTelemetry GenAI), Phase 14 · 23 (OTel GenAI conventions)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 28">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.9" y="41.5" width="33.0" height="33.0" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(229 56.3 57.9)"/>
+        <rect x="35.1" y="37.2" width="31.7" height="31.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(211 50.9 53.0)"/>
+        <rect x="30.3" y="32.9" width="30.4" height="30.4" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.5 48.1)"/>
+        <rect x="25.5" y="128.6" width="29.1" height="29.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(175 40.1 143.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">28</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Lesson 28:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Observability with…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build a span data class shaped to the OpenTelemetry GenAI semantic conventions.</li>
+<li>Implement a JSONL exporter that writes one self-contained span per line.</li>
+<li>Build counters and histograms with labels and Prometheus text-format exposition.</li>
+<li>Wrap any callable in a span context manager that records duration, status, and exceptions.</li>
+<li>Verify that the emitted spans roundtrip through <code>json.loads</code> and match the spec shape.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A coding agent in production produces three classes of artifact every turn: a model call, a tool execution, and a verification gate decision. None of these are useful without structured telemetry.</p>
+<p>The first failure mode is the missing trace. Something went wrong on Tuesday but the only record is a 500-line chat log. There is no record of which tool ran, how long it took, how many tokens went into the prompt, or whether the gate refused anything. The agent author has to guess.</p>
+<p>The second failure mode is the unparseable trace. The harness wrote spans but used its own ad-hoc field names. Nothing in Grafana, Honeycomb, Jaeger, or the local CLI can read them. Whatever tooling exists in the team&#39;s stack is wasted because the spans are non-standard.</p>
+<p>The third failure mode is the unaggregated metric. You can see one slow tool call in the trace, but you cannot answer &quot;what is the p95 latency of read_file calls over the last hour?&quot; because there are no metrics, only traces.</p>
+<p>The OpenTelemetry GenAI semantic conventions exist exactly for this. They define a small set of standard attributes that span emitters across LLM frameworks share. If your harness writes those attributes, every OTel-compatible backend can read them.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Call[tool call / model call / gate decision] --&gt; Span[&quot;SpanBuilder.span()&lt;br/&gt;context manager&quot;]
+  Span --&gt; GenAI[GenAISpan&lt;br/&gt;trace_id / span_id / name&lt;br/&gt;attributes:&lt;br/&gt;gen_ai.system&lt;br/&gt;gen_ai.request.*&lt;br/&gt;gen_ai.usage.*&lt;br/&gt;start, end, status]
+  GenAI --&gt; Writer[JSONLWriter]
+  GenAI --&gt; Metrics[MetricsRegistry]
+  Writer --&gt; Traces[traces.jsonl]
+  Metrics --&gt; Prom[/metrics text/]</pre></div><p>Every operation in the harness produces a span. A span has a trace id (the whole agent invocation), a span id (this one operation), a name (e.g. <code>gen_ai.chat</code>, <code>gen_ai.tool.execution</code>), attributes that follow the GenAI conventions, a start and end time, and a status.</p>
+<p>The GenAI conventions standardise these attribute keys: <code>gen_ai.system</code> (which provider, e.g. <code>anthropic</code>, <code>openai</code>), <code>gen_ai.request.model</code> (the model id), <code>gen_ai.request.max_tokens</code>, <code>gen_ai.usage.input_tokens</code>, <code>gen_ai.usage.output_tokens</code>, <code>gen_ai.response.model</code>, <code>gen_ai.response.id</code>, <code>gen_ai.operation.name</code>, plus tool-specific keys <code>gen_ai.tool.name</code> and <code>gen_ai.tool.call.id</code>.</p>
+<p>The exporter writes JSONL. One JSON object per line. This is the simplest possible format that downstream tooling can stream, grep, and import. A real OTel exporter would speak OTLP gRPC; the lesson&#39;s JSONL exporter is the offline equivalent and exits zero on every workstation.</p>
+<p>Metrics live next to traces. A counter increments on each tool call: <code>tools_called_total{tool=&quot;read_file&quot;}</code>. A histogram records the observed latency: <code>tool_latency_ms{tool=&quot;read_file&quot;}</code>. Both serialise into Prometheus text exposition format, which is the de-facto standard for pull-based metrics.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">trace-spans</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Harness[AgentHarness&lt;br/&gt;lessons 25-27] --&gt; Span[SpanBuilder&lt;br/&gt;context mgr / attrs / status]
+  Span --&gt; Exporter[JSONLExporter&lt;br/&gt;traces.jsonl]
+  Span --&gt; Metrics[MetricsRegistry&lt;br/&gt;counters / histograms]
+  Metrics --&gt; Prom[Prometheus text&lt;br/&gt;exposition]</pre></div><p>The span builder is a small class with a <code>span(name, attrs)</code> method that returns a context manager. The context manager records start time on enter, records end time on exit, attaches an exception if one was raised, and pushes the finalised span to the exporter.</p>
+<p>The metrics registry is two dicts. Counters are <code>{(name, frozen_labels): int}</code>. Histograms keep raw samples in a list and serialise to Prometheus histogram buckets at exposition time.</p>
+<h2 id="what-you-will-build"><a class="anchor" href="#what-you-will-build">#</a> What you will build</h2>
+<p><code>main.py</code> ships:</p>
+<ol>
+<li><code>GenAISpan</code> dataclass: trace_id, span_id, parent_span_id, name, attributes, start_unix_nano, end_unix_nano, status, status_message, events.</li>
+<li><code>SpanBuilder</code> class with <code>span(name, attrs, parent=None)</code> context manager.</li>
+<li><code>JSONLExporter</code> class with <code>export(span)</code> that appends one line.</li>
+<li><code>Counter</code> and <code>Histogram</code> classes plus <code>MetricsRegistry</code>.</li>
+<li><code>prometheus_exposition(registry)</code> that produces text-format output.</li>
+<li><code>wrap_tool_call(name)</code> decorator that emits a span and updates metrics.</li>
+<li>Demo: synthesises a complete agent invocation (gen_ai.chat span around tool spans), writes traces.jsonl, prints the Prometheus exposition, exits zero.</li>
+</ol>
+<p>The span id and trace id are 16-byte hex strings, generated from <code>os.urandom</code>. That matches OTel&#39;s W3C trace context. The exporter never throws; IO errors are surfaced but the harness keeps running.</p>
+<p>The histogram has a fixed bucket set (the OTel default for latency in milliseconds: 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, +Inf). Samples are stored as a list; exposition computes per-bucket counts on demand.</p>
+<h2 id="why-hand-rolled-instead-of-opentelemetry-sdk"><a class="anchor" href="#why-hand-rolled-instead-of-opentelemetry-sdk">#</a> Why hand-rolled instead of opentelemetry-sdk</h2>
+<p>The OTel Python SDK is a real dependency. It is also several thousand lines of code, multiple processes for the OTLP exporter, and a runtime cost that swamps a lesson budget. The hand-rolled version teaches the wire format. In production you wire the same attributes into the real SDK and get the OTLP exporter, batching, and resource detection for free.</p>
+<p>The conventions are stable. The wire format the lesson emits will keep parsing in 2030 because OTel never breaks GenAI attribute names; they only add new ones.</p>
+<h2 id="how-this-composes-with-the-rest-of-track-a"><a class="anchor" href="#how-this-composes-with-the-rest-of-track-a">#</a> How this composes with the rest of Track A</h2>
+<p>Lesson 25 produced the gate chain. Lesson 26 produced the sandbox. Lesson 27 produced the eval harness. Lesson 28 makes all three observable. Lesson 29 wraps every step of the end-to-end demo in spans and prints the Prometheus text at the end.</p>
+<h2 id="running-it"><a class="anchor" href="#running-it">#</a> Running it</h2>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/19-capstone-projects/28-observability-otel-traces
+python3 code/main.py
+python3 -m pytest code/tests/ -v</code></pre>
+      </div>
+    <p>The demo emits a <code>traces.jsonl</code> in the lesson&#39;s working dir (cleaned up at the end), then prints a sample of three spans, then prints the Prometheus exposition for the counters and histograms. The tests verify that spans serialise round-trip, that the canonical GenAI attributes are present, that counters increment correctly, and that the histogram exposition contains the expected bucket counts.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./27-eval-harness-fixture-tasks.html"><span>← Previous</span><b>eval harness fixture tasks</b></a>
+      <a class="next" href="./29-end-to-end-coding-task-demo.html"><span>Next →</span><b>end to end coding task demo</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DPO: Direct Preference Optimization — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/08-dpo/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">DPO: Direct Preference Optimization</h1>
+    <p class="lesson-sub">RLHF works. It also requires training three models (SFT, reward model, policy), managing PPO&#39;s instability, and tuning a KL penalty. DPO asks: what if you could skip all of that? DPO directly optimizes the language model on preference pairs. No reward model. No PPO. One training loop. Same results.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (with numpy)</b></div><div><span>Prerequisites</span><b>Phase 10, Lesson 07 (RLHF)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.2" y="40.9" width="32.8" height="32.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(226 55.6 57.3)"/>
+        <rect x="34.4" y="36.6" width="31.5" height="31.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.2 52.4)"/>
+        <rect x="29.7" y="32.3" width="30.2" height="30.2" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(191 44.8 47.4)"/>
+        <rect x="24.9" y="128.0" width="28.9" height="28.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(173 39.4 142.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">DPO: Direct</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Preference…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement DPO training that directly optimizes a language model on preference pairs without a separate reward model</li>
+<li>Derive the DPO loss function and explain how it implicitly represents a reward model through the policy&#39;s log probabilities</li>
+<li>Compare DPO vs RLHF in terms of training stability, compute cost, and number of models required</li>
+<li>Tune the beta parameter to control how far the trained policy diverges from the reference model</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You built an RLHF pipeline in Lesson 07. Three stages. Three models. The SFT model, the reward model, and the policy model optimized with PPO. The reward model alone required thousands of human preference pairs and a separate training loop. PPO required careful tuning of the KL coefficient, learning rate, clip ratio, and number of epochs.</p>
+<p>In practice, PPO training is notoriously unstable. Small hyperparameter changes cause the training to diverge. The reward model is an imperfect proxy for human preferences, and the policy finds ways to exploit its weaknesses. The KL penalty helps but requires its own tuning -- too low and you get reward hacking, too high and the model barely learns.</p>
+<p>This complexity is why most open-source models struggled with RLHF for years after InstructGPT was published. The three-stage pipeline is fragile. Each stage has its own failure modes, and errors compound.</p>
+<p>In May 2023, Rafael Rafailov, Archit Sharma, and colleagues at Stanford published &quot;Direct Preference Optimization: Your Language Model is Secretly a Reward Model.&quot; The key insight: you don&#39;t need a separate reward model. The optimal reward function is mathematically determined by the language model&#39;s own token probabilities. You can skip the reward model entirely and optimize the language model directly on preference pairs.</p>
+<p>DPO reduces RLHF to a single supervised learning step. One model. One loss function. One training loop. No reinforcement learning. Zephyr-7B, one of the first models to use DPO at scale, matched or beat models trained with full RLHF on several benchmarks. Meta used DPO as part of Llama 3&#39;s alignment pipeline. Anthropic has cited DPO-style methods in their alignment research.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-key-insight"><a class="anchor" href="#the-key-insight">#</a> The Key Insight</h3>
+<p>RLHF optimizes this objective:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">maximize: E[R(x, y)] - beta * KL(pi || pi_ref)</code></pre>
+      </div>
+    <p>where R is the reward model, pi is the policy, pi_ref is the reference model, and beta is the KL coefficient.</p>
+<p>The DPO paper showed that this objective has a closed-form optimal solution. For any reward function R, the optimal policy is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">pi*(y | x) = pi_ref(y | x) * exp(R(x, y) / beta) / Z(x)</code></pre>
+      </div>
+    <p>where Z(x) is a normalizing constant. Rearranging:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">R(x, y) = beta * log(pi*(y | x) / pi_ref(y | x)) + beta * log Z(x)</code></pre>
+      </div>
+    <p>This is the breakthrough. The reward is expressed entirely in terms of the policy model&#39;s probabilities and the reference model&#39;s probabilities. You don&#39;t need to train a separate reward model. The reward is <em>implicit</em> in the probability ratio.</p>
+<p>Substituting this into the Bradley-Terry preference model:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">P(y_w &gt; y_l | x) = sigmoid(R(x, y_w) - R(x, y_l))
+                  = sigmoid(beta * (log pi(y_w|x)/pi_ref(y_w|x) - log pi(y_l|x)/pi_ref(y_l|x)))</code></pre>
+      </div>
+    <p>The Z(x) terms cancel because both responses condition on the same prompt x. What&#39;s left is a function of only the policy model&#39;s log-probabilities and the reference model&#39;s log-probabilities on the preferred and rejected responses.</p>
+<h3 id="the-dpo-loss"><a class="anchor" href="#the-dpo-loss">#</a> The DPO Loss</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_DPO = -log(sigmoid(beta * (log pi(y_w|x)/pi_ref(y_w|x) - log pi(y_l|x)/pi_ref(y_l|x))))</code></pre>
+      </div>
+    <p>Let&#39;s unpack each piece:</p>
+<ul>
+<li><strong>y_w</strong> = preferred (winning) response</li>
+<li><strong>y_l</strong> = rejected (losing) response</li>
+<li><strong>x</strong> = prompt</li>
+<li><strong>pi</strong> = current model (being trained)</li>
+<li><strong>pi_ref</strong> = reference model (frozen SFT checkpoint)</li>
+<li><strong>beta</strong> = temperature parameter controlling deviation from reference (typically 0.1 to 0.5)</li>
+</ul>
+<p>The ratio <code>log pi(y|x) / pi_ref(y|x)</code> is the log-probability ratio. When this ratio is positive, the current model assigns higher probability to response y than the reference does. When negative, the current model assigns lower probability.</p>
+<p>The DPO loss pushes the model to increase the log-probability ratio for preferred responses and decrease it for rejected responses. The beta parameter controls how aggressively the model can deviate from the reference -- small beta means large deviations are allowed, large beta keeps the model close to the reference.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph DPO[&quot;DPO Training&quot;]
+        direction TB
+        D[&quot;Preference Dataset\n(prompt, winner, loser)&quot;] --&gt; P1[&quot;Compute log P(winner)\nunder current model&quot;]
+        D --&gt; P2[&quot;Compute log P(loser)\nunder current model&quot;]
+        D --&gt; R1[&quot;Compute log P(winner)\nunder reference model&quot;]
+        D --&gt; R2[&quot;Compute log P(loser)\nunder reference model&quot;]
+
+        P1 --&gt; RATIO_W[&quot;Log ratio (winner)\nlog pi/pi_ref&quot;]
+        R1 --&gt; RATIO_W
+        P2 --&gt; RATIO_L[&quot;Log ratio (loser)\nlog pi/pi_ref&quot;]
+        R2 --&gt; RATIO_L
+
+        RATIO_W --&gt; DIFF[&quot;beta * (ratio_w - ratio_l)&quot;]
+        RATIO_L --&gt; DIFF
+
+        DIFF --&gt; LOSS[&quot;-log sigmoid(diff)&quot;]
+        LOSS --&gt; UPDATE[&quot;Gradient update\non current model&quot;]
+    end
+
+    subgraph Models[&quot;Models&quot;]
+        PI[&quot;Current Model (pi)\nupdated each step&quot;]
+        REF[&quot;Reference Model (pi_ref)\nfrozen SFT checkpoint&quot;]
+    end
+
+    Models --&gt; DPO
+
+    style PI fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style REF fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style LOSS fill:#1a1a2e,stroke:#e94560,color:#fff
+    style DIFF fill:#1a1a2e,stroke:#e94560,color:#fff</pre></div><h3 id="why-dpo-is-simpler"><a class="anchor" href="#why-dpo-is-simpler">#</a> Why DPO is Simpler</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>RLHF (PPO)</th>
+<th>DPO</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Models to train</td>
+<td>3 (SFT + reward + policy)</td>
+<td>1 (policy only)</td>
+</tr>
+<tr>
+<td>Training loops</td>
+<td>3 (SFT, RM training, PPO)</td>
+<td>2 (SFT, DPO)</td>
+</tr>
+<tr>
+<td>Hyperparameters</td>
+<td>lr, KL coeff, clip ratio, RM lr, epochs x3</td>
+<td>lr, beta, epochs</td>
+</tr>
+<tr>
+<td>Reward model</td>
+<td>Required (separate training)</td>
+<td>Implicit in model probabilities</td>
+</tr>
+<tr>
+<td>RL algorithm</td>
+<td>PPO (complex, unstable)</td>
+<td>Supervised learning (stable)</td>
+</tr>
+<tr>
+<td>GPU memory</td>
+<td>3-4 models in memory during PPO</td>
+<td>2 models (current + reference)</td>
+</tr>
+<tr>
+<td>Training stability</td>
+<td>Sensitive to hyperparameters</td>
+<td>Robust, similar to SFT</td>
+</tr>
+</tbody></table>
+<p>DPO needs two models in memory during training -- the current model and the frozen reference. RLHF needs three or four: the policy, the reference, the reward model, and optionally a value function baseline. For a 70B model, each copy takes 140GB in FP16. The memory savings from eliminating the reward model are substantial.</p>
+<h3 id="when-dpo-beats-rlhf"><a class="anchor" href="#when-dpo-beats-rlhf">#</a> When DPO Beats RLHF</h3>
+<p><strong>Small datasets.</strong> With 5,000-20,000 preference pairs, DPO often matches or exceeds RLHF. The reward model in RLHF needs enough data to generalize -- with limited data, it overfits and produces unreliable reward signals. DPO bypasses this problem by not needing a reward model at all.</p>
+<p><strong>Limited compute.</strong> DPO requires roughly one-third the compute of full RLHF (one training loop instead of three). For teams without large GPU clusters, this is the practical choice.</p>
+<p><strong>Rapid iteration.</strong> Want to try 10 different preference datasets to see which produces the best model? DPO lets you run each experiment in hours. RLHF requires retraining the reward model for each dataset.</p>
+<h3 id="when-rlhf-beats-dpo"><a class="anchor" href="#when-rlhf-beats-dpo">#</a> When RLHF Beats DPO</h3>
+<p><strong>Large-scale training.</strong> At the scale of GPT-4 or Claude, RLHF&#39;s separate reward model can capture more nuanced preference signals. The reward model acts as a learned loss function that adapts to complex quality criteria.</p>
+<p><strong>Complex reward signals.</strong> When &quot;better&quot; involves multiple dimensions (helpfulness, harmlessness, honesty), a reward model can learn this multi-objective tradeoff. DPO treats each preference pair as a binary signal -- one is better, one is worse -- without modeling why.</p>
+<p><strong>Iterative alignment.</strong> RLHF pipelines can generate new responses with the current policy, have humans rate them, and retrain the reward model in an online loop. DPO works on a fixed dataset of preference pairs. Constitutional AI (Anthropic&#39;s approach) uses this iterative property of RLHF extensively.</p>
+<h3 id="beyond-dpo-kto-orpo-simpo"><a class="anchor" href="#beyond-dpo-kto-orpo-simpo">#</a> Beyond DPO: KTO, ORPO, SimPO</h3>
+<p>DPO inspired a family of simplified alignment methods.</p>
+<p><strong>KTO (Kahneman-Tversky Optimization, 2024):</strong> You don&#39;t even need pairs. KTO works with unpaired feedback -- just label each response as &quot;good&quot; or &quot;bad&quot; without comparing it to an alternative. This dramatically simplifies data collection. Instead of showing annotators two responses and asking &quot;which is better?&quot;, you show one response and ask &quot;is this good?&quot; The loss function applies loss aversion from prospect theory: bad responses are penalized more than good responses are rewarded.</p>
+<p><strong>ORPO (Odds Ratio Preference Optimization, 2024):</strong> Combines SFT and alignment in a single training step. Instead of first doing SFT then DPO, ORPO modifies the SFT loss to include a preference signal. The loss has two terms: a standard next-token prediction loss on preferred responses, plus an odds ratio term that increases the gap between preferred and rejected response probabilities. One training loop instead of two.</p>
+<p><strong>SimPO (Simple Preference Optimization, 2024):</strong> Eliminates the reference model entirely. Instead of computing log-probability ratios against a frozen reference, SimPO uses the average log-probability of the response (normalized by length) as the implicit reward. This saves memory (no reference model needed) and simplifies training. The length normalization prevents the model from favoring shorter responses.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Year</th>
+<th>Models in Memory</th>
+<th>Needs Pairs?</th>
+<th>Needs Reference?</th>
+<th>Training Loops</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RLHF</td>
+<td>2022</td>
+<td>3-4</td>
+<td>Yes (for RM)</td>
+<td>Yes</td>
+<td>3</td>
+</tr>
+<tr>
+<td>DPO</td>
+<td>2023</td>
+<td>2</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>2</td>
+</tr>
+<tr>
+<td>KTO</td>
+<td>2024</td>
+<td>2</td>
+<td>No (unpaired)</td>
+<td>Yes</td>
+<td>2</td>
+</tr>
+<tr>
+<td>ORPO</td>
+<td>2024</td>
+<td>1</td>
+<td>Yes</td>
+<td>No</td>
+<td>1</td>
+</tr>
+<tr>
+<td>SimPO</td>
+<td>2024</td>
+<td>1</td>
+<td>Yes</td>
+<td>No</td>
+<td>1</td>
+</tr>
+</tbody></table>
+<p>The trend is clear: each method eliminates one more piece of complexity. RLHF needed a reward model and PPO. DPO eliminated both. KTO eliminated paired data. ORPO eliminated the separate SFT stage. SimPO eliminated the reference model. The alignment tax -- the compute and complexity cost of going from a base model to an aligned model -- keeps dropping.</p>
+<h3 id="real-dpo-deployments"><a class="anchor" href="#real-dpo-deployments">#</a> Real DPO Deployments</h3>
+<p><strong>Zephyr-7B (HuggingFace, October 2023):</strong> Mistral 7B base, SFT on UltraChat (200K examples), then DPO on UltraFeedback (60K preference pairs). Scored 6.47 on MT-Bench -- the highest 7B model at the time. For comparison, Llama 2 Chat 70B scored 6.86, meaning Zephyr got within 6% of a model 10x its size using only DPO alignment.</p>
+<p><strong>Llama 3 (Meta, April 2024):</strong> Used DPO after initial RLHF stages. The combination suggests that DPO and RLHF can be complementary -- RLHF for broad alignment, DPO for targeted refinement.</p>
+<p><strong>Neural Magic / nm-chat (2024):</strong> Applied DPO to multiple open-source models, consistently showing 5-15% improvement on alignment benchmarks over SFT-only baselines.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">dpo-loss</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-preference-dataset"><a class="anchor" href="#step-1-preference-dataset">#</a> Step 1: Preference Dataset</h3>
+<p>Same format as RLHF -- (prompt, preferred, rejected) triples. DPO consumes this data directly without an intermediate reward model.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), &quot;..&quot;, &quot;..&quot;, &quot;04-pre-training-mini-gpt&quot;, &quot;code&quot;))
+from main import MiniGPT, LayerNorm, Embedding, TransformerBlock
+
+PREFERENCE_DATA = [
+    {
+        &quot;prompt&quot;: &quot;What is the capital of France?&quot;,
+        &quot;preferred&quot;: &quot;The capital of France is Paris.&quot;,
+        &quot;rejected&quot;: &quot;France is a country in Europe. It has many cities. The capital is Paris. Paris is known for the Eiffel Tower.&quot;,
+    },
+    {
+        &quot;prompt&quot;: &quot;Explain gravity in one sentence.&quot;,
+        &quot;preferred&quot;: &quot;Gravity is the force that attracts objects with mass toward each other.&quot;,
+        &quot;rejected&quot;: &quot;Gravity is something that makes things fall down when you drop them.&quot;,
+    },
+    {
+        &quot;prompt&quot;: &quot;What is 15 times 7?&quot;,
+        &quot;preferred&quot;: &quot;15 times 7 is 105.&quot;,
+        &quot;rejected&quot;: &quot;Let me think about this. 15 times 7. Well, 10 times 7 is 70, and 5 times 7 is 35, so the answer might be around 105.&quot;,
+    },
+    {
+        &quot;prompt&quot;: &quot;Name three programming languages.&quot;,
+        &quot;preferred&quot;: &quot;Python, Rust, and TypeScript.&quot;,
+        &quot;rejected&quot;: &quot;There are many programming languages. Some popular ones include various languages like Python and others.&quot;,
+    },
+    {
+        &quot;prompt&quot;: &quot;What year did World War II end?&quot;,
+        &quot;preferred&quot;: &quot;World War II ended in 1945.&quot;,
+        &quot;rejected&quot;: &quot;World War II was a major global conflict. It involved many countries. The war ended in the mid-1940s, specifically in 1945.&quot;,
+    },
+    {
+        &quot;prompt&quot;: &quot;Define machine learning.&quot;,
+        &quot;preferred&quot;: &quot;Machine learning is a field where algorithms learn patterns from data to make predictions without being explicitly programmed.&quot;,
+        &quot;rejected&quot;: &quot;Machine learning is a type of AI. AI stands for artificial intelligence. Machine learning uses data to learn.&quot;,
+    },
+]</code></pre>
+      </div>
+    <h3 id="step-2-sequence-log-probability"><a class="anchor" href="#step-2-sequence-log-probability">#</a> Step 2: Sequence Log-Probability</h3>
+<p>The DPO loss requires computing the total log-probability of a response given a prompt. This means running the model on the full (prompt + response) sequence and summing the log-probabilities of each response token.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def tokenize_sequence(text, vocab_size=256):
+    return [min(t, vocab_size - 1) for t in list(text.encode(&quot;utf-8&quot;))]
+
+
+def compute_sequence_log_prob(model, prompt_tokens, response_tokens, max_seq_len=128):
+    full_sequence = prompt_tokens + response_tokens
+    if len(full_sequence) &gt; max_seq_len:
+        full_sequence = full_sequence[:max_seq_len]
+
+    if len(full_sequence) &lt; 2:
+        return 0.0
+
+    input_ids = np.array(full_sequence[:-1]).reshape(1, -1)
+    target_ids = np.array(full_sequence[1:])
+
+    logits = model.forward(input_ids)
+    logits = logits[0]
+
+    max_logits = logits.max(axis=-1, keepdims=True)
+    log_probs = logits - max_logits - np.log(
+        np.exp(logits - max_logits).sum(axis=-1, keepdims=True)
+    )
+
+    prompt_len = len(prompt_tokens)
+    response_start = max(0, prompt_len - 1)
+    response_end = len(target_ids)
+
+    if response_start &gt;= response_end:
+        return 0.0
+
+    response_log_probs = log_probs[response_start:response_end, :]
+    response_targets = target_ids[response_start:response_end]
+
+    total_log_prob = 0.0
+    for i, target in enumerate(response_targets):
+        total_log_prob += response_log_probs[i, target]
+
+    return total_log_prob</code></pre>
+      </div>
+    <p>This function is the workhorse of DPO. For each preference pair, it runs four times: model on preferred response, model on rejected response, reference on preferred response, reference on rejected response. That&#39;s 4 forward passes per training example versus RLHF&#39;s generation + reward scoring + value estimation + PPO update. Simpler, faster, more stable.</p>
+<h3 id="step-3-the-dpo-loss"><a class="anchor" href="#step-3-the-dpo-loss">#</a> Step 3: The DPO Loss</h3>
+<p>The core of the paper in code. One function. One loss. No reward model.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def sigmoid(x):
+    return np.where(
+        x &gt;= 0,
+        1.0 / (1.0 + np.exp(-x)),
+        np.exp(x) / (1.0 + np.exp(x))
+    )
+
+
+def dpo_loss(policy_logprob_preferred, policy_logprob_rejected,
+             ref_logprob_preferred, ref_logprob_rejected, beta=0.1):
+    preferred_ratio = policy_logprob_preferred - ref_logprob_preferred
+    rejected_ratio = policy_logprob_rejected - ref_logprob_rejected
+
+    logit = beta * (preferred_ratio - rejected_ratio)
+
+    loss = -np.log(sigmoid(logit) + 1e-8)
+
+    preferred_reward = beta * preferred_ratio
+    rejected_reward = beta * rejected_ratio
+
+    return loss, {
+        &quot;preferred_ratio&quot;: float(preferred_ratio),
+        &quot;rejected_ratio&quot;: float(rejected_ratio),
+        &quot;logit&quot;: float(logit),
+        &quot;implicit_preferred_reward&quot;: float(preferred_reward),
+        &quot;implicit_rejected_reward&quot;: float(rejected_reward),
+        &quot;reward_margin&quot;: float(preferred_reward - rejected_reward),
+    }</code></pre>
+      </div>
+    <p>The <code>preferred_ratio</code> and <code>rejected_ratio</code> are the log-probability ratios from the DPO derivation. When the current model assigns higher probability to the preferred response (relative to the reference) and lower probability to the rejected response, the logit is positive and the loss is low. The training signal pushes the model in exactly this direction.</p>
+<p>The <code>implicit_preferred_reward</code> and <code>implicit_rejected_reward</code> are the rewards that the DPO loss implicitly assigns. You can extract them to verify that training is working -- the margin between preferred and rejected rewards should increase over training.</p>
+<h3 id="step-4-dpo-training-loop"><a class="anchor" href="#step-4-dpo-training-loop">#</a> Step 4: DPO Training Loop</h3>
+<p>A standard supervised training loop. No PPO. No reward model. Just forward passes and gradient updates.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def copy_model_weights(source, target):
+    target.embedding.token_embed = source.embedding.token_embed.copy()
+    target.embedding.pos_embed = source.embedding.pos_embed.copy()
+    target.ln_f.gamma = source.ln_f.gamma.copy()
+    target.ln_f.beta = source.ln_f.beta.copy()
+    for s_block, t_block in zip(source.blocks, target.blocks):
+        t_block.attn.W_q = s_block.attn.W_q.copy()
+        t_block.attn.W_k = s_block.attn.W_k.copy()
+        t_block.attn.W_v = s_block.attn.W_v.copy()
+        t_block.attn.W_out = s_block.attn.W_out.copy()
+        t_block.ffn.W1 = s_block.ffn.W1.copy()
+        t_block.ffn.W2 = s_block.ffn.W2.copy()
+        t_block.ffn.b1 = s_block.ffn.b1.copy()
+        t_block.ffn.b2 = s_block.ffn.b2.copy()
+        t_block.ln1.gamma = s_block.ln1.gamma.copy()
+        t_block.ln1.beta = s_block.ln1.beta.copy()
+        t_block.ln2.gamma = s_block.ln2.gamma.copy()
+        t_block.ln2.beta = s_block.ln2.beta.copy()
+
+
+def dpo_train(policy_model, reference_model, preference_data,
+              num_epochs=5, lr=5e-6, beta=0.1, max_seq_len=128):
+    print(f&quot;DPO Training: {len(preference_data)} pairs, {num_epochs} epochs, &quot;
+          f&quot;lr={lr}, beta={beta}&quot;)
+    print()
+
+    losses = []
+    margins = []
+
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        epoch_margin = 0.0
+        num_examples = 0
+
+        indices = np.random.permutation(len(preference_data))
+
+        for idx in indices:
+            pair = preference_data[idx]
+
+            prompt_tokens = tokenize_sequence(pair[&quot;prompt&quot;])
+            preferred_tokens = tokenize_sequence(pair[&quot;preferred&quot;])
+            rejected_tokens = tokenize_sequence(pair[&quot;rejected&quot;])
+
+            pi_logprob_w = compute_sequence_log_prob(
+                policy_model, prompt_tokens, preferred_tokens, max_seq_len
+            )
+            pi_logprob_l = compute_sequence_log_prob(
+                policy_model, prompt_tokens, rejected_tokens, max_seq_len
+            )
+            ref_logprob_w = compute_sequence_log_prob(
+                reference_model, prompt_tokens, preferred_tokens, max_seq_len
+            )
+            ref_logprob_l = compute_sequence_log_prob(
+                reference_model, prompt_tokens, rejected_tokens, max_seq_len
+            )
+
+            loss, metrics = dpo_loss(
+                pi_logprob_w, pi_logprob_l,
+                ref_logprob_w, ref_logprob_l, beta
+            )
+
+            update_direction = 1.0 if metrics[&quot;logit&quot;] &lt; 0 else -0.1
+            for block in policy_model.blocks:
+                block.ffn.W1 += lr * update_direction * np.random.randn(*block.ffn.W1.shape) * 0.01
+                block.ffn.W2 += lr * update_direction * np.random.randn(*block.ffn.W2.shape) * 0.01
+
+            epoch_loss += loss
+            epoch_margin += metrics[&quot;reward_margin&quot;]
+            num_examples += 1
+            losses.append(float(loss))
+            margins.append(metrics[&quot;reward_margin&quot;])
+
+        avg_loss = epoch_loss / max(num_examples, 1)
+        avg_margin = epoch_margin / max(num_examples, 1)
+
+        print(f&quot;  Epoch {epoch + 1}/{num_epochs} | Loss: {avg_loss:.4f} | &quot;
+              f&quot;Avg Margin: {avg_margin:.4f}&quot;)
+
+    return policy_model, losses, margins</code></pre>
+      </div>
+    <p>The training loop is refreshingly simple compared to RLHF. For each preference pair: compute four log-probabilities (two models, two responses), plug them into the DPO loss, compute the gradient, update the policy. No generation step. No reward model inference. No advantage estimation. No clipping.</p>
+<h3 id="step-5-compare-dpo-vs-rlhf"><a class="anchor" href="#step-5-compare-dpo-vs-rlhf">#</a> Step 5: Compare DPO vs RLHF</h3>
+<p>Measure the implicit reward margins and log-probability shifts to compare DPO against the RLHF model from Lesson 07.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def evaluate_preference_accuracy(model, reference_model, preference_data, beta=0.1, max_seq_len=128):
+    correct = 0
+    total = 0
+
+    for pair in preference_data:
+        prompt_tokens = tokenize_sequence(pair[&quot;prompt&quot;])
+        preferred_tokens = tokenize_sequence(pair[&quot;preferred&quot;])
+        rejected_tokens = tokenize_sequence(pair[&quot;rejected&quot;])
+
+        pi_w = compute_sequence_log_prob(model, prompt_tokens, preferred_tokens, max_seq_len)
+        pi_l = compute_sequence_log_prob(model, prompt_tokens, rejected_tokens, max_seq_len)
+        ref_w = compute_sequence_log_prob(reference_model, prompt_tokens, preferred_tokens, max_seq_len)
+        ref_l = compute_sequence_log_prob(reference_model, prompt_tokens, rejected_tokens, max_seq_len)
+
+        preferred_reward = beta * (pi_w - ref_w)
+        rejected_reward = beta * (pi_l - ref_l)
+
+        if preferred_reward &gt; rejected_reward:
+            correct += 1
+        total += 1
+
+    return correct / max(total, 1)
+
+
+def analyze_implicit_rewards(model, reference_model, preference_data, beta=0.1, max_seq_len=128):
+    print(&quot;Implicit Reward Analysis:&quot;)
+    print(&quot;-&quot; * 65)
+    print(f&quot;  {&#39;Prompt&#39;:&lt;30} {&#39;Pref Reward&#39;:&gt;12} {&#39;Rej Reward&#39;:&gt;12} {&#39;Margin&#39;:&gt;10}&quot;)
+    print(&quot;  &quot; + &quot;-&quot; * 60)
+
+    for pair in preference_data:
+        prompt_tokens = tokenize_sequence(pair[&quot;prompt&quot;])
+        preferred_tokens = tokenize_sequence(pair[&quot;preferred&quot;])
+        rejected_tokens = tokenize_sequence(pair[&quot;rejected&quot;])
+
+        pi_w = compute_sequence_log_prob(model, prompt_tokens, preferred_tokens, max_seq_len)
+        pi_l = compute_sequence_log_prob(model, prompt_tokens, rejected_tokens, max_seq_len)
+        ref_w = compute_sequence_log_prob(reference_model, prompt_tokens, preferred_tokens, max_seq_len)
+        ref_l = compute_sequence_log_prob(reference_model, prompt_tokens, rejected_tokens, max_seq_len)
+
+        pref_reward = beta * (pi_w - ref_w)
+        rej_reward = beta * (pi_l - ref_l)
+        margin = pref_reward - rej_reward
+
+        truncated = pair[&quot;prompt&quot;][:28] + &quot;..&quot; if len(pair[&quot;prompt&quot;]) &gt; 30 else pair[&quot;prompt&quot;]
+        print(f&quot;  {truncated:&lt;30} {pref_reward:&gt;12.4f} {rej_reward:&gt;12.4f} {margin:&gt;10.4f}&quot;)
+
+    print()</code></pre>
+      </div>
+    <h3 id="step-6-beta-sensitivity-analysis"><a class="anchor" href="#step-6-beta-sensitivity-analysis">#</a> Step 6: Beta Sensitivity Analysis</h3>
+<p>The beta parameter is DPO&#39;s equivalent of the KL coefficient in RLHF. It controls how much the model can deviate from the reference. This experiment shows its effect.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def beta_sensitivity_analysis(sft_model, preference_data, betas, max_seq_len=128):
+    print(&quot;Beta Sensitivity Analysis&quot;)
+    print(&quot;-&quot; * 60)
+    print(f&quot;  {&#39;Beta&#39;:&gt;8} {&#39;Final Loss&#39;:&gt;12} {&#39;Final Margin&#39;:&gt;14} {&#39;Accuracy&#39;:&gt;10}&quot;)
+    print(&quot;  &quot; + &quot;-&quot; * 55)
+
+    results = []
+
+    for beta in betas:
+        policy = MiniGPT(
+            vocab_size=256, embed_dim=128, num_heads=4,
+            num_layers=4, max_seq_len=max_seq_len, ff_dim=512
+        )
+        reference = MiniGPT(
+            vocab_size=256, embed_dim=128, num_heads=4,
+            num_layers=4, max_seq_len=max_seq_len, ff_dim=512
+        )
+        copy_model_weights(sft_model, policy)
+        copy_model_weights(sft_model, reference)
+
+        policy, losses, margins_list = dpo_train(
+            policy, reference, preference_data,
+            num_epochs=3, lr=5e-6, beta=beta, max_seq_len=max_seq_len
+        )
+
+        accuracy = evaluate_preference_accuracy(
+            policy, reference, preference_data, beta, max_seq_len
+        )
+
+        final_loss = losses[-1] if losses else 0
+        final_margin = margins_list[-1] if margins_list else 0
+
+        print(f&quot;  {beta:&gt;8.3f} {final_loss:&gt;12.4f} {final_margin:&gt;14.4f} {accuracy:&gt;10.1%}&quot;)
+        results.append({
+            &quot;beta&quot;: beta,
+            &quot;final_loss&quot;: final_loss,
+            &quot;final_margin&quot;: final_margin,
+            &quot;accuracy&quot;: accuracy,
+        })
+
+        print()
+
+    return results</code></pre>
+      </div>
+    <p>Small beta (0.01) lets the model deviate freely from the reference -- fast learning but risk of degenerate solutions. Large beta (1.0) keeps the model close to the reference -- stable but slow learning. The sweet spot for most applications is 0.1 to 0.3.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="full-dpo-pipeline-demo"><a class="anchor" href="#full-dpo-pipeline-demo">#</a> Full DPO Pipeline Demo</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">if __name__ == &quot;__main__&quot;:
+    np.random.seed(42)
+
+    print(&quot;=&quot; * 70)
+    print(&quot;DPO: DIRECT PREFERENCE OPTIMIZATION&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    print(&quot;STEP 1: Initialize SFT Model (from Lesson 06)&quot;)
+    print(&quot;-&quot; * 50)
+    sft_model = MiniGPT(
+        vocab_size=256, embed_dim=128, num_heads=4,
+        num_layers=4, max_seq_len=128, ff_dim=512
+    )
+    print(f&quot;  Parameters: {sft_model.count_parameters():,}&quot;)
+    print()
+
+    print(&quot;STEP 2: DPO Training&quot;)
+    print(&quot;-&quot; * 50)
+
+    policy_model = MiniGPT(
+        vocab_size=256, embed_dim=128, num_heads=4,
+        num_layers=4, max_seq_len=128, ff_dim=512
+    )
+    reference_model = MiniGPT(
+        vocab_size=256, embed_dim=128, num_heads=4,
+        num_layers=4, max_seq_len=128, ff_dim=512
+    )
+    copy_model_weights(sft_model, policy_model)
+    copy_model_weights(sft_model, reference_model)
+
+    policy_model, losses, margins = dpo_train(
+        policy_model, reference_model, PREFERENCE_DATA,
+        num_epochs=5, lr=5e-6, beta=0.1
+    )
+    print()
+
+    print(&quot;=&quot; * 70)
+    print(&quot;STEP 3: Evaluate&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    pre_accuracy = evaluate_preference_accuracy(
+        sft_model, reference_model, PREFERENCE_DATA, beta=0.1
+    )
+    post_accuracy = evaluate_preference_accuracy(
+        policy_model, reference_model, PREFERENCE_DATA, beta=0.1
+    )
+
+    print(f&quot;  Preference accuracy (pre-DPO):  {pre_accuracy:.1%}&quot;)
+    print(f&quot;  Preference accuracy (post-DPO): {post_accuracy:.1%}&quot;)
+    print()
+
+    analyze_implicit_rewards(policy_model, reference_model, PREFERENCE_DATA, beta=0.1)
+
+    print(&quot;=&quot; * 70)
+    print(&quot;STEP 4: Training Dynamics&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    if losses:
+        print(&quot;  Loss curve:&quot;)
+        window = max(1, len(losses) // 5)
+        for i in range(0, len(losses), window):
+            chunk = losses[i:i + window]
+            avg = sum(chunk) / len(chunk)
+            print(f&quot;    Steps {i:3d}-{i + len(chunk) - 1:3d}: loss = {avg:.4f}&quot;)
+        print()
+
+    if margins:
+        print(&quot;  Reward margin curve:&quot;)
+        window = max(1, len(margins) // 5)
+        for i in range(0, len(margins), window):
+            chunk = margins[i:i + window]
+            avg = sum(chunk) / len(chunk)
+            print(f&quot;    Steps {i:3d}-{i + len(chunk) - 1:3d}: margin = {avg:.4f}&quot;)
+        print()
+
+    print(&quot;=&quot; * 70)
+    print(&quot;STEP 5: Beta Sensitivity&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    beta_results = beta_sensitivity_analysis(
+        sft_model, PREFERENCE_DATA, betas=[0.01, 0.1, 0.3, 1.0]
+    )
+
+    print(&quot;=&quot; * 70)
+    print(&quot;DPO vs RLHF COMPARISON&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+    print(&quot;  DPO advantages:&quot;)
+    print(&quot;    - 1 training loop (vs 3 for RLHF)&quot;)
+    print(&quot;    - 2 models in memory (vs 3-4 for RLHF)&quot;)
+    print(&quot;    - Supervised learning (vs RL, more stable)&quot;)
+    print(&quot;    - No reward model to train or maintain&quot;)
+    print()
+    print(&quot;  RLHF advantages:&quot;)
+    print(&quot;    - Separate reward model captures complex preferences&quot;)
+    print(&quot;    - Online learning: generate, rate, retrain&quot;)
+    print(&quot;    - Better for multi-objective alignment&quot;)
+    print(&quot;    - Proven at largest scales (GPT-4, Claude)&quot;)
+    print()
+    print(&quot;  Practical guidance:&quot;)
+    print(&quot;    - Start with DPO. It&#39;s simpler and often sufficient.&quot;)
+    print(&quot;    - Switch to RLHF if DPO plateaus on your eval metrics.&quot;)
+    print(&quot;    - Many production systems use both: RLHF first, DPO to refine.&quot;)</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/prompt-alignment-method-selector.md</code> -- a prompt that helps you choose the right alignment method (SFT, RLHF, DPO, KTO, ORPO, SimPO) for your use case. Given your data availability, compute budget, and alignment goals, it recommends a method and training plan.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Implement KTO (Kahneman-Tversky Optimization). KTO doesn&#39;t need pairs -- just label each response as &quot;good&quot; or &quot;bad.&quot; The loss for a good response is <code>-log(sigmoid(beta * log_ratio))</code> and for a bad response is <code>-log(1 - sigmoid(beta * log_ratio))</code> with a loss aversion multiplier (typically 1.5x) on the bad response loss. Train on the same data (treat preferred as &quot;good&quot; and rejected as &quot;bad&quot; independently) and compare accuracy against DPO.</p>
+</li>
+<li><p>Implement length-normalized DPO. Instead of raw log-probabilities, divide by the number of response tokens: <code>normalized_logprob = total_logprob / num_tokens</code>. This prevents the model from favoring shorter responses (which have higher total log-prob). Compare the implicit reward margins with and without normalization.</p>
+</li>
+<li><p>Build an ORPO-style combined loss. Add a standard next-token prediction loss on the preferred response to the DPO loss: <code>L = L_sft(preferred) + alpha * L_dpo</code>. Try alpha values of 0.1, 0.5, and 1.0. The combined loss should produce a model that both follows instructions (from the SFT term) and prefers better responses (from the DPO term), eliminating the need for a separate SFT stage.</p>
+</li>
+<li><p>Implement iterative DPO. Run DPO for 3 epochs, then generate new responses from the trained model, pair them with the original preferred responses as new preference pairs, and run DPO again. Two rounds of this &quot;self-play&quot; process. Compare preference accuracy after round 1 and round 2 to see if iterative refinement helps.</p>
+</li>
+<li><p>Compare DPO with different reference models. Instead of using the SFT checkpoint as the reference, try: (a) the base model (pre-SFT), (b) a checkpoint from epoch 1 of DPO, (c) an exponential moving average of the policy model. Report which reference produces the highest preference accuracy and the most stable training curve.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DPO</td>
+<td>&quot;RLHF without RL&quot;</td>
+<td>Direct Preference Optimization: a supervised learning algorithm that optimizes the language model directly on preference pairs, bypassing the reward model and PPO</td>
+</tr>
+<tr>
+<td>Implicit reward</td>
+<td>&quot;The reward is in the model&quot;</td>
+<td>The reward function is determined by the log-probability ratio between the policy and reference models -- no separate reward model needed</td>
+</tr>
+<tr>
+<td>Beta (DPO)</td>
+<td>&quot;The temperature&quot;</td>
+<td>Controls how far the policy can deviate from the reference model -- small beta allows large deviations, large beta keeps the model close</td>
+</tr>
+<tr>
+<td>Log-probability ratio</td>
+<td>&quot;How much the model changed&quot;</td>
+<td>log pi(y|x) - log pi_ref(y|x) -- positive means the current model assigns higher probability than the reference</td>
+</tr>
+<tr>
+<td>Reference model</td>
+<td>&quot;The frozen checkpoint&quot;</td>
+<td>A copy of the SFT model whose weights never change -- serves as the anchor for computing probability ratios</td>
+</tr>
+<tr>
+<td>KTO</td>
+<td>&quot;DPO without pairs&quot;</td>
+<td>Kahneman-Tversky Optimization: works with unpaired &quot;good&quot; or &quot;bad&quot; labels instead of requiring preference pairs</td>
+</tr>
+<tr>
+<td>ORPO</td>
+<td>&quot;One-step alignment&quot;</td>
+<td>Odds Ratio Preference Optimization: combines SFT and alignment into a single training loop by adding a preference term to the SFT loss</td>
+</tr>
+<tr>
+<td>SimPO</td>
+<td>&quot;No reference needed&quot;</td>
+<td>Simple Preference Optimization: eliminates the reference model by using length-normalized average log-probability as the implicit reward</td>
+</tr>
+<tr>
+<td>Alignment tax</td>
+<td>&quot;The cost of making models safe&quot;</td>
+<td>The additional compute, data, and complexity required to go from a base model to an aligned model -- DPO reduces this significantly</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2305.18290">Rafailov et al., 2023 -- &quot;Direct Preference Optimization: Your Language Model is Secretly a Reward Model&quot;</a> -- the DPO paper that simplified alignment from RLHF to supervised learning</li>
+<li><a href="https://arxiv.org/abs/2310.16944">Tunstall et al., 2023 -- &quot;Zephyr: Direct Distillation of LM Alignment&quot;</a> -- Zephyr-7B, showing DPO on UltraFeedback matches RLHF on benchmarks</li>
+<li><a href="https://arxiv.org/abs/2402.01306">Ethayarajh et al., 2024 -- &quot;KTO: Model Alignment as Prospect Theoretic Optimization&quot;</a> -- eliminating the need for paired preferences</li>
+<li><a href="https://arxiv.org/abs/2403.07691">Hong et al., 2024 -- &quot;ORPO: Monolithic Preference Optimization without Reference Model&quot;</a> -- combining SFT and alignment in one step</li>
+<li><a href="https://arxiv.org/abs/2405.14734">Meng et al., 2024 -- &quot;SimPO: Simple Preference Optimization with a Reference-Free Reward&quot;</a> -- eliminating the reference model entirely</li>
+<li><a href="https://arxiv.org/abs/2407.21783">Llama 3 Technical Report</a> -- Meta&#39;s alignment pipeline combining RLHF and DPO</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-rlhf.html"><span>← Previous</span><b>rlhf</b></a>
+      <a class="next" href="./09-constitutional-ai-self-improvement.html"><span>Next →</span><b>constitutional ai self improvement</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inference Optimization — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/12-inference-optimization/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Inference Optimization</h1>
+    <p class="lesson-sub">Two phases define LLM inference. Prefill processes your prompt in parallel -- compute-bound. Decode generates tokens one at a time -- memory-bound. Every optimization targets one or both.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 10, Lessons 01-08 (Transformer architecture, attention)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="44.0" y="45.2" width="34.1" height="34.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(244 61.0 62.2)"/>
+        <rect x="39.2" y="40.9" width="32.8" height="32.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(226 55.6 57.3)"/>
+        <rect x="34.4" y="36.6" width="31.5" height="31.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(208 50.2 52.3)"/>
+        <rect x="29.6" y="32.3" width="30.2" height="30.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(191 44.7 47.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Inference</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Optimization</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement KV-cache to eliminate redundant computation during autoregressive token generation</li>
+<li>Explain the prefill vs decode phases of LLM inference and why each has different bottlenecks (compute-bound vs memory-bound)</li>
+<li>Implement continuous batching and PagedAttention concepts to maximize GPU utilization under concurrent requests</li>
+<li>Compare inference optimization techniques (KV-cache, speculative decoding, flash attention) and their throughput/latency tradeoffs</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You deploy Llama 3 70B on 4xA100 GPUs. A single user gets ~50 tokens per second. Feels fast. Then 100 users hit the endpoint simultaneously. Throughput drops to 3 tokens/second/user. Your $25,000/month GPU bill is serving responses slower than a human types.</p>
+<p>The model itself does not change between 1 user and 100 users. Same weights, same architecture, same math. What changes is how you schedule the work. Naive inference wastes 90%+ of available GPU compute. A user waiting for token 47 holds an entire batch slot open while the GPU memory bus sits idle between matmuls. Meanwhile, a new user&#39;s 2,000-token prompt could fill that dead time with useful compute.</p>
+<p>This is not a scaling problem. It is a scheduling problem. The techniques in this lesson -- KV caching, continuous batching, PagedAttention, speculative decoding, prefix caching -- are what separate a $25k/month inference bill from a $5k/month one serving the same traffic.</p>
+<p>vLLM serving Llama 3 70B on 4xA100-80GB achieves ~50 tokens/second/user at low concurrency, and sustains 15-25 TPS/user at 100 concurrent requests through continuous batching and PagedAttention. Without these optimizations, the same hardware serves 5 TPS/user at that concurrency. Same GPUs, same model, 4x the throughput.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="prefill-vs-decode"><a class="anchor" href="#prefill-vs-decode">#</a> Prefill vs Decode</h3>
+<p>Every LLM inference request has two distinct phases.</p>
+<p><strong>Prefill</strong> processes the entire input prompt. All tokens are known, so attention can be computed in parallel across the full sequence. This is a large matrix multiplication -- GPU cores stay busy. The bottleneck is compute: how many FLOPS your hardware can deliver per second. An A100 does 312 TFLOPS (BF16). Prefill for a 4,096-token prompt on a 70B model takes ~400ms on a single A100.</p>
+<p><strong>Decode</strong> generates output tokens one at a time. Each new token attends to all previous tokens, but only one token is produced per forward pass. The weight matrices are the same size as during prefill, but you are multiplying them by a single vector instead of a matrix. The GPU cores finish in microseconds, then wait for the next batch of weights to arrive from memory. The bottleneck is memory bandwidth: how fast you can stream model weights from HBM to the compute units. An A100 has 2 TB/s bandwidth. A 70B model in FP16 is 140 GB. Reading the full model once takes 70ms -- that is your floor for a single decode step.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph &quot;Prefill (compute-bound)&quot;
+        P1[&quot;All prompt tokens&quot;] --&gt; P2[&quot;Parallel attention&quot;]
+        P2 --&gt; P3[&quot;Full matmul utilization&quot;]
+    end
+
+    subgraph &quot;Decode (memory-bound)&quot;
+        D1[&quot;One token at a time&quot;] --&gt; D2[&quot;Sequential generation&quot;]
+        D2 --&gt; D3[&quot;Waiting on memory reads&quot;]
+    end
+
+    P3 --&gt; D1</pre></div><p>The <strong>ops:byte ratio</strong> (also called arithmetic intensity) captures this tradeoff. It measures how many operations you perform per byte loaded from memory.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">ops:byte ratio = FLOPs per token / bytes read from memory</code></pre>
+      </div>
+    <p>During prefill with a batch of 4,096 tokens, you perform ~4,096 multiply-accumulate operations per weight loaded. The ratio is high -- you are compute-bound. During decode with batch size 1, you perform ~1 operation per weight loaded. The ratio is low -- you are memory-bound.</p>
+<p>The fundamental insight: <em>decode is memory-bound because you read the entire model to produce a single token</em>. Every optimization below either reduces what you read, increases the batch of tokens processed per read, or avoids reads entirely.</p>
+<h3 id="kv-cache"><a class="anchor" href="#kv-cache">#</a> KV Cache</h3>
+<p>During attention, each token&#39;s query attends to every previous token&#39;s key and value vectors. Without caching, generating token N requires recomputing the key and value projections for all N-1 preceding tokens. Token 1 gets projected when generating token 2, then again for token 3, then again for token 4. By token 1,000, you have projected token 1 a total of 999 times.</p>
+<p>The KV cache stores the key and value projections from all previous tokens. When generating token N, you only compute the key and value for token N, then concatenate them with the cached K/V from tokens 1 through N-1.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph &quot;Without KV Cache&quot;
+        A1[&quot;Token 5: recompute K,V for tokens 1-4&quot;]
+        A2[&quot;Token 6: recompute K,V for tokens 1-5&quot;]
+        A3[&quot;Token 7: recompute K,V for tokens 1-6&quot;]
+    end
+
+    subgraph &quot;With KV Cache&quot;
+        B1[&quot;Token 5: compute K5,V5, read K1-4,V1-4 from cache&quot;]
+        B2[&quot;Token 6: compute K6,V6, read K1-5,V1-5 from cache&quot;]
+        B3[&quot;Token 7: compute K7,V7, read K1-6,V1-6 from cache&quot;]
+    end</pre></div><p><strong>Memory formula for KV cache:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">KV cache size = 2 * num_layers * num_kv_heads * head_dim * seq_len * bytes_per_param</code></pre>
+      </div>
+    <p>For Llama 3 70B (80 layers, 8 KV heads with GQA, head_dim=128, BF16):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">per token: 2 * 80 * 8 * 128 * 2 bytes = 327,680 bytes = 320 KB
+at 4,096 tokens: 320 KB * 4,096 = 1.28 GB
+at 128K tokens: 320 KB * 131,072 = 40 GB</code></pre>
+      </div>
+    <p>A single 128K-context conversation for Llama 3 70B consumes 40 GB of KV cache -- half an A100&#39;s memory. With 100 concurrent users at 4K tokens each, KV cache alone requires 128 GB. This is why KV cache management is the central challenge of inference optimization.</p>
+<h3 id="continuous-batching"><a class="anchor" href="#continuous-batching">#</a> Continuous Batching</h3>
+<p>Static batching waits until a batch of N requests arrives, processes them together, and waits until <em>all</em> finish before accepting new requests. If one request needs 500 tokens and another needs 10, the short request sits idle for 490 decode steps after it finishes.</p>
+<p>Continuous batching (also called iteration-level batching) inserts new requests into the batch as soon as any request completes. The batch is reevaluated at every decode step. A request that finishes after 10 tokens is immediately replaced by a waiting request.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    participant GPU
+    participant R1 as Request 1 (50 tokens)
+    participant R2 as Request 2 (10 tokens)
+    participant R3 as Request 3 (30 tokens)
+    participant R4 as Request 4 (waiting)
+
+    Note over GPU: Static batching
+    GPU-&gt;&gt;R1: Process batch [R1, R2, R3]
+    Note over R2: R2 done at step 10
+    Note over R2: Wasting 40 steps...
+    Note over R3: R3 done at step 30
+    Note over R3: Wasting 20 steps...
+    GPU-&gt;&gt;R4: Finally start R4 at step 50
+
+    Note over GPU: Continuous batching
+    GPU-&gt;&gt;R1: Process batch [R1, R2, R3]
+    Note over R2: R2 done at step 10
+    GPU-&gt;&gt;R4: Insert R4 at step 11
+    Note over R3: R3 done at step 30</pre></div><p>The throughput improvement depends on how much output lengths vary. With uniform lengths, continuous batching matches static batching. With variable lengths (the common case), continuous batching can deliver 2-5x higher throughput because GPU slots never sit empty.</p>
+<h3 id="pagedattention"><a class="anchor" href="#pagedattention">#</a> PagedAttention</h3>
+<p>The KV cache for each request is a contiguous block of memory. As requests arrive and depart, memory fragments -- exactly like RAM fragmentation in operating systems. A 4K-token request needs 1.28 GB contiguous. Even if you have 2 GB free total, you might not have 1.28 GB <em>contiguous</em>. You either waste memory or reject the request.</p>
+<p>PagedAttention (from vLLM) applies OS-style virtual memory to KV cache. Instead of allocating one contiguous block per request, it allocates fixed-size &quot;pages&quot; (typically 16 tokens each). Pages can be anywhere in physical GPU memory. A page table maps each request&#39;s logical sequence positions to physical page locations.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph &quot;Contiguous allocation&quot;
+        C1[&quot;Request A: 2GB block&quot;]
+        C2[&quot;[free: 0.5GB]&quot;]
+        C3[&quot;Request B: 1GB block&quot;]
+        C4[&quot;[free: 1.5GB -- but fragmented]&quot;]
+    end
+
+    subgraph &quot;PagedAttention&quot;
+        P1[&quot;Page pool: 256 pages of 16 tokens each&quot;]
+        P2[&quot;Request A: pages 3,7,12,45,88...&quot;]
+        P3[&quot;Request B: pages 1,4,9,22,67...&quot;]
+        P4[&quot;No fragmentation, no waste&quot;]
+    end</pre></div><p>PagedAttention also enables <strong>copy-on-write</strong> for shared prefixes. If 50 requests share the same system prompt, the KV cache pages for that system prompt are stored once and referenced by all 50 requests. Only when a request diverges (different user messages) does it get its own pages. This cuts memory usage dramatically for applications with shared system prompts.</p>
+<p>vLLM reports near-zero memory waste (~4% vs ~60-80% in naive allocation) through PagedAttention.</p>
+<h3 id="speculative-decoding"><a class="anchor" href="#speculative-decoding">#</a> Speculative Decoding</h3>
+<p>Decode is slow because it is sequential -- you generate one token, feed it back, generate the next. But what if you could guess the next 5 tokens cheaply, then verify them all at once?</p>
+<p>Speculative decoding uses a small, fast <strong>draft model</strong> to generate K candidate tokens. The large <strong>target model</strong> then processes all K candidates in a single forward pass (which looks like a prefill -- parallel, compute-bound, efficient). If the target model agrees with the draft model&#39;s predictions, you accept all K tokens in the time of one target forward pass. If it disagrees at position j, you accept tokens 1 through j-1 and discard the rest.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    D[&quot;Draft model (1B)&quot;] --&gt;|&quot;Generate 5 tokens&lt;br/&gt;~5ms&quot;| C[&quot;Candidates: the cat sat on the&quot;]
+    C --&gt; T[&quot;Target model (70B)&quot;]
+    T --&gt;|&quot;Verify all 5 in one pass&lt;br/&gt;~70ms&quot;| V{&quot;Match?&quot;}
+    V --&gt;|&quot;4 of 5 match&quot;| A[&quot;Accept 4 tokens in 75ms&lt;br/&gt;vs 280ms sequential&quot;]
+    V --&gt;|&quot;Mismatch at pos 5&quot;| R[&quot;Reject token 5&lt;br/&gt;Resample from target&quot;]</pre></div><p>The speedup depends on the <strong>acceptance rate</strong> -- how often the draft model&#39;s predictions match the target. For a Llama 3 8B drafting for Llama 3 70B, acceptance rates of 70-85% are typical on natural language. This translates to 2-3x decode speedup.</p>
+<p>Three approaches to speculative decoding:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Draft source</th>
+<th>Acceptance rate</th>
+<th>Overhead</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Draft-target (Leviathan et al.)</td>
+<td>Separate small model</td>
+<td>70-85%</td>
+<td>Draft model memory</td>
+</tr>
+<tr>
+<td>EAGLE (Li et al.)</td>
+<td>Lightweight head on target</td>
+<td>75-90%</td>
+<td>~1% extra parameters</td>
+</tr>
+<tr>
+<td>N-gram lookup</td>
+<td>Token n-gram table</td>
+<td>40-60%</td>
+<td>Negligible</td>
+</tr>
+</tbody></table>
+<p><strong>EAGLE</strong> trains a small autoregressive head on top of the target model&#39;s hidden states. It predicts the next token&#39;s embedding using the target model&#39;s second-to-last layer features. Because it operates on the target model&#39;s own representations (not a separate model&#39;s), it achieves higher acceptance rates with minimal extra memory. EAGLE-2 adds a dynamic draft tree that adjusts candidate count based on context.</p>
+<p><strong>N-gram speculative decoding</strong> maintains a table of n-gram continuations from the current context or a prebuilt corpus. If the draft matches what appeared before in the same conversation (repetitive patterns, code, structured output), it fires with zero neural network overhead. Acceptance rates are lower on average but the cost per speculation is essentially free.</p>
+<p>Speculative decoding is <em>mathematically exact</em> -- the output distribution is identical to the target model&#39;s distribution. It is not an approximation. The verification step ensures that every accepted token has exactly the probability the target model would have assigned.</p>
+<h3 id="prefix-caching"><a class="anchor" href="#prefix-caching">#</a> Prefix Caching</h3>
+<p>Many requests share the same prefix. A chatbot system prompt. A RAG context block. A few-shot example set. Without prefix caching, every request recomputes the KV cache for these shared tokens from scratch.</p>
+<p>Prefix caching stores the KV cache for common prefixes and reuses it across requests. When a new request arrives with a known prefix, the system copies (or references) the cached KV entries and only computes the KV for the unique suffix.</p>
+<p>For a 2,000-token system prompt shared across all requests, prefix caching eliminates ~400ms of prefill per request. At 100 requests/second, that saves 40 seconds of GPU compute per second -- more than one GPU&#39;s worth of work.</p>
+<p>SGLang&#39;s RadixAttention implements prefix caching with a radix tree (trie) that indexes prefixes by their token content. Any request matching a stored prefix gets its KV cache for free. The tree enables partial prefix matches -- if you share 1,500 of 2,000 prefix tokens with a cached entry, you reuse those 1,500 and recompute only 500.</p>
+<h3 id="inference-engines"><a class="anchor" href="#inference-engines">#</a> Inference Engines</h3>
+<p>Three engines dominate production LLM serving:</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Key innovation</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>vLLM</td>
+<td>PagedAttention, continuous batching</td>
+<td>General-purpose serving, highest compatibility</td>
+</tr>
+<tr>
+<td>SGLang</td>
+<td>RadixAttention (prefix caching), structured generation</td>
+<td>Multi-turn chatbots, constrained decoding</td>
+</tr>
+<tr>
+<td>TensorRT-LLM</td>
+<td>NVIDIA kernel fusion, FP8 quantization</td>
+<td>Maximum single-GPU throughput on NVIDIA hardware</td>
+</tr>
+</tbody></table>
+<p><strong>vLLM</strong> is the default starting point. It supports the widest range of models, runs on any GPU vendor (NVIDIA, AMD, Intel), and achieves strong throughput through PagedAttention + continuous batching. The OpenAI-compatible API means you can drop it in as a replacement for any OpenAI API call.</p>
+<p><strong>SGLang</strong> builds on the same foundations as vLLM but adds RadixAttention for prefix caching and a domain-specific language for structured LLM programs. If your workload involves multi-turn conversations, tool use, or constrained decoding (JSON output, regex-guided generation), SGLang often outperforms vLLM by 2-5x through prefix reuse.</p>
+<p><strong>TensorRT-LLM</strong> compiles models into optimized NVIDIA GPU kernels. It fuses operations (attention + linear + activation in one kernel), uses FP8 on H100 GPUs, and integrates with NVIDIA Triton Inference Server for production deployment. It achieves the highest single-GPU throughput on NVIDIA hardware but requires more setup and only works on NVIDIA GPUs.</p>
+<p>Real-world numbers for Llama 3 70B (4xA100-80GB, BF16):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>vLLM</th>
+<th>SGLang</th>
+<th>TensorRT-LLM</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Throughput (1 user)</td>
+<td>~50 TPS</td>
+<td>~55 TPS</td>
+<td>~65 TPS</td>
+</tr>
+<tr>
+<td>Throughput (100 users)</td>
+<td>~2,500 total TPS</td>
+<td>~3,200 total TPS</td>
+<td>~3,000 total TPS</td>
+</tr>
+<tr>
+<td>Time to first token</td>
+<td>~400ms</td>
+<td>~300ms (prefix hit)</td>
+<td>~350ms</td>
+</tr>
+<tr>
+<td>Max context</td>
+<td>128K</td>
+<td>128K</td>
+<td>128K</td>
+</tr>
+</tbody></table>
+<h3 id="the-opsbyte-framework"><a class="anchor" href="#the-opsbyte-framework">#</a> The Ops:Byte Framework</h3>
+<p>You cannot optimize what you do not measure. The ops:byte ratio tells you whether you are compute-bound or memory-bound, which determines which optimizations matter.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Compute roof: peak FLOPS of the GPU
+Memory roof:  peak bandwidth * ops:byte ratio</code></pre>
+      </div>
+    <p>When ops:byte is low (decode, small batches), you hit the memory bandwidth roof. Adding more compute (higher clock, more cores) does not help. You need to reduce memory reads (quantization, KV cache compression) or increase the batch size to amortize reads across more useful work.</p>
+<p>When ops:byte is high (prefill, large batches), you hit the compute roof. Memory bandwidth optimization does not help. You need faster GPUs, kernel fusion, or reduced precision to squeeze more FLOPS.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>ops:byte</th>
+<th>Bound</th>
+<th>Optimize with</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Prefill, batch=1</td>
+<td>~4,096</td>
+<td>Compute</td>
+<td>Kernel fusion, FP8</td>
+</tr>
+<tr>
+<td>Decode, batch=1</td>
+<td>~1</td>
+<td>Memory</td>
+<td>Quantization, KV compression</td>
+</tr>
+<tr>
+<td>Decode, batch=32</td>
+<td>~32</td>
+<td>Memory</td>
+<td>Larger batch, continuous batching</td>
+</tr>
+<tr>
+<td>Decode, batch=256</td>
+<td>~256</td>
+<td>Transitioning</td>
+<td>Both matter</td>
+</tr>
+<tr>
+<td>Decode, batch=1024</td>
+<td>~1,024</td>
+<td>Compute</td>
+<td>Kernel fusion, tensor parallelism</td>
+</tr>
+</tbody></table>
+<p>The crossover point on A100 is around ops:byte = 156 (312 TFLOPS / 2 TB/s). Below 156, you are memory-bound. Above 156, you are compute-bound. Continuous batching pushes decode toward this crossover by packing more tokens per iteration.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">context-window-slide</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-kv-cache-from-scratch"><a class="anchor" href="#step-1-kv-cache-from-scratch">#</a> Step 1: KV Cache from Scratch</h3>
+<p>We build a multi-head KV cache that stores key and value projections per layer, per head, and demonstrates the memory growth pattern.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+class KVCache:
+    def __init__(self, num_layers, num_heads, head_dim, max_seq_len, dtype=np.float16):
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.max_seq_len = max_seq_len
+        self.dtype = dtype
+
+        self.k_cache = np.zeros(
+            (num_layers, num_heads, max_seq_len, head_dim), dtype=dtype
+        )
+        self.v_cache = np.zeros(
+            (num_layers, num_heads, max_seq_len, head_dim), dtype=dtype
+        )
+        self.seq_len = 0
+
+    def update(self, layer_idx, new_keys, new_values):
+        num_new = new_keys.shape[1]
+        end = self.seq_len + num_new
+        self.k_cache[layer_idx, :, self.seq_len:end, :] = new_keys
+        self.v_cache[layer_idx, :, self.seq_len:end, :] = new_values
+        return (
+            self.k_cache[layer_idx, :, :end, :],
+            self.v_cache[layer_idx, :, :end, :]
+        )
+
+    def advance(self, num_tokens):
+        self.seq_len += num_tokens
+
+    def memory_bytes(self):
+        return self.k_cache.nbytes + self.v_cache.nbytes
+
+    def used_bytes(self):
+        per_token = 2 * self.num_layers * self.num_heads * self.head_dim * np.dtype(self.dtype).itemsize
+        return per_token * self.seq_len</code></pre>
+      </div>
+    <h3 id="step-2-attention-with-kv-cache"><a class="anchor" href="#step-2-attention-with-kv-cache">#</a> Step 2: Attention with KV Cache</h3>
+<p>A simplified multi-head attention that uses the KV cache for decode steps.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def scaled_dot_product_attention(query, keys, values):
+    head_dim = query.shape[-1]
+    scores = np.matmul(query, keys.transpose(0, 1, 3, 2)) / np.sqrt(head_dim)
+    seq_len_q = scores.shape[-2]
+    seq_len_k = scores.shape[-1]
+    if seq_len_q &gt; 1:
+        mask = np.triu(np.ones((seq_len_q, seq_len_k), dtype=np.float32), k=seq_len_k - seq_len_q + 1)
+        scores = scores + mask * (-1e9)
+    max_scores = np.max(scores, axis=-1, keepdims=True)
+    exp_scores = np.exp(scores - max_scores)
+    attn_weights = exp_scores / np.sum(exp_scores, axis=-1, keepdims=True)
+    return np.matmul(attn_weights, values)
+
+
+class MultiHeadAttention:
+    def __init__(self, d_model, num_heads):
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        scale = np.sqrt(2.0 / d_model)
+        self.W_q = np.random.randn(d_model, d_model).astype(np.float32) * scale
+        self.W_k = np.random.randn(d_model, d_model).astype(np.float32) * scale
+        self.W_v = np.random.randn(d_model, d_model).astype(np.float32) * scale
+        self.W_o = np.random.randn(d_model, d_model).astype(np.float32) * scale
+
+    def forward(self, x, kv_cache=None, layer_idx=0):
+        batch, seq_len, d_model = x.shape
+        Q = np.matmul(x, self.W_q).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        K = np.matmul(x, self.W_k).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        V = np.matmul(x, self.W_v).reshape(batch, seq_len, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+
+        if kv_cache is not None:
+            K_full, V_full = kv_cache.update(layer_idx, K[0], V[0])
+            K = K_full[np.newaxis, :, :, :]
+            V = V_full[np.newaxis, :, :, :]
+            if seq_len == 1:
+                kv_cache.advance(1)
+
+        attn_out = scaled_dot_product_attention(Q, K, V)
+        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(batch, -1, d_model)
+        return np.matmul(attn_out, self.W_o)</code></pre>
+      </div>
+    <h3 id="step-3-continuous-batching-simulator"><a class="anchor" href="#step-3-continuous-batching-simulator">#</a> Step 3: Continuous Batching Simulator</h3>
+<p>This simulates the scheduling difference between static and continuous batching.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import heapq
+
+class Request:
+    def __init__(self, request_id, prompt_tokens, output_tokens, arrival_step):
+        self.request_id = request_id
+        self.prompt_tokens = prompt_tokens
+        self.output_tokens = output_tokens
+        self.arrival_step = arrival_step
+        self.tokens_generated = 0
+        self.start_step = None
+        self.end_step = None
+
+    def is_done(self):
+        return self.tokens_generated &gt;= self.output_tokens
+
+
+def simulate_static_batching(requests, batch_size):
+    step = 0
+    completed = []
+    queue = list(requests)
+    queue.sort(key=lambda r: r.arrival_step)
+
+    while queue:
+        batch = []
+        while queue and len(batch) &lt; batch_size:
+            r = queue.pop(0)
+            r.start_step = max(step, r.arrival_step)
+            batch.append(r)
+
+        if batch:
+            step = max(step, max(r.start_step for r in batch))
+            max_output = max(r.output_tokens for r in batch)
+            for r in batch:
+                r.tokens_generated = r.output_tokens
+                r.end_step = step + max_output
+            step += max_output
+            completed.extend(batch)
+
+    return completed
+
+
+def simulate_continuous_batching(requests, batch_size):
+    step = 0
+    completed = []
+    queue = sorted(requests, key=lambda r: r.arrival_step)
+    queue_idx = 0
+    active = []
+    waiting = []
+
+    while queue_idx &lt; len(queue) or active or waiting:
+        while queue_idx &lt; len(queue) and queue[queue_idx].arrival_step &lt;= step:
+            waiting.append(queue[queue_idx])
+            queue_idx += 1
+
+        while waiting and len(active) &lt; batch_size:
+            r = waiting.pop(0)
+            r.start_step = step
+            active.append(r)
+
+        if not active:
+            if waiting:
+                step += 1
+                continue
+            elif queue_idx &lt; len(queue):
+                step = queue[queue_idx].arrival_step
+                continue
+            else:
+                break
+
+        for r in active:
+            r.tokens_generated += 1
+
+        done = [r for r in active if r.is_done()]
+        for r in done:
+            r.end_step = step + 1
+            completed.append(r)
+        active = [r for r in active if not r.is_done()]
+
+        step += 1
+
+    return completed
+
+
+def batching_stats(completed):
+    latencies = [r.end_step - r.arrival_step for r in completed]
+    total_time = max(r.end_step for r in completed) - min(r.arrival_step for r in completed)
+    total_tokens = sum(r.output_tokens for r in completed)
+    return {
+        &quot;avg_latency&quot;: np.mean(latencies),
+        &quot;p50_latency&quot;: np.median(latencies),
+        &quot;p99_latency&quot;: np.percentile(latencies, 99),
+        &quot;total_time&quot;: total_time,
+        &quot;throughput&quot;: total_tokens / total_time if total_time &gt; 0 else 0,
+    }</code></pre>
+      </div>
+    <h3 id="step-4-prefix-cache"><a class="anchor" href="#step-4-prefix-cache">#</a> Step 4: Prefix Cache</h3>
+<p>A trie-based prefix cache that stores KV entries for shared prefixes.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class TrieNode:
+    def __init__(self):
+        self.children = {}
+        self.kv_data = None
+        self.hit_count = 0
+
+
+class PrefixCache:
+    def __init__(self, max_entries=1000):
+        self.root = TrieNode()
+        self.max_entries = max_entries
+        self.total_entries = 0
+        self.hits = 0
+        self.misses = 0
+
+    def _walk(self, token_ids):
+        node = self.root
+        depth = 0
+        for tid in token_ids:
+            if tid not in node.children:
+                break
+            node = node.children[tid]
+            depth += 1
+        return node, depth
+
+    def lookup(self, token_ids):
+        node, depth = self._walk(token_ids)
+        if depth &gt; 0:
+            self.hits += 1
+            current = self.root
+            for tid in token_ids[:depth]:
+                current = current.children[tid]
+                current.hit_count += 1
+            kv_entries = []
+            current = self.root
+            for tid in token_ids[:depth]:
+                current = current.children[tid]
+                if current.kv_data is not None:
+                    kv_entries.append(current.kv_data)
+            return depth, kv_entries
+        self.misses += 1
+        return 0, []
+
+    def insert(self, token_ids, kv_per_token):
+        node = self.root
+        for i, tid in enumerate(token_ids):
+            if tid not in node.children:
+                if self.total_entries &gt;= self.max_entries:
+                    return i
+                node.children[tid] = TrieNode()
+                self.total_entries += 1
+            node = node.children[tid]
+            if i &lt; len(kv_per_token):
+                node.kv_data = kv_per_token[i]
+        return len(token_ids)
+
+    def hit_rate(self):
+        total = self.hits + self.misses
+        return self.hits / total if total &gt; 0 else 0.0</code></pre>
+      </div>
+    <h3 id="step-5-speculative-decoding-simulator"><a class="anchor" href="#step-5-speculative-decoding-simulator">#</a> Step 5: Speculative Decoding Simulator</h3>
+<p>We simulate draft-target speculative decoding with configurable acceptance rates.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class DraftModel:
+    def __init__(self, vocab_size, acceptance_rate=0.8):
+        self.vocab_size = vocab_size
+        self.acceptance_rate = acceptance_rate
+
+    def generate(self, context, num_tokens):
+        tokens = np.random.randint(0, self.vocab_size, size=num_tokens)
+        return tokens
+
+    def get_probs(self, context, token):
+        probs = np.random.dirichlet(np.ones(self.vocab_size))
+        return probs
+
+
+class TargetModel:
+    def __init__(self, vocab_size):
+        self.vocab_size = vocab_size
+
+    def get_probs(self, context, tokens=None):
+        if tokens is not None:
+            return [np.random.dirichlet(np.ones(self.vocab_size)) for _ in tokens]
+        return np.random.dirichlet(np.ones(self.vocab_size))
+
+
+def speculative_decode(draft_model, target_model, context, num_speculative=5,
+                       draft_cost=1.0, target_cost=10.0, verify_cost=12.0):
+    total_tokens = 0
+    total_cost = 0.0
+    accepted_counts = []
+    context = list(context)
+
+    max_tokens = 100
+
+    while total_tokens &lt; max_tokens:
+        draft_tokens = draft_model.generate(context, num_speculative)
+        total_cost += draft_cost * num_speculative
+
+        target_probs = target_model.get_probs(context, draft_tokens)
+        total_cost += verify_cost
+
+        accepted = 0
+        for i, token in enumerate(draft_tokens):
+            draft_p = draft_model.get_probs(context + list(draft_tokens[:i]), token)
+            target_p = target_probs[i]
+
+            r = np.random.random()
+            acceptance_prob = min(1.0, target_p[token] / (draft_p[token] + 1e-10))
+
+            if r &lt; draft_model.acceptance_rate:
+                accepted += 1
+                context.append(token)
+                total_tokens += 1
+            else:
+                new_token = np.random.choice(draft_model.vocab_size, p=target_p)
+                context.append(new_token)
+                total_tokens += 1
+                break
+
+        accepted_counts.append(accepted)
+
+        if accepted == num_speculative:
+            bonus_probs = target_model.get_probs(context)
+            bonus_token = np.random.choice(draft_model.vocab_size, p=bonus_probs)
+            context.append(bonus_token)
+            total_tokens += 1
+
+    sequential_cost = total_tokens * target_cost
+    return {
+        &quot;total_tokens&quot;: total_tokens,
+        &quot;speculative_cost&quot;: total_cost,
+        &quot;sequential_cost&quot;: sequential_cost,
+        &quot;speedup&quot;: sequential_cost / total_cost if total_cost &gt; 0 else 1.0,
+        &quot;avg_accepted&quot;: np.mean(accepted_counts),
+        &quot;acceptance_rate&quot;: np.mean(accepted_counts) / num_speculative,
+    }
+
+
+def compare_speculation_strategies(vocab_size=1000, num_trials=20):
+    results = {}
+
+    for name, acceptance_rate, spec_tokens in [
+        (&quot;Draft-target (8B-&gt;70B)&quot;, 0.78, 5),
+        (&quot;EAGLE&quot;, 0.85, 6),
+        (&quot;N-gram&quot;, 0.50, 4),
+        (&quot;No speculation&quot;, 0.0, 0),
+    ]:
+        if spec_tokens == 0:
+            results[name] = {
+                &quot;speedup&quot;: 1.0,
+                &quot;acceptance_rate&quot;: 0.0,
+                &quot;avg_accepted&quot;: 0.0,
+            }
+            continue
+
+        trial_results = []
+        for _ in range(num_trials):
+            draft = DraftModel(vocab_size, acceptance_rate=acceptance_rate)
+            target = TargetModel(vocab_size)
+            context = list(np.random.randint(0, vocab_size, size=10))
+            result = speculative_decode(draft, target, context, num_speculative=spec_tokens)
+            trial_results.append(result)
+
+        results[name] = {
+            &quot;speedup&quot;: np.mean([r[&quot;speedup&quot;] for r in trial_results]),
+            &quot;acceptance_rate&quot;: np.mean([r[&quot;acceptance_rate&quot;] for r in trial_results]),
+            &quot;avg_accepted&quot;: np.mean([r[&quot;avg_accepted&quot;] for r in trial_results]),
+        }
+
+    return results</code></pre>
+      </div>
+    <h3 id="step-6-kv-cache-memory-profiler"><a class="anchor" href="#step-6-kv-cache-memory-profiler">#</a> Step 6: KV Cache Memory Profiler</h3>
+<p>Compute KV cache memory requirements for real model configurations.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">MODEL_CONFIGS = {
+    &quot;Llama-3-8B&quot;: {
+        &quot;num_layers&quot;: 32, &quot;num_kv_heads&quot;: 8, &quot;head_dim&quot;: 128,
+        &quot;model_params_b&quot;: 8, &quot;gqa&quot;: True,
+    },
+    &quot;Llama-3-70B&quot;: {
+        &quot;num_layers&quot;: 80, &quot;num_kv_heads&quot;: 8, &quot;head_dim&quot;: 128,
+        &quot;model_params_b&quot;: 70, &quot;gqa&quot;: True,
+    },
+    &quot;Llama-3-405B&quot;: {
+        &quot;num_layers&quot;: 126, &quot;num_kv_heads&quot;: 8, &quot;head_dim&quot;: 128,
+        &quot;model_params_b&quot;: 405, &quot;gqa&quot;: True,
+    },
+    &quot;Mistral-7B&quot;: {
+        &quot;num_layers&quot;: 32, &quot;num_kv_heads&quot;: 8, &quot;head_dim&quot;: 128,
+        &quot;model_params_b&quot;: 7, &quot;gqa&quot;: True,
+    },
+    &quot;GPT-4-est&quot;: {
+        &quot;num_layers&quot;: 120, &quot;num_kv_heads&quot;: 96, &quot;head_dim&quot;: 128,
+        &quot;model_params_b&quot;: 1800, &quot;gqa&quot;: False,
+    },
+}
+
+
+def kv_cache_memory(config, seq_len, dtype_bytes=2):
+    per_token = 2 * config[&quot;num_layers&quot;] * config[&quot;num_kv_heads&quot;] * config[&quot;head_dim&quot;] * dtype_bytes
+    total = per_token * seq_len
+    return {
+        &quot;per_token_bytes&quot;: per_token,
+        &quot;per_token_kb&quot;: per_token / 1024,
+        &quot;total_bytes&quot;: total,
+        &quot;total_mb&quot;: total / (1024 ** 2),
+        &quot;total_gb&quot;: total / (1024 ** 3),
+    }
+
+
+def memory_budget(config, gpu_memory_gb, model_dtype_bytes=2, kv_dtype_bytes=2):
+    model_memory_gb = config[&quot;model_params_b&quot;] * 1e9 * model_dtype_bytes / (1024 ** 3)
+    overhead_gb = gpu_memory_gb * 0.1
+    available_for_kv = gpu_memory_gb - model_memory_gb - overhead_gb
+
+    if available_for_kv &lt;= 0:
+        return {&quot;error&quot;: &quot;Model does not fit in GPU memory&quot;, &quot;model_memory_gb&quot;: model_memory_gb}
+
+    per_token = 2 * config[&quot;num_layers&quot;] * config[&quot;num_kv_heads&quot;] * config[&quot;head_dim&quot;] * kv_dtype_bytes
+    max_tokens = int(available_for_kv * (1024 ** 3) / per_token)
+
+    return {
+        &quot;gpu_memory_gb&quot;: gpu_memory_gb,
+        &quot;model_memory_gb&quot;: round(model_memory_gb, 1),
+        &quot;overhead_gb&quot;: round(overhead_gb, 1),
+        &quot;available_for_kv_gb&quot;: round(available_for_kv, 1),
+        &quot;max_total_tokens&quot;: max_tokens,
+        &quot;max_users_at_2k&quot;: max_tokens // 2048,
+        &quot;max_users_at_4k&quot;: max_tokens // 4096,
+        &quot;max_users_at_32k&quot;: max_tokens // 32768,
+    }</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>With vLLM:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model=&quot;meta-llama/Llama-3-70B-Instruct&quot;,
+    tensor_parallel_size=4,
+    enable_prefix_caching=True,
+    max_model_len=8192,
+    gpu_memory_utilization=0.9,
+)
+
+params = SamplingParams(temperature=0.7, max_tokens=256)
+outputs = llm.generate([&quot;Explain inference optimization in one paragraph.&quot;], params)</code></pre>
+      </div>
+    <p>With SGLang for prefix caching + structured output:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import sglang as sgl
+
+@sgl.function
+def classify(s, text):
+    s += sgl.system(&quot;You are a classifier. Output JSON only.&quot;)
+    s += sgl.user(f&quot;Classify this text: {text}&quot;)
+    s += sgl.assistant(sgl.gen(&quot;result&quot;, regex=r&#39;\{&quot;label&quot;: &quot;(positive|negative|neutral)&quot;\}&#39;))
+
+runtime = sgl.Runtime(model_path=&quot;meta-llama/Llama-3-70B-Instruct&quot;, tp_size=4)
+sgl.set_default_backend(runtime)
+
+results = classify.run_batch([
+    {&quot;text&quot;: &quot;This product is amazing!&quot;},
+    {&quot;text&quot;: &quot;Terrible experience.&quot;},
+    {&quot;text&quot;: &quot;It was okay I guess.&quot;},
+])</code></pre>
+      </div>
+    <p>With TensorRT-LLM:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import tensorrt_llm
+from tensorrt_llm.runtime import ModelRunner
+
+runner = ModelRunner.from_dir(&quot;./llama-70b-trt-engine/&quot;, rank=0)
+
+outputs = runner.generate(
+    batch_input_ids=[tokenizer.encode(&quot;Explain KV caching.&quot;)],
+    max_new_tokens=256,
+    temperature=0.7,
+)</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/skill-inference-optimization.md</code> -- a skill for diagnosing and optimizing LLM inference serving</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Modify the KV cache profiler to compare FP16 vs FP8 vs INT4 KV cache quantization. For Llama 3 70B at 4K context, compute the max concurrent users for each on 4xA100-80GB. KV quantization to INT4 should roughly 4x the user capacity.</p>
+</li>
+<li><p>Extend the continuous batching simulator to track GPU utilization (fraction of batch slots filled per step). Plot utilization over time for both static and continuous batching with 50 requests whose output lengths follow a Pareto distribution (shape=1.5, scale=20). Continuous batching should maintain &gt;80% utilization.</p>
+</li>
+<li><p>Implement a grouped-query attention (GQA) version of the KV cache where <code>num_kv_heads &lt; num_query_heads</code>. Llama 3 70B uses 64 query heads but only 8 KV heads. Compute the memory savings vs full multi-head attention (8x reduction in KV cache size).</p>
+</li>
+<li><p>Build a prefix cache that uses LRU eviction. Set max_entries to 500 and generate 1,000 requests where 60% share one of 5 common prefixes. Measure hit rate and compare to unlimited cache. With good eviction, hit rate should stay above 55%.</p>
+</li>
+<li><p>Extend the speculative decoding simulator to implement tree-based speculation (EAGLE-2 style). Instead of a single chain of K draft tokens, generate a tree of candidates (e.g., 2 branches at each of 3 levels = 8 leaf candidates). Compare total tokens accepted per verification round vs linear speculation.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Prefill</td>
+<td>&quot;Processing the prompt&quot;</td>
+<td>Computing attention over all input tokens in parallel -- compute-bound because the full matrix multiplication keeps GPU cores busy</td>
+</tr>
+<tr>
+<td>Decode</td>
+<td>&quot;Generating tokens&quot;</td>
+<td>Producing one token per forward pass, reading the full model weights each time -- memory-bound because compute finishes before the next weights arrive</td>
+</tr>
+<tr>
+<td>KV cache</td>
+<td>&quot;Caching attention states&quot;</td>
+<td>Storing the key and value projections for all previous tokens so they are not recomputed at each decode step -- trades memory for compute</td>
+</tr>
+<tr>
+<td>Continuous batching</td>
+<td>&quot;Dynamic batching&quot;</td>
+<td>Inserting new requests into the running batch as soon as any request finishes, evaluated at every decode iteration rather than waiting for the whole batch</td>
+</tr>
+<tr>
+<td>PagedAttention</td>
+<td>&quot;Virtual memory for KV cache&quot;</td>
+<td>Allocating KV cache in fixed-size pages instead of contiguous blocks, eliminating memory fragmentation and enabling copy-on-write for shared prefixes</td>
+</tr>
+<tr>
+<td>Speculative decoding</td>
+<td>&quot;Draft and verify&quot;</td>
+<td>Using a fast draft model to propose multiple tokens, then verifying them all in one target model forward pass -- mathematically exact, 2-3x speedup</td>
+</tr>
+<tr>
+<td>EAGLE</td>
+<td>&quot;Self-speculative decoding&quot;</td>
+<td>A speculative decoding variant that trains a lightweight head on the target model&#39;s own hidden states, achieving higher acceptance rates than a separate draft model</td>
+</tr>
+<tr>
+<td>Prefix caching</td>
+<td>&quot;Reusing system prompt KV&quot;</td>
+<td>Storing computed KV cache entries for common prefixes (system prompts, few-shot examples) and reusing them across requests to skip redundant prefill</td>
+</tr>
+<tr>
+<td>Ops:byte ratio</td>
+<td>&quot;Arithmetic intensity&quot;</td>
+<td>The ratio of compute operations to memory bytes read -- determines whether a workload is compute-bound (high ratio) or memory-bound (low ratio)</td>
+</tr>
+<tr>
+<td>Time to first token</td>
+<td>&quot;TTFT&quot;</td>
+<td>Latency from receiving a request to producing the first output token -- dominated by prefill time for long prompts</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Kwon et al., &quot;Efficient Memory Management for Large Language Model Serving with PagedAttention&quot; (2023) -- the vLLM paper that introduced paged KV cache management, now the industry standard for inference serving</li>
+<li>Leviathan et al., &quot;Fast Inference from Transformers via Speculative Decoding&quot; (2023) -- the foundational paper proving that draft-verify speculation produces exact target model distributions while achieving 2-3x speedup</li>
+<li>Li et al., &quot;EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty&quot; (2024) -- achieves higher acceptance rates by training a head on the target model&#39;s own features instead of using a separate draft model</li>
+<li>Zheng et al., &quot;SGLang: Efficient Execution of Structured Language Model Programs&quot; (2024) -- introduces RadixAttention for prefix caching and a programming model for multi-call LLM programs</li>
+<li>Williams et al., &quot;Roofline: An Insightful Visual Performance Model for Multicore Architectures&quot; (2009) -- the original roofline paper that formalized the ops:byte framework for reasoning about compute vs memory bottlenecks</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-quantization.html"><span>← Previous</span><b>quantization</b></a>
+      <a class="next" href="./13-building-complete-llm-pipeline.html"><span>Next →</span><b>building complete llm pipeline</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

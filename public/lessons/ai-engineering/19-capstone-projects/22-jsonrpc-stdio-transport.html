@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JSON-RPC 2.0 Over Newline-Delimited Stdio — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/22-jsonrpc-stdio-transport/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-json-rpc-stays-the-lingua-franca">Why JSON-RPC stays the lingua franca</a></li><li><a href="#the-wire-shape">The wire shape</a></li><li><a href="#the-five-error-codes">The five error codes</a></li><li><a href="#newline-framing-and-the-bytesio-demo">Newline framing and the BytesIO demo</a></li><li><a href="#method-dispatch">Method dispatch</a></li><li><a href="#stream-behavior-on-errors">Stream behavior on errors</a></li><li><a href="#notifications-and-asymmetric-flows">Notifications and asymmetric flows</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">JSON-RPC 2.0 Over Newline-Delimited Stdio</h1>
+    <p class="lesson-sub">The transport between a model client and a tool server is JSON-RPC over stdio. Hand-rolling it once teaches you what every framing layer is paying for.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 lessons 01-07, Phase 14 lesson 01</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 22">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="103.5" cy="100.8" r="9.1" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.1" cy="95.9" r="8.4" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.9,95.6 L92.6,83.9 L100.4,95.6 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.1,90.3 L87.2,79.6 L94.4,90.3 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.3,85.0 L81.8,75.2 L88.3,85.0 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">22</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">JSON-RPC 2.0 Over</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Newline-Delimited…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Speak JSON-RPC 2.0 framed as newline-delimited JSON over stdin and stdout.</li>
+<li>Map the five standard error codes (-32700, -32600, -32601, -32602, -32603) and surface them with the right semantics.</li>
+<li>Distinguish requests, responses, notifications, and batches without inventing new envelope keys.</li>
+<li>Handle one parse error per line without poisoning the rest of the stream.</li>
+<li>Build a self-terminating demo using io.BytesIO so the lesson runs without spawning a child process.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-jsonrpc-frames</code></pre>
+      </div>
+    <h2 id="why-json-rpc-stays-the-lingua-franca"><a class="anchor" href="#why-json-rpc-stays-the-lingua-franca">#</a> Why JSON-RPC stays the lingua franca</h2>
+<p>A coding agent in 2026 talks to maybe twelve tool servers in a single session. Each server is a separate process or a remote endpoint. The wire format has been the same since 2013. JSON-RPC 2.0 is two-page spec. It survives because the alternatives (gRPC, HTTP per call, custom binary) all impose a tradeoff JSON-RPC does not: they pick either streaming or batching or transport-coupling. JSON-RPC is symmetric across stdio, sockets, websockets, and HTTP, and a client can drive a server it has never seen if both honor the spec.</p>
+<p>This lesson builds the stdio variant. Newline-delimited JSON. Each request is one line. Each response is one line. The transport boundary is <code>\n</code>.</p>
+<h2 id="the-wire-shape"><a class="anchor" href="#the-wire-shape">#</a> The wire shape</h2>
+<p>Four envelope shapes exist. Two are spoken by the client. Two are spoken by the server.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    participant Client
+    participant Server
+    Client-&gt;&gt;Server: request {jsonrpc:&quot;2.0&quot;, id:7, method:&quot;foo&quot;, params:{...}}
+    Server--&gt;&gt;Client: success {jsonrpc:&quot;2.0&quot;, id:7, result:{...}}
+    Client-&gt;&gt;Server: notification {jsonrpc:&quot;2.0&quot;, method:&quot;bar&quot;, params:{...}} (no id)
+    Note over Server: no response for notifications
+    Client-&gt;&gt;Server: request that fails
+    Server--&gt;&gt;Client: error {jsonrpc:&quot;2.0&quot;, id:7 or null, error:{code, message, data?}}</pre></div><p>A notification has no <code>id</code>. The server must not respond to it. If a server returns a response to a notification, the client has no way to attach it to a call site. That single rule keeps the framing math simple.</p>
+<p>A batch is a JSON array of requests or notifications. The server replies with an array of responses, in any order, one per non-notification entry. If every entry in the batch is a notification, the server sends nothing back.</p>
+<h2 id="the-five-error-codes"><a class="anchor" href="#the-five-error-codes">#</a> The five error codes</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">-32700  Parse error      JSON could not be parsed
+-32600  Invalid Request  Envelope shape is wrong
+-32601  Method not found
+-32602  Invalid params
+-32603  Internal error</code></pre>
+      </div>
+    <p>The codes between -32000 and -32099 are reserved for server-defined errors. Everything else is application-defined. The lesson sticks to the five. If your handler raises, the transport wraps it as -32603 with the exception class name in <code>data.exception</code>.</p>
+<p>A parse error has a special rule. The <code>id</code> in the response is <code>null</code>, because the request never parsed enough to extract an id.</p>
+<h2 id="newline-framing-and-the-bytesio-demo"><a class="anchor" href="#newline-framing-and-the-bytesio-demo">#</a> Newline framing and the BytesIO demo</h2>
+<p>The transport reads one line at a time. A line is bytes up to and including <code>\n</code>. If a line cannot be parsed, the transport writes a -32700 response with <code>id: null</code> and continues. The stream is not poisoned. The next line gets parsed fresh.</p>
+<p>For the lesson we wrap an <code>io.BytesIO</code> pair as stdin and stdout. The server reads requests until EOF, writes responses for each, and returns. The client reads the responses back. No process spawn. No timeouts. The transport behavior is identical to a real subprocess pipe because Python&#39;s <code>io</code> interface presents the same <code>.readline()</code> and <code>.write()</code> contract.</p>
+<h2 id="method-dispatch"><a class="anchor" href="#method-dispatch">#</a> Method dispatch</h2>
+<p>The transport does not know which methods exist. It hands off to a callable <code>handler(method, params)</code> that the harness supplies. The handler returns a result or raises. Three exception classes surface specific codes.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">MethodNotFound -&gt; -32601
+InvalidParams  -&gt; -32602
+Anything else  -&gt; -32603 with exception name in data</code></pre>
+      </div>
+    <p>The transport never sees a tool registry. The registry sits behind the handler. This is the layering we want. The transport speaks JSON-RPC. The registry speaks tool shapes. The dispatcher (lesson twenty-three) stitches them together.</p>
+<h2 id="stream-behavior-on-errors"><a class="anchor" href="#stream-behavior-on-errors">#</a> Stream behavior on errors</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">client writes              server reads             server writes
+---------------            -----------              -------------
+{...valid request...}      parses ok                {...response, id matches...}
+{...broken json...         parse fails              {id:null, error: -32700}
+{...valid request...}      parses ok                {...response, id matches...}
+{...missing method...}     invalid envelope         {id:X, error: -32600}</code></pre>
+      </div>
+    <p>A broken JSON line does not stop the loop. A missing <code>method</code> field does not stop the loop. A handler exception does not stop the loop. The transport keeps reading until EOF.</p>
+<h2 id="notifications-and-asymmetric-flows"><a class="anchor" href="#notifications-and-asymmetric-flows">#</a> Notifications and asymmetric flows</h2>
+<p>A notification is fire-and-forget. The harness uses notifications for progress events, cancellation signals, and log lines. Notifications are how a long-running tool can stream status updates without round-tripping for each one.</p>
+<p>The lesson implements one outbound notification helper, <code>write_notification</code>. The server uses it to emit progress while a request is in flight. The demo shows the pattern: a request comes in, the handler emits two progress notifications, then writes the final response.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>StdioTransport</code>, the parse helper (<code>parse_request</code>), the three write helpers (<code>write_response</code>, <code>write_error</code>, <code>write_notification</code>), and the dispatch loop <code>serve</code>. The error code constants live at module scope.</p>
+<p><code>code/tests/test_transport.py</code> covers the five error codes, notifications (no response written), batches (array in, array out, notifications skipped), broken JSON (parse error then continue), and the asymmetric flow where a handler writes a notification mid-call.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>This transport is enough for the lessons that follow. Production transports add three things. A correlation id field that survives forwarding (your <code>id</code> is already this, but in a mesh you need an outer trace id too). A cancellation channel (a notification like <code>$/cancelRequest</code> with the id of the in-flight call). And a content-type negotiation handshake so the same socket can speak JSON-RPC and Streamable HTTP. None of those change the wire. They add metadata.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./21-tool-registry-schema-validation.html"><span>← Previous</span><b>tool registry schema validation</b></a>
+      <a class="next" href="./23-function-call-dispatcher.html"><span>Next →</span><b>function call dispatcher</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

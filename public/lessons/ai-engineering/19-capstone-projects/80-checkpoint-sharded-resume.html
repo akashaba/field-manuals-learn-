@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sharded Checkpoint and Atomic Resume — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/80-checkpoint-sharded-resume/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Sharded Checkpoint and Atomic Resume</h1>
+    <p class="lesson-sub">A 70B-parameter training job is paused by a node failure every few hours. The checkpoint format decides whether you lose 30 minutes or 30 hours. A sharded checkpoint writes every rank&#39;s shard in parallel and records ownership in a manifest. Resume loads each rank&#39;s shard from its own file, reconstructs the state on the same world size, and the optimiser steps as if nothing happened. Atomic write keeps a half-finished checkpoint from poisoning the next resume.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track C lessons 42-49</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 80">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.7" y="41.3" width="32.9" height="32.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.1 57.7)"/>
+        <rect x="34.9" y="37.0" width="31.6" height="31.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(210 50.7 52.8)"/>
+        <rect x="30.1" y="32.7" width="30.3" height="30.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.3 47.9)"/>
+        <rect x="25.3" y="128.4" width="29.1" height="29.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(175 39.9 143.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">80</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Sharded Checkpoint</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">and Atomic Resume</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Save a multi-rank checkpoint as a per-rank shard file plus a manifest that records which rank owns what.</li>
+<li>Use the atomic write pattern (write to a temp path then rename) so a crash mid-write never produces a half-finished checkpoint.</li>
+<li>Resume from the manifest, verifying byte-equal state for both fp16 parameters and the ZeRO optimiser state on every rank.</li>
+<li>Defend the manifest schema against the three failure modes: world-size change, shard count mismatch, and partial write.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A vanilla checkpoint reads all parameters and optimiser state into rank 0, gathers, and writes a single file. For a 70B model that is 1.1 TB of state through one rank&#39;s network port. The write blocks every other rank because they idle waiting for the gather. The IO bandwidth is the slowest single GPU&#39;s network link, not the aggregate. On a real cluster the gather-then-write step can take longer than the previous training hour, which means the job ships less than one checkpoint per training day.</p>
+<p>Sharded checkpoints flip the pattern: every rank writes its own shard to its own file in parallel. The manifest records which rank owned which shard so resume can put each shard back where it came from. The aggregate write bandwidth scales with the cluster. A 1 TB checkpoint that took 4 hours through one rank takes 4 minutes through 64 ranks. Plus the manifest gives you a contract for incompatible resumes: world-size change is detectable, partial writes are detectable, and the load path can fail loudly rather than silently using stale data.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  S0[rank 0 state] --&gt; W0[write rank0.bin.tmp]
+  S1[rank 1 state] --&gt; W1[write rank1.bin.tmp]
+  S2[rank 2 state] --&gt; W2[write rank2.bin.tmp]
+  S3[rank 3 state] --&gt; W3[write rank3.bin.tmp]
+  W0 &amp; W1 &amp; W2 &amp; W3 --&gt; M[write manifest.json.tmp]
+  M --&gt; R[rename all .tmp to final names]
+  R --&gt; Done[checkpoint complete]</pre></div><h3 id="manifest-schema"><a class="anchor" href="#manifest-schema">#</a> Manifest schema</h3>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;world_size&quot;: 4,
+  &quot;step&quot;: 1234,
+  &quot;wall_clock_seconds&quot;: 4521,
+  &quot;shards&quot;: [
+    {&quot;rank&quot;: 0, &quot;path&quot;: &quot;rank0.bin&quot;, &quot;sha256&quot;: &quot;...&quot;, &quot;param_shard_offset&quot;: 0, &quot;param_shard_numel&quot;: 65536},
+    {&quot;rank&quot;: 1, &quot;path&quot;: &quot;rank1.bin&quot;, &quot;sha256&quot;: &quot;...&quot;, &quot;param_shard_offset&quot;: 65536, &quot;param_shard_numel&quot;: 65536}
+  ],
+  &quot;schema_version&quot;: 1
+}</code></pre>
+      </div>
+    <p>Three fields are load-bearing. <code>world_size</code> makes a resume on a different size loudly fail rather than silently corrupt. <code>sha256</code> per shard catches partial or corrupted writes. <code>param_shard_offset</code> and <code>param_shard_numel</code> per shard let the loader reconstruct the flat parameter tensor at the correct position.</p>
+<h3 id="atomic-write"><a class="anchor" href="#atomic-write">#</a> Atomic write</h3>
+<p>The standard pattern: write every shard to <code>&lt;name&gt;.tmp</code>, write the manifest to <code>manifest.json.tmp</code>, fsync each, then rename. POSIX rename within the same filesystem is atomic; either the new file is fully present or the old one is. A crash before the final rename leaves the previous checkpoint as the live one. Without atomic write a crash can leave a partial shard with a present manifest that points at it, and the load corrupts the optimiser state on resume.</p>
+<h3 id="three-failure-modes-the-schema-must-defend-against"><a class="anchor" href="#three-failure-modes-the-schema-must-defend-against">#</a> Three failure modes the schema must defend against</h3>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Symptom</th>
+<th>Defence</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>World-size change</td>
+<td>resume on N=8 with manifest from N=4</td>
+<td>world_size mismatch in manifest, fail loudly</td>
+</tr>
+<tr>
+<td>Shard count mismatch</td>
+<td>resume sees fewer rank*.bin files than shards in manifest</td>
+<td>enumerate shards, verify every one exists</td>
+</tr>
+<tr>
+<td>Partial write</td>
+<td>shard file truncated mid-flush</td>
+<td>sha256 verification on load</td>
+</tr>
+</tbody></table>
+<p>Each defence rejects the bad load early; the alternative is silent corruption that surfaces 100 steps later when loss goes to NaN.</p>
+<h3 id="why-per-rank-files-not-one-big-file"><a class="anchor" href="#why-per-rank-files-not-one-big-file">#</a> Why per-rank files, not one big file</h3>
+<p>Concurrent write to one file via <code>O_APPEND</code> works on POSIX for byte-aligned writes, but in practice the offsets within one shard span MB-sized regions and the locking dominates. Per-rank files have no contention and benefit from striping when the underlying filesystem is parallel (Lustre, GPFS). Production stacks (DeepSpeed, FSDP, NeMo) all use per-rank files for that reason.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ci-sharded-checkpoint</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>ShardManifest</code> dataclass with the schema above plus <code>to_json</code>/<code>from_json</code>.</li>
+<li><code>save_sharded(state_dict_per_rank, dir, step)</code> that writes every rank&#39;s binary state to its own file using the atomic temp-then-rename pattern, then writes the manifest.</li>
+<li><code>load_sharded(dir, expected_world_size)</code> that reads the manifest, verifies each shard&#39;s sha256, and returns per-rank state dicts.</li>
+<li>A round-trip test: build per-rank state, save, load, assert byte-equal.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: 4 shard files plus manifest written, then reloaded with byte-equal verification.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Three patterns harden the checkpoint enough to ship.</p>
+<p><strong>Async write.</strong> Production stacks issue the checkpoint write on a separate thread or process so training continues. The barrier is at next checkpoint: do not start the next save until the previous one is complete. DeepSpeed&#39;s <code>async_io</code> flag does exactly this. The lesson keeps the write synchronous so the steps are visible.</p>
+<p><strong>Local fast disk first, then async upload.</strong> Write to local NVMe (fast) then async-upload to S3 or GCS. The two-tier pattern keeps the in-cluster checkpoint fast for resume while shipping a durable copy off-cluster for archive. The manifest carries the local path; an upload manifest carries the remote path.</p>
+<p><strong>Rotation matters.</strong> Production runs keep the last K checkpoints (typically 3-5) and rotate the oldest. Without rotation the disk fills mid-run and the next checkpoint fails. With rotation the next save deletes the oldest first, freeing the budget.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>DeepSpeed checkpointing.</strong> <code>deepspeed.save_checkpoint(tag=step)</code> writes per-rank files and a <code>latest</code> file pointing at the active tag.</li>
+<li><strong>PyTorch FSDP checkpointing.</strong> <code>torch.distributed.checkpoint</code> saves sharded state with a <code>Planner</code> that decides per-rank layout.</li>
+<li><strong>NeMo.</strong> Wraps DeepSpeed and FSDP with a uniform <code>save_to_checkpoint</code> API that adds metadata.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Lesson 81 saves a sharded checkpoint of the end-to-end DDP+ZeRO run and reloads it on the same world size to prove the resume contract holds.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add async write: kick off the save in a thread and let training continue. Block the next save until the previous one completes.</li>
+<li>Add a <code>last_5_steps</code> rotation: keep the 5 most recent checkpoints, delete the oldest before saving a new one.</li>
+<li>Add a CRC-only fast verification path for the inner-loop reload (rotation rolls a checkpoint into being the new active one without full sha256).</li>
+<li>Add a cross-world-size load: shard rebalance from N=4 to N=8 by reading the manifest, concatenating, and re-sharding.</li>
+<li>Add an upload to a fake S3 (a second directory) and write the upload manifest. Defend the two-tier storage policy.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sharded checkpoint</td>
+<td>&quot;Per-rank save&quot;</td>
+<td>Each rank writes its own shard file in parallel</td>
+</tr>
+<tr>
+<td>Manifest</td>
+<td>&quot;Index&quot;</td>
+<td>JSON file recording shard paths, offsets, and sha256</td>
+</tr>
+<tr>
+<td>Atomic write</td>
+<td>&quot;tmp then rename&quot;</td>
+<td>Write to .tmp then POSIX rename so a crash leaves the previous file live</td>
+</tr>
+<tr>
+<td>Partial write</td>
+<td>&quot;Truncated shard&quot;</td>
+<td>A crash during write produces a corrupt shard; sha256 catches it</td>
+</tr>
+<tr>
+<td>Rotation</td>
+<td>&quot;Keep last K&quot;</td>
+<td>Delete oldest checkpoint before writing new one to bound disk usage</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html">DeepSpeed checkpointing</a></li>
+<li><a href="https://pytorch.org/docs/stable/distributed.checkpoint.html">PyTorch torch.distributed.checkpoint</a></li>
+<li><a href="https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html">POSIX rename atomicity</a></li>
+<li>Phase 19 Lesson 78 - the ZeRO state this checkpoint is shaped to save</li>
+<li>Phase 19 Lesson 81 - the end-to-end demo round-trips the saved state</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./79-pipeline-parallel.html"><span>← Previous</span><b>pipeline parallel</b></a>
+      <a class="next" href="./81-end-to-end-distributed-train.html"><span>Next →</span><b>end to end distributed train</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flamingo and Gated Cross-Attention for Few-Shot VLMs — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/04-flamingo-gated-cross-attention/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Flamingo and Gated Cross-Attention for Few-Shot VLMs</h1>
+    <p class="lesson-sub">DeepMind&#39;s Flamingo (2022) did two things before anyone else. It showed a single model could process arbitrarily interleaved sequences of images, videos, and text. And it showed VLMs could learn in-context — give a few-shot prompt with three example (image, caption) pairs and the model captions a new image without any gradient step. The mechanism: gated cross-attention layers, inserted between the frozen LLM&#39;s existing layers, with a learned tanh gate that starts at zero so the LLM&#39;s text capability is preserved at initialization. This lesson walks Flamingo&#39;s Perceiver resampler and gated cross-attention architecture — the ancestor of Gemini&#39;s interleaved inputs and Idefics2&#39;s visual tokens.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, gated cross-attention + Perceiver resampler demo)</b></div><div><span>Prerequisites</span><b>Phase 12 · 03 (BLIP-2 Q-Former)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="117.5" cy="113.5" r="10.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="112.1" cy="108.6" r="10.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="106.6" cy="103.7" r="9.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="101.2" cy="98.7" r="8.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M87.7,98.7 L95.8,86.5 L103.9,98.7 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.9,93.4 L90.4,82.1 L97.9,93.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Flamingo and Gated</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Cross-Attention for…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain how gated cross-attention preserves a frozen LLM&#39;s text capability at initialization via tanh(gate) = 0.</li>
+<li>Walk through a Perceiver resampler: N image patches → K fixed &quot;latent&quot; queries via cross-attention.</li>
+<li>Describe how Flamingo handles interleaved image-text sequences with causal masking that respects image placement.</li>
+<li>Reproduce a few-shot multimodal prompt structure (3 image-caption examples then a query image).</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>BLIP-2 feeds 32 visual tokens into a frozen LLM&#39;s input layer. Works for one image per prompt. But what if you want to feed <em>many</em> images interleaved with text, as in &quot;here is image A, caption it; here is image B, caption it; now here is image C, caption it&quot;? The LLM&#39;s self-attention would need to handle image tokens and text tokens in a single stream, and the question of which positions can attend to which images gets fussy.</p>
+<p>Flamingo&#39;s answer: do not change the LLM&#39;s input stream at all. Insert extra cross-attention layers between existing LLM blocks. Text tokens still flow through the LLM&#39;s causal self-attention as always. Between every few LLM blocks, text tokens also cross-attend to image features via a new gated layer. The gate (initialized to zero) means at step zero the new layers are no-ops — the model behaves exactly like the pretrained LLM. As training progresses the gate opens and visual information starts flowing.</p>
+<p>The second question Flamingo answered: how do you handle a variable number of images (0, 1, or many) per prompt? A Perceiver resampler — a small cross-attention module that takes whatever number of patches you have and produces a fixed number of visual latent tokens. The LLM cross-attention layer sees the same shape regardless of how many images are in the prompt.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-frozen-llm"><a class="anchor" href="#the-frozen-llm">#</a> The frozen LLM</h3>
+<p>Flamingo starts with a frozen Chinchilla 70B LLM. All 70B weights untouched. The existing text self-attention and FFN operate normally.</p>
+<h3 id="perceiver-resampler"><a class="anchor" href="#perceiver-resampler">#</a> Perceiver resampler</h3>
+<p>For each image in the prompt, the ViT produces N patch tokens. The Perceiver resampler has K fixed learnable latents (Flamingo uses K=64). Each resampler block is two sub-steps:</p>
+<ol>
+<li>Cross-attention: the K latents attend over the N patch tokens (Q from latents, K/V from patches).</li>
+<li>Self-attention + FFN within the latents.</li>
+</ol>
+<p>After 6 resampler blocks, the output is K=64 visual tokens of dim 1024, regardless of how many patches the ViT produced. A 224x224 image (196 patches) and a 480x480 image (900 patches) both exit as 64 resampler tokens.</p>
+<p>For video, the resampler is applied temporally: each frame&#39;s patches produce 64 latents, and a temporal positional encoding lets the model distinguish t=0 from t=N. The full video becomes T * 64 visual tokens.</p>
+<h3 id="gated-cross-attention"><a class="anchor" href="#gated-cross-attention">#</a> Gated cross-attention</h3>
+<p>Between every M layers of the frozen LLM (Flamingo uses M=4), insert a new gated cross-attention block:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">x_after_llm_block = llm_block(x_before)
+cross = cross_attn(x_after, resampler_output)
+gated = tanh(alpha) * cross + x_after
+x_before_next_block = gated</code></pre>
+      </div>
+    <ul>
+<li><code>alpha</code> is a learnable scalar initialized to zero.</li>
+<li><code>tanh(0) = 0</code>, so at init the gated branch contributes zero.</li>
+<li>As <code>alpha</code> moves away from zero, the cross-attention contribution grows smoothly.</li>
+<li>The residual connection means even a fully-open gate does not overwrite the LLM&#39;s text representation; it just adds visual information on top.</li>
+</ul>
+<p>This is the single most important design choice in Flamingo: visual conditioning is additive, gated, and zero at initialization. A Flamingo at step 0 is a perfect Chinchilla 70B on text-only inputs.</p>
+<h3 id="masked-cross-attention-for-interleaved-inputs"><a class="anchor" href="#masked-cross-attention-for-interleaved-inputs">#</a> Masked cross-attention for interleaved inputs</h3>
+<p>In a prompt like &quot;<image A> caption A <image B> caption B <image C> ?&quot;, each text token should only see images that came before it in the sequence. The cross-attention mask enforces: text token at position <code>t</code> attends only to image resampler tokens whose image index <code>i &lt; i_t</code> where <code>i_t</code> is the most recent image before position <code>t</code>. &quot;Sees only the last preceding image&quot; or &quot;sees all preceding images&quot; are both valid choices; Flamingo chose the former.</p>
+<h3 id="in-context-few-shot-learning"><a class="anchor" href="#in-context-few-shot-learning">#</a> In-context few-shot learning</h3>
+<p>A Flamingo prompt looks like:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&lt;image1&gt; A photo of a cat. &lt;image2&gt; A photo of a dog. &lt;image3&gt; A photo of a</code></pre>
+      </div>
+    <p>The model sees the completion pattern and outputs &quot;bird&quot; (or whatever image3 shows). No gradient steps. The frozen LLM&#39;s in-context learning capability carries through the gated cross-attention — this is the punchline of the paper and why it matters.</p>
+<h3 id="training-data"><a class="anchor" href="#training-data">#</a> Training data</h3>
+<p>Flamingo trained on three datasets:</p>
+<ol>
+<li>MultiModal MassiveWeb (M3W): 43M web pages with interleaved images and text, reconstructing reading order.</li>
+<li>Image-Text Pairs (ALIGN + LTIP): 4.4B pairs.</li>
+<li>Video-Text Pairs (VTP): 27M short video clips.</li>
+</ol>
+<p>OBELICS (2023) is an open reproduction of the interleaved web corpus, which Idefics, Idefics2, and most open &quot;Flamingo-like&quot; models train on.</p>
+<h3 id="openflamingo-and-otter"><a class="anchor" href="#openflamingo-and-otter">#</a> OpenFlamingo and Otter</h3>
+<p>OpenFlamingo (2023) is the open reproduction. Architecture identical (Perceiver resampler + gated cross-attention on frozen LLaMA or MPT). Checkpoints at 3B, 4B, 9B. Quality lags Flamingo due to smaller base LLM and less data.</p>
+<p>Otter (2023) builds on OpenFlamingo with instruction tuning on MIMIC-IT (a dataset of multimodal instructions), showing gated cross-attention works for instruction following too.</p>
+<h3 id="the-descendants"><a class="anchor" href="#the-descendants">#</a> The descendants</h3>
+<ul>
+<li>Idefics / Idefics2 / Idefics3: Hugging Face&#39;s gated cross-attention lineage, progressively simpler (Idefics2 dropped the resampler in favor of direct patch tokens with adaptive pooling).</li>
+<li>Flamingo-to-Chameleon transition: by 2024 many teams moved to early-fusion (Lesson 12.11); Flamingo-style gated cross-attention remains in production where backbone freezing is required.</li>
+<li>Gemini&#39;s interleaved input: conceptually inherits Flamingo&#39;s interleaved-format flexibility, though the exact mechanism is proprietary.</li>
+</ul>
+<h3 id="comparison-to-blip-2"><a class="anchor" href="#comparison-to-blip-2">#</a> Comparison to BLIP-2</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>BLIP-2</th>
+<th>Flamingo</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Visual bridge</td>
+<td>Q-Former once at input</td>
+<td>Gated cross-attention at every M layers</td>
+</tr>
+<tr>
+<td>Visual tokens</td>
+<td>32 per image</td>
+<td>64 per image per cross-attn layer</td>
+</tr>
+<tr>
+<td>Frozen LLM</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Few-shot in-context</td>
+<td>Weak</td>
+<td>Strong — the paper&#39;s centerpiece</td>
+</tr>
+<tr>
+<td>Interleaved inputs</td>
+<td>No native support</td>
+<td>Yes, the design target</td>
+</tr>
+<tr>
+<td>Training data</td>
+<td>130M pairs</td>
+<td>1.3B pairs + 43M interleaved pages</td>
+</tr>
+<tr>
+<td>Parameter count</td>
+<td>188M trained</td>
+<td>~10B trained (cross-attn layers)</td>
+</tr>
+<tr>
+<td>Compute</td>
+<td>Days on 8 A100s</td>
+<td>Weeks on thousands of TPUv4</td>
+</tr>
+</tbody></table>
+<p>Pick BLIP-2 for single-image VQA on a budget. Pick Flamingo/Idefics2 for interleaved, few-shot, or multi-image reasoning.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cross-attention-fusion</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> demonstrates:</p>
+<ol>
+<li>A Perceiver resampler on 36 fake patch tokens with 8 learnable latents (pure Python cross-attention).</li>
+<li>A gated cross-attention step with <code>alpha = 0</code> → output equals input (LLM unchanged), then <code>alpha = 2.0</code> → visual contribution mixed in.</li>
+<li>An interleaved-mask builder that produces the 2D attention mask for a &quot;(image 1) (text 1) (image 2) (text 2)&quot; sequence.</li>
+</ol>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-gated-bridge-diagnostic.md</code>. Given an open VLM&#39;s config (resampler Y/N, cross-attn frequency, gate scheme), it identifies the Flamingo lineage elements and explains the freezing strategy. Useful for debugging why a fine-tune degraded text performance (answer: the gate got too wide too fast).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Compute Flamingo-9B&#39;s visual parameter count: 9B LLM + 1.4B gated cross-attention layers + 64M resampler. What fraction of total params is trained?</p>
+</li>
+<li><p>Implement the gated residual <code>y = tanh(alpha) * cross + x</code> in PyTorch. Show experimentally that with <code>alpha=0</code>, <code>y==x</code> exactly at init.</p>
+</li>
+<li><p>Read OpenFlamingo Section 3.2 (arXiv:2308.01390) on how they handle multiple images in a batch when each prompt has a different image count. Describe the padding strategy.</p>
+</li>
+<li><p>Why does Flamingo&#39;s cross-attention mask let a text token attend to <em>only the most recent</em> preceding image rather than all preceding images? Read the Flamingo paper Section 2.4 and explain the tradeoff.</p>
+</li>
+<li><p>In-context few-shot: construct a prompt with 4 examples of &quot;image → color of main object&quot; for a new Flamingo variant. Describe the expected accuracy pattern as you vary the number of examples from 0 to 8.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Perceiver resampler</td>
+<td>&quot;Fixed-latent cross-attention&quot;</td>
+<td>Module that produces K fixed tokens from a variable number of input patches</td>
+</tr>
+<tr>
+<td>Gated cross-attention</td>
+<td>&quot;Tanh-gated bridge&quot;</td>
+<td>Residual layer <code>y = tanh(alpha)*cross + x</code>, learnable alpha, init 0</td>
+</tr>
+<tr>
+<td>Interleaved input</td>
+<td>&quot;Mixed sequence&quot;</td>
+<td>Prompt format with images and text mixed freely in reading order</td>
+</tr>
+<tr>
+<td>Frozen LLM</td>
+<td>&quot;No LLM gradients&quot;</td>
+<td>The text LLM&#39;s weights do not update; only resampler + cross-attn layers train</td>
+</tr>
+<tr>
+<td>Few-shot</td>
+<td>&quot;In-context examples&quot;</td>
+<td>Give a few (image, answer) pairs in the prompt; model generalizes without finetuning</td>
+</tr>
+<tr>
+<td>OBELICS</td>
+<td>&quot;Interleaved web corpus&quot;</td>
+<td>Open dataset of 141M web pages with images and text in reading order</td>
+</tr>
+<tr>
+<td>Chinchilla</td>
+<td>&quot;70B frozen base&quot;</td>
+<td>Flamingo&#39;s frozen text LLM, from DeepMind&#39;s Chinchilla paper</td>
+</tr>
+<tr>
+<td>Gate schedule</td>
+<td>&quot;How alpha moves&quot;</td>
+<td>The rate at which the cross-attention gate opens during training</td>
+</tr>
+<tr>
+<td>Cross-attn frequency</td>
+<td>&quot;Every M layers&quot;</td>
+<td>How often a gated cross-attention block is inserted; Flamingo uses M=4</td>
+</tr>
+<tr>
+<td>OpenFlamingo</td>
+<td>&quot;Open reproduction&quot;</td>
+<td>MosaicML/LAION open checkpoint at 3-9B; architecture-identical to Flamingo</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2204.14198">Alayrac et al. — Flamingo (arXiv:2204.14198)</a> — the original paper.</li>
+<li><a href="https://arxiv.org/abs/2308.01390">Awadalla et al. — OpenFlamingo (arXiv:2308.01390)</a> — open reproduction.</li>
+<li><a href="https://arxiv.org/abs/2306.16527">Laurençon et al. — OBELICS (arXiv:2306.16527)</a> — interleaved web corpus.</li>
+<li><a href="https://arxiv.org/abs/2107.14795">Jaegle et al. — Perceiver IO (arXiv:2107.14795)</a> — the general Perceiver architecture.</li>
+<li><a href="https://arxiv.org/abs/2305.03726">Li et al. — Otter (arXiv:2305.03726)</a> — instruction-tuned Flamingo descendant.</li>
+<li><a href="https://arxiv.org/abs/2405.02246">Laurençon et al. — Idefics2 (arXiv:2405.02246)</a> — modern simplification of the Flamingo approach.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-blip2-qformer-bridge.html"><span>← Previous</span><b>blip2 qformer bridge</b></a>
+      <a class="next" href="./05-llava-visual-instruction-tuning.html"><span>Next →</span><b>llava visual instruction tuning</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

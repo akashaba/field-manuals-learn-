@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>12 — Authentication &amp; Authorization — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/12-authentication.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">12 — Authentication &amp; Authorization</h1>
+    <p class="lesson-sub">**Module goal:** Move past `x-api-key` header hacks to real production auth. Master API keys, JWTs, OAuth 2.0 / OIDC, session cookies, multi-tenant scoping, and the AuthN vs AuthZ distinction. Understand what breaks each, how to store secrets, and how to layer identity through your AI service so every LLM call carries a verifiable actor.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="40.2" y="41.8" width="33.1" height="33.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(230 56.8 58.3)"/>
+        <rect x="35.4" y="37.5" width="31.8" height="31.8" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(212 51.3 53.4)"/>
+        <rect x="30.7" y="33.2" width="30.5" height="30.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(195 45.9 48.5)"/>
+        <rect x="25.9" y="128.9" width="29.2" height="29.2" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(177 40.5 143.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">12 — Authentication</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">&amp; Authorization</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p>Two distinct concerns:</p>
+<ul>
+<li><strong>Authentication (AuthN)</strong> — <em>who is this?</em> You verify a claim of identity.</li>
+<li><strong>Authorization (AuthZ)</strong> — <em>what may they do?</em> You check permissions on a resource.</li>
+</ul>
+<p>Confusing them is one of the most common security bugs in AI services: &quot;the JWT is valid, so allow anything&quot; skips AuthZ entirely.</p>
+<p><strong>Four common AuthN patterns for AI services:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Used for</th>
+<th>Pros</th>
+<th>Cons</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>API keys</strong></td>
+<td>Machine-to-machine, developer keys</td>
+<td>Simple; long-lived; easy to revoke</td>
+<td>Long-lived = high blast radius if leaked; no user identity</td>
+</tr>
+<tr>
+<td><strong>JWT (bearer token)</strong></td>
+<td>Frontend↔backend, service↔service</td>
+<td>Stateless verification; carries claims</td>
+<td>Revocation is hard; leaked = valid until expiry</td>
+</tr>
+<tr>
+<td><strong>OAuth 2.0 / OIDC</strong></td>
+<td>Third-party sign-in, delegated access</td>
+<td>Industry standard; refresh tokens; scopes</td>
+<td>Complex; needs an IdP (Auth0, Okta, Cognito, Azure AD B2C)</td>
+</tr>
+<tr>
+<td><strong>Session cookies</strong></td>
+<td>Web apps served from your domain</td>
+<td>HttpOnly + Secure protects from XSS theft; revocable on server</td>
+<td>Only fits same-origin web apps</td>
+</tr>
+</tbody></table>
+<p><strong>AuthZ patterns:</strong></p>
+<ul>
+<li><strong>RBAC</strong> (Role-Based) — user→roles→permissions. Simple, coarse.</li>
+<li><strong>ABAC</strong> (Attribute-Based) — decision from attributes of user, resource, action, context. Fine-grained, complex.</li>
+<li><strong>Policy engines</strong> — OPA (Open Policy Agent), Cedar (AWS), Casbin. Externalize AuthZ decisions.</li>
+</ul>
+<p><strong>Multi-tenancy:</strong> every request must be scoped to a tenant. The pattern:</p>
+<ol>
+<li>Extract identity from AuthN (JWT, API key)</li>
+<li>Resolve tenant from identity (<code>tenant_id</code> claim or DB lookup)</li>
+<li>Attach <code>tenant_id</code> to request context</li>
+<li>Every downstream query/action includes <code>WHERE tenant_id = $1</code> or its equivalent</li>
+</ol>
+<p>Skipping step 4 anywhere = tenant leakage. This is a <em>systemic property</em> — one missed query in a 200-endpoint service is a breach.</p>
+<p><strong>Secrets — the substrate of AuthN.</strong> Everything above depends on: signing keys (JWT), API keys (upstream providers), OAuth client secrets, DB passwords. Storage: secret manager (AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, 1Password), NEVER git, NEVER <code>.env</code> in a Docker image. Environment variables at runtime OK; injected from a secret manager at deploy.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-api-keys-simple-but-dangerous"><a class="anchor" href="#21-api-keys-simple-but-dangerous">#</a> 2.1 API Keys — Simple but Dangerous</h3>
+<p>The simplest AuthN: client sends <code>Authorization: Bearer sk_live_&lt;opaque&gt;</code>; server looks it up in a table. Rules to make it safe:</p>
+<ol>
+<li><strong>Generate cryptographically random</strong>, at least 32 bytes: <code>secrets.token_urlsafe(32)</code>.</li>
+<li><strong>Store hashed, not plaintext</strong> (bcrypt or SHA-256 with per-key salt). If the DB leaks, keys aren&#39;t usable.</li>
+<li><strong>Prefix by environment</strong> (<code>sk_live_</code>, <code>sk_test_</code>) so leaks are obvious in log grepping.</li>
+<li><strong>Emit a short prefix as <code>key_id</code></strong> for logs; never log the full key.</li>
+<li><strong>Rotate on schedule and on suspicion.</strong> Support multi-key per user during transition.</li>
+<li><strong>Rate-limit per key.</strong> (Module 10.)</li>
+<li><strong>Detect leaked keys</strong> — scan git commits, Slack, error reports. GitHub secret scanning is a partner ecosystem for exactly this.</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import secrets, hashlib
+from sqlalchemy.orm import Session
+
+def create_api_key(db: Session, user_id: str) -&gt; tuple[str, str]:
+    &quot;&quot;&quot;Returns (plaintext_key_shown_once, key_id_for_ref).&quot;&quot;&quot;
+    key = &quot;sk_live_&quot; + secrets.token_urlsafe(32)
+    key_id = key[:12]  # short prefix for logs / user UI
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    db.execute(&quot;INSERT INTO api_keys (user_id, key_id, key_hash, created_at) VALUES (?,?,?,now())&quot;,
+               (user_id, key_id, key_hash))
+    return key, key_id
+
+def verify_api_key(db: Session, presented: str) -&gt; str | None:
+    &quot;&quot;&quot;Returns user_id if valid, else None.&quot;&quot;&quot;
+    key_hash = hashlib.sha256(presented.encode()).hexdigest()
+    row = db.execute(&quot;SELECT user_id FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL&quot;,
+                     (key_hash,)).fetchone()
+    return row.user_id if row else None</code></pre>
+      </div>
+    <h3 id="22-jwt-stateless-bearer-tokens"><a class="anchor" href="#22-jwt-stateless-bearer-tokens">#</a> 2.2 JWT — Stateless Bearer Tokens</h3>
+<p>A JWT (JSON Web Token) has three base64url-encoded parts: <code>header.payload.signature</code>. The signature is HMAC-SHA256 (<code>HS256</code>) or RSA/ECDSA (<code>RS256</code>/<code>ES256</code>) over <code>header.payload</code>.</p>
+<p><strong>Payload (claims):</strong></p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;iss&quot;: &quot;auth.example.com&quot;,
+  &quot;sub&quot;: &quot;user-abc123&quot;,
+  &quot;aud&quot;: &quot;api.example.com&quot;,
+  &quot;exp&quot;: 1758934800,
+  &quot;iat&quot;: 1758931200,
+  &quot;tenant_id&quot;: &quot;t-xyz&quot;,
+  &quot;roles&quot;: [&quot;editor&quot;],
+  &quot;scopes&quot;: [&quot;read:docs&quot;, &quot;write:chat&quot;]
+}</code></pre>
+      </div>
+    <p><strong>Verification in FastAPI:</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from fastapi import Depends, HTTPException, Header
+from jose import jwt, JWTError
+
+JWKS_URL = &quot;https://auth.example.com/.well-known/jwks.json&quot;
+JWKS = fetch_jwks(JWKS_URL)  # cache, refresh periodically
+
+def get_current_user(authorization: str = Header(...)) -&gt; dict:
+    if not authorization.startswith(&quot;Bearer &quot;):
+        raise HTTPException(401, &quot;missing bearer&quot;)
+    token = authorization[7:]
+    try:
+        header = jwt.get_unverified_header(token)
+        key = next(k for k in JWKS[&quot;keys&quot;] if k[&quot;kid&quot;] == header[&quot;kid&quot;])
+        claims = jwt.decode(
+            token, key,
+            algorithms=[&quot;RS256&quot;],
+            audience=&quot;api.example.com&quot;,
+            issuer=&quot;https://auth.example.com&quot;,
+        )
+    except (JWTError, StopIteration):
+        raise HTTPException(401, &quot;invalid token&quot;)
+    return claims
+
+@app.post(&quot;/chat&quot;)
+async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
+    if &quot;write:chat&quot; not in user[&quot;scopes&quot;]:
+        raise HTTPException(403, &quot;missing scope&quot;)
+    # user[&quot;tenant_id&quot;] is now trusted; use it in every query
+    ...</code></pre>
+      </div>
+    <p><strong>JWT pitfalls to memorize:</strong></p>
+<ul>
+<li><strong><code>alg: none</code> attack</strong> — accept only allow-listed algorithms; never let the header dictate.</li>
+<li><strong>HS256 vs RS256 confusion</strong> — if your verify code accepts both and uses the public key as an HMAC secret, an attacker signs an HS256 token with the public key. Always pin the algorithm.</li>
+<li><strong>No revocation</strong> — a signed JWT is valid until expiry. Keep expiries <strong>short (5–15 min)</strong> and use <strong>refresh tokens</strong> stored server-side (revocable).</li>
+<li><strong><code>aud</code> and <code>iss</code> checks</strong> are mandatory — otherwise a token issued for service A is accepted by service B.</li>
+<li><strong>Clock skew</strong> — allow 30–60s leeway on <code>exp</code> / <code>nbf</code>; enforce anything wider is a bug.</li>
+</ul>
+<h3 id="23-oauth-20-oidc-the-standard-for-user-sign-in"><a class="anchor" href="#23-oauth-20-oidc-the-standard-for-user-sign-in">#</a> 2.3 OAuth 2.0 / OIDC — The Standard for User Sign-in</h3>
+<p><strong>OAuth 2.0</strong> is a delegation protocol: user grants your app access to their data on a resource server (Google, GitHub, Microsoft). <strong>OIDC (OpenID Connect)</strong> layers identity on top: instead of just delegated API access, you also get an <code>id_token</code> (a JWT) with authenticated user claims.</p>
+<p><strong>Authorization Code Flow with PKCE</strong> (modern, for SPAs and mobile):</p>
+<ol>
+<li>Client generates <code>code_verifier</code> (random) and <code>code_challenge</code> = SHA-256(verifier)</li>
+<li>Redirect user to IdP&#39;s <code>/authorize</code> with <code>client_id</code>, <code>redirect_uri</code>, <code>scope</code>, <code>state</code>, <code>code_challenge</code></li>
+<li>User signs in; IdP redirects back with <code>?code=...&amp;state=...</code></li>
+<li>Client POSTs <code>code</code> + <code>code_verifier</code> to IdP&#39;s <code>/token</code></li>
+<li>Receives <code>access_token</code>, <code>id_token</code>, <code>refresh_token</code></li>
+<li>Access token → call your API; ID token → know the user&#39;s identity</li>
+</ol>
+<p>Brian&#39;s own product (legmt.gov) uses Azure AD B2C via MSAL — same OIDC pattern. In your AI service backend, you validate the ID token as a JWT (Section 2.2) and use claims for AuthZ.</p>
+<p><strong>Scopes</strong> are your first line of authorization: <code>read:docs write:chat admin:users</code>. Emit only tokens with scopes the user actually needs; check scope on every endpoint.</p>
+<p><strong>Refresh tokens</strong> are long-lived credentials to obtain new access tokens without re-authenticating. Store in httpOnly Secure SameSite=Strict cookies (web) or Keychain/Keystore (mobile). NEVER localStorage — one XSS = full account takeover.</p>
+<h3 id="24-fastapi-dependency-injection-for-authz"><a class="anchor" href="#24-fastapi-dependency-injection-for-authz">#</a> 2.4 FastAPI Dependency Injection for AuthZ</h3>
+<p>Layer AuthN → AuthZ cleanly using <code>Depends</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from fastapi import Depends, HTTPException
+
+def get_user(authorization: str = Header(...)) -&gt; dict:
+    return validate_jwt(authorization)  # from 2.2
+
+def require_scope(*required: str):
+    def check(user: dict = Depends(get_user)) -&gt; dict:
+        if not set(required).issubset(set(user[&quot;scopes&quot;])):
+            raise HTTPException(403, f&quot;missing scope: {required}&quot;)
+        return user
+    return check
+
+def get_tenant_context(user: dict = Depends(get_user)) -&gt; str:
+    tid = user.get(&quot;tenant_id&quot;)
+    if not tid:
+        raise HTTPException(403, &quot;missing tenant&quot;)
+    return tid
+
+@app.post(&quot;/chat&quot;)
+async def chat(req: ChatRequest,
+               user: dict = Depends(require_scope(&quot;write:chat&quot;)),
+               tenant: str = Depends(get_tenant_context)):
+    # Every db call parameterized by `tenant`
+    ...</code></pre>
+      </div>
+    <p>The pattern gives you composable auth. Adding a new scope requirement is one dependency; the boilerplate is centralized.</p>
+<h3 id="25-multi-tenant-data-isolation"><a class="anchor" href="#25-multi-tenant-data-isolation">#</a> 2.5 Multi-Tenant Data Isolation</h3>
+<p>Beyond passing <code>tenant_id</code> through function calls, use <strong>defense in depth</strong>:</p>
+<ul>
+<li><strong>Row-level security (RLS)</strong> in Postgres — the DB enforces <code>tenant_id = current_setting(&#39;app.tenant&#39;)</code> on every query. Even a buggy service can&#39;t cross tenants.</li>
+<li><strong>Separate schemas or databases per tenant</strong> — highest isolation, hardest to operate.</li>
+<li><strong>Per-tenant encryption keys</strong> — data at rest encrypted per-tenant; a breach of one tenant&#39;s key doesn&#39;t expose others.</li>
+</ul>
+<p>For LLM apps specifically:</p>
+<ul>
+<li><strong>Prompt cache MUST be tenant-keyed</strong> (Module 11)</li>
+<li><strong>Vector index MUST filter by tenant</strong> — the RAG retrieval step is a common leak (<code>WHERE tenant_id = $1</code> on your vector store&#39;s metadata filter)</li>
+<li><strong>User content in system prompts must be sanitized</strong> — a prompt injection can attempt to exfiltrate other tenants&#39; data if the model has cross-tenant context</li>
+</ul>
+<p><code>[IMG-12-01]</code> — <em>Prompt: A layered authentication and authorization diagram for an AI service. Left column: three actors (browser SPA, native mobile app, ServerToServer client). Middle: an identity provider labeled &quot;Auth0 / Cognito / Azure AD B2C&quot; issuing JWTs. Right: the AI backend showing middleware layers — &quot;1. JWT verification (issuer, audience, signature)&quot;, &quot;2. Scope check (write:chat)&quot;, &quot;3. Tenant resolution&quot;, &quot;4. RBAC/ABAC policy&quot;, &quot;5. Data-layer row-level security&quot;. Arrows showing a request traverses all five. Clean architecture diagram, neutral colors.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-passport-visa-and-boarding-pass"><a class="anchor" href="#model-1-the-passport-visa-and-boarding-pass">#</a> Model 1: The Passport, Visa, and Boarding Pass</h3>
+<p>At an airport:</p>
+<ul>
+<li><strong>Passport</strong> = your identity — issued by an authority (a government / an IdP). It says who you are. Verifiable via cryptographic features. That&#39;s authentication.</li>
+<li><strong>Visa</strong> = authorization for a destination — granted by the destination country based on your passport. Says &quot;you may enter for tourism, 90 days.&quot; That&#39;s authorization scoped to a resource.</li>
+<li><strong>Boarding pass</strong> = ephemeral session credential for a specific flight — issued once you&#39;ve cleared check-in, valid only for that flight. That&#39;s your access token.</li>
+<li><strong>Passport revocation</strong> = kill switch at the government level; <strong>visa cancellation</strong> = at the destination level; <strong>boarding pass invalidation</strong> = at the airline level. Each has different revocation cost and speed.</li>
+</ul>
+<p>A JWT is a boarding pass: self-contained, verifiable at the gate without radioing HQ, but useless to invalidate mid-flight — which is why they&#39;re short-lived. A refresh token is closer to your visa: presented periodically to get new boarding passes.</p>
+<h3 id="model-2-the-buildings-access-card"><a class="anchor" href="#model-2-the-buildings-access-card">#</a> Model 2: The Building&#39;s Access Card</h3>
+<p>A modern office building has:</p>
+<ul>
+<li><strong>Turnstile at the lobby</strong> — reads your card, checks you&#39;re a valid employee (AuthN)</li>
+<li><strong>Elevator authorization</strong> — your card unlocks certain floors, not others (RBAC)</li>
+<li><strong>Room keycard reader</strong> — some rooms need extra badge scan (ABAC — you&#39;re an employee AND on the approved list for that server room)</li>
+<li><strong>Time-of-day rules</strong> — accountants can access their floor 24/7; contractors only 9-5 M-F (ABAC with context)</li>
+<li><strong>Audit log</strong> — every scan recorded; investigations can trace who was where when</li>
+<li><strong>Revocation</strong> — deprovisioning fires the card immediately for all future scans</li>
+</ul>
+<p>Notice the layers are independent. Passing the turnstile doesn&#39;t grant floor access. Getting off the elevator doesn&#39;t grant server-room entry. This is defense in depth. In your AI service, every hop (edge → API → LLM → DB) checks its own layer of authorization; no single failure grants full access.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Trusting client-supplied <code>tenant_id</code> or <code>user_id</code>.</strong>
+Endpoint reads <code>body.tenant_id</code> or <code>?user_id=</code> from the request. Attacker changes it, sees another user&#39;s data. <strong>Fix:</strong> identity claims come from the <em>verified</em> token (JWT <code>sub</code>, <code>tenant_id</code> claims that the IdP signed), never from a query param or body field. If you need to reference a target user_id in a path (e.g., <code>/users/{user_id}/settings</code>), verify the authenticated caller is authorized for that target (self, admin, or same-tenant).</p>
+<p><strong>Pitfall #2 — JWT <code>alg: none</code> or algorithm confusion.</strong>
+Older JWT libraries accept <code>alg: &quot;none&quot;</code> (no signature) or accept whatever algorithm the token&#39;s header says. Attacker crafts <code>{&quot;alg&quot;:&quot;none&quot;}.payload.</code> with no signature; naive verifier accepts. Or: your app is configured with an RS256 public key, but the library also accepts HS256, so attacker signs an HS256 token using the public key bytes as the HMAC secret — and the verifier &quot;checks&quot; it correctly. <strong>Fix:</strong> pin <code>algorithms=[&quot;RS256&quot;]</code> (or your specific choice) in every <code>jwt.decode</code> call. Use a maintained library (<code>python-jose</code>, <code>PyJWT</code>) that has these attacks patched. Test negatively: try to authenticate with <code>alg:none</code> and confirm it&#39;s rejected.</p>
+<p><strong>Pitfall #3 — Logging tokens, keys, or full authorization headers.</strong>
+Structured logs contain <code>authorization: Bearer eyJhbG...</code>; the logs go to a SaaS aggregator; anyone with logs access has valid tokens. Also common: pasting a curl command in a Slack ticket. <strong>Fix:</strong> logging middleware redacts <code>Authorization</code>, <code>Cookie</code>, <code>x-api-key</code>, and any known secret headers <em>before</em> the log line is written (Module 6). Never <code>print(request.headers)</code>. In error handlers, ensure exception messages don&#39;t include the token from parse errors. And treat any leaked-token report as a P0 rotation event.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> Authentication answers &quot;who are you?&quot;; authorization answers:
+A) When are you?
+B) Where are you?
+C) What may you do?
+D) Why are you?</p>
+<p><strong>Q2 (short):</strong> Explain three JWT-specific attacks and one mitigation for each.</p>
+<p><strong>Q3 (MC):</strong> In OAuth 2.0 Authorization Code Flow with PKCE, the purpose of <code>code_verifier</code> and <code>code_challenge</code> is to:
+A) Encrypt the authorization code in transit
+B) Bind the authorization code to the specific client that started the flow, mitigating code interception
+C) Add a second factor for the user
+D) Replace the need for client_secret entirely</p>
+<p><strong>Q4 (short):</strong> Your API accepts a JWT and reads <code>tenant_id</code> from the token claims. Elsewhere, a POST endpoint accepts <code>body.tenant_id</code> and uses it in a query. Explain the vulnerability.</p>
+<p><strong>Q5 (MC):</strong> Which of the following should be stored HASHED, not plaintext, in your DB?
+A) User passwords
+B) API keys
+C) OAuth client secrets
+D) Both A and B (client secrets you hold as the OAuth client are used as-is)</p>
+<p><strong>Q6 (MC):</strong> A JWT expiry (<code>exp</code>) should typically be:
+A) Never — tokens should be permanent
+B) 5–15 minutes for access tokens; refresh tokens for long-term
+C) Exactly 1 hour by IETF mandate
+D) The user&#39;s session length</p>
+<p><strong>Q7 (short):</strong> Design the auth flow for a multi-tenant AI SaaS where enterprises sign in via their own SSO (SAML/OIDC IdP) and their users hit your API. Where does <code>tenant_id</code> come from?</p>
+<p><strong>Q8 (MC):</strong> RBAC vs ABAC — which is more appropriate for &quot;editors of a document can share it only during business hours in the user&#39;s timezone&quot;?
+A) RBAC
+B) ABAC
+C) Neither; use ACLs
+D) Both work equally</p>
+<p><strong>Q9 (MC):</strong> You detect a leaked API key posted in a public GitHub gist. Your response order should be:
+A) Log a ticket, discuss in next sprint
+B) Rotate the key immediately, revoke the old one, audit its usage
+C) Rate-limit the key
+D) Ask the user to delete the gist</p>
+<p><strong>Q10 (short):</strong> Explain row-level security (RLS) in Postgres and why it&#39;s valuable for a multi-tenant AI service.</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: C.</strong> AuthN = identity (&quot;who&quot;); AuthZ = permission (&quot;what allowed&quot;). They are separate and independently reviewable: fixing AuthN doesn&#39;t fix AuthZ (a correctly-identified user still needs their scope checked).</p>
+<p><strong>A2:</strong> Three attacks + mitigation each:</p>
+<ol>
+<li><strong><code>alg: none</code> / algorithm-confusion</strong> — attacker specifies <code>alg</code> in the header that your library naively honors. Mitigation: <strong>pin allowed algorithms</strong> in the decode call; use a modern library; test negatively.</li>
+<li><strong>Token replay / stolen bearer</strong> — attacker steals a JWT (XSS, exposed logs, MITM) and uses it. Mitigation: <strong>short expiries + refresh tokens</strong>; HttpOnly Secure cookies for browser tokens; bind tokens to client fingerprint (device DPoP) for high-value ops; monitor for anomalous use.</li>
+<li><strong>Missing <code>aud</code>/<code>iss</code> check</strong> — token from another service accepted by yours. Mitigation: <strong>enforce audience and issuer</strong> in every <code>decode</code> call; give each service a distinct audience string.</li>
+<li><strong>JWKS trust</strong> — attacker publishes their own JWKS at a URL your service naïvely fetches. Mitigation: <strong>pin JWKS URL and issuer</strong>; only trust JWKS from your IdP&#39;s <code>.well-known/jwks.json</code> over TLS.</li>
+<li><strong>Long-lived tokens with sensitive claims</strong> — a leaked long-life token exposes admin permissions until expiry. Mitigation: <strong>least privilege in claims</strong>, and <strong>short expiries</strong> for scope-heavy tokens.</li>
+</ol>
+<p><strong>A3: B.</strong> PKCE mitigates the &quot;authorization code interception&quot; attack: on native/mobile, the redirect URI may be intercepted by another app registered for the same scheme; the code alone isn&#39;t enough because exchanging it for tokens requires <code>code_verifier</code>, which only the original client holds. It doesn&#39;t encrypt the code (A), isn&#39;t a 2FA mechanism (C), and doesn&#39;t inherently replace client_secret (D), though it does enable public clients to safely omit client_secret.</p>
+<p><strong>A4:</strong> The endpoint that reads <code>body.tenant_id</code> is trusting <strong>client-supplied identity data.</strong> Attacker with a valid JWT for tenant A calls the endpoint with <code>body.tenant_id = &quot;tenant-B&quot;</code>; the query runs against tenant B&#39;s data; attacker sees another organization&#39;s records. Fix: never accept <code>tenant_id</code> from the request body/params — always use the value from the verified JWT claims. If the endpoint must operate on a different tenant (admin flows), verify the authenticated caller has an explicit permission to do so, and log it.</p>
+<p><strong>A5: D.</strong> Store user passwords and API keys hashed. For passwords use a slow, salt-inclusive algorithm (Argon2id / bcrypt / scrypt). For API keys, SHA-256 is acceptable (they&#39;re already high-entropy random). OAuth client secrets are typically stored plaintext (or encrypted at rest with envelope encryption) because <em>you use them to sign requests</em>; you can&#39;t hash something you need to send. But you protect them in a secret manager and never log them.</p>
+<p><strong>A6: B.</strong> Access tokens: 5–15 minutes; refresh tokens: hours to weeks depending on sensitivity. Short-lived access tokens minimize damage from theft. Refresh tokens live longer but are revocable server-side (they&#39;re stored per-user in your DB and consulted on every refresh). Some sensitive ops (funds transfer, permission changes) even require <em>re-authentication</em> rather than just a valid access token — &quot;step-up auth.&quot;</p>
+<p><strong>A7:</strong> Design:</p>
+<ol>
+<li>Enterprise admin configures their IdP&#39;s OIDC issuer URL and their org&#39;s <code>tenant_id</code> in your product&#39;s admin console.</li>
+<li>When users sign in, your app&#39;s login page routes them to their enterprise IdP (based on email domain or explicit workspace selection).</li>
+<li>IdP authenticates and returns an OIDC <code>id_token</code> to your app.</li>
+<li>Your backend validates the token (issuer matches configured enterprise IdP, signature verifies against IdP&#39;s JWKS, audience is your app).</li>
+<li>Your backend either uses the <code>tenant_id</code> claim (if IdP sends it) or looks up <code>tenant_id</code> by matching the token&#39;s <code>iss</code> to your DB of enterprise integrations.</li>
+<li>Your backend mints its <strong>own</strong> short-lived JWT (5-min access) with <code>sub</code>, <code>tenant_id</code>, and <code>scopes</code> — this is what the frontend uses for all subsequent API calls. Enterprise IdP tokens are never sent to your API endpoints (loose coupling; you control claim structure).</li>
+<li>Refresh via your own refresh token (revocable).
+Key point: <strong><code>tenant_id</code> comes from your side of the trust boundary</strong> (either you set it based on the enterprise integration record, or the enterprise IdP claims it but you validate <code>iss ↔ tenant_id</code> mapping).</li>
+</ol>
+<p><strong>A8: B.</strong> RBAC gives coarse role→permission mapping (editor role has share permission). But &quot;only during business hours in the user&#39;s timezone&quot; is a <strong>contextual attribute</strong> — RBAC can&#39;t express it. ABAC decides based on user attributes, resource attributes, action, and <em>environment context</em> (time, location, device). Use a policy engine (OPA, Cedar) or a rule DSL. Note that RBAC + ABAC is often the sweet spot: roles for the coarse permission (&quot;editor&quot;), ABAC layered on top for contextual constraints (&quot;editor AND now ∈ business_hours(user.tz)&quot;).</p>
+<p><strong>A9: B.</strong> Priority order for a leaked key:</p>
+<ol>
+<li><strong>Rotate</strong> — issue a new key.</li>
+<li><strong>Revoke</strong> the old one — kill it in your DB right now.</li>
+<li><strong>Audit</strong> — query logs for all uses of the old key: source IPs, endpoints, timing. Determine whether unauthorized use occurred.</li>
+<li><strong>Notify</strong> the affected customer and, depending on data accessed, internal security / legal / regulator per your incident response plan.</li>
+<li><strong>Post-mortem</strong> — how did it leak? (Committed to git? Pasted in Slack? Screenshotted?) Add controls: pre-commit hooks that detect key prefixes, GitHub secret scanning, DLP on messaging.
+Asking the user to delete the gist (D) doesn&#39;t help — GitHub&#39;s mirrors, Google Cache, Wayback Machine, and any bot that already scraped it still have the key. Rotation is the only remediation.</li>
+</ol>
+<p><strong>A10:</strong> <strong>Row-level security (RLS)</strong> is a Postgres feature where you attach policies to a table so that SELECT/INSERT/UPDATE/DELETE only see rows matching a predicate — evaluated against session variables. Typical pattern:</p>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON documents
+  USING (tenant_id = current_setting(&#39;app.tenant_id&#39;)::uuid);</code></pre>
+      </div>
+    <p>Your app sets <code>SET app.tenant_id = &#39;&lt;from JWT&gt;&#39;</code> at the start of each request/transaction. Every subsequent query, no matter how it&#39;s written, automatically filters by tenant. <strong>Value for AI services:</strong> a bug in a service (missing <code>WHERE tenant_id = ?</code>) can no longer produce cross-tenant leakage — the DB refuses to return the wrong rows. It&#39;s defense in depth, cheap once configured, and dramatically reduces the surface area of AuthZ errors in complex systems. Similar features: MySQL security definer procs; MongoDB $expr with $$ROOT; Firestore rules.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/13-security.md</code> — the broader security picture</li>
+<li><code>learning/10-rate-limiting.md</code> — auth-tied rate-limits</li>
+<li><code>learning/09-llm-observability.md</code> — attach hashed user_id to traces</li>
+<li><code>learning/06-logging.md</code> — redact tokens from logs</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Wire an OIDC IdP (Auth0 / Cognito / Keycloak) with your Month 4 or 5 build. Frontend gets a JWT; backend verifies via JWKS.</li>
+<li>Add scope checks on your endpoints. Test with a token missing the required scope; confirm 403.</li>
+<li>Enable Postgres RLS on your main table. Attempt a cross-tenant query; confirm zero rows.</li>
+<li>Write a <code>create_api_key</code> + <code>verify_api_key</code> pair with hashed storage. Test end-to-end.</li>
+<li>Deliberately introduce a JWT <code>alg: none</code> attempt against your service; confirm rejection.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>OWASP JWT Cheat Sheet — <a href="https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html">https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html</a></li>
+<li>Auth0 blog — OIDC, PKCE, flows</li>
+<li>Aaron Parecki — &quot;OAuth 2.0 Simplified&quot; (free online book)</li>
+<li>Postgres docs — Row Security Policies</li>
+<li>OWASP Authentication Cheat Sheet</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-11-caching.html"><span>← Previous</span><b>learning 11 caching</b></a>
+      <a class="next" href="./learning-13-security.html"><span>Next →</span><b>learning 13 security</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

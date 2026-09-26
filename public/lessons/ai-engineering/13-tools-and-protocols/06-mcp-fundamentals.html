@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP Fundamentals: Stateless Requests and JSON-RPC — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/06-mcp-fundamentals/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">MCP Fundamentals: Stateless Requests and JSON-RPC</h1>
+    <p class="lesson-sub">Modern MCP has no handshake and no protocol session. Each request must carry enough metadata to be understood, authorized, routed, and retried on its own.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13, Lessons 01 through 05</b></div><div><span>Time</span><b>~55 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="20.8" y="124.4" width="27.9" height="27.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(158 34.7 138.3)"/>
+        <rect x="16.0" y="120.1" width="26.6" height="26.6" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(140 29.3 133.4)"/>
+        <circle cx="23.9" cy="128.5" r="12.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">MCP Fundamentals:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Stateless Requests…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish MCP&#39;s server primitives from its client-side features.</li>
+<li>Build valid JSON-RPC 2.0 requests and responses for MCP <code>2026-07-28</code>.</li>
+<li>Attach protocol version, client capabilities, and client identity to every request.</li>
+<li>Use <code>server/discover</code> and handle <code>UnsupportedProtocolVersionError</code> without a handshake.</li>
+<li>Trace one independent request from validation through a complete result.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>An MCP server can receive two consecutive requests from different clients, with different capabilities, on the same process or HTTP worker. If the server remembers what the previous request declared, it can apply the wrong permissions or return the wrong wire shape.</p>
+<p>MCP <code>2026-07-28</code> removes that ambiguity. The protocol core is stateless. A server must decide how to handle the current request from the current request, not from connection history.</p>
+<p>This changes the mental model. The old sequence was connection first, handshake second, operations third. The modern sequence is simpler:</p>
+<ol>
+<li>The client sends a self-describing request.</li>
+<li>The server validates that request&#39;s version and capabilities.</li>
+<li>The server handles the method.</li>
+<li>The server returns a typed result or a JSON-RPC error.</li>
+</ol>
+<p>The next request repeats the same process from scratch.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="server-primitives"><a class="anchor" href="#server-primitives">#</a> Server primitives</h3>
+<p>MCP servers expose three primary primitives:</p>
+<ol>
+<li><strong>Tools</strong> are model-controlled actions, discovered with <code>tools/list</code> and invoked with <code>tools/call</code>.</li>
+<li><strong>Resources</strong> are URI-addressed data, discovered with <code>resources/list</code> and retrieved with <code>resources/read</code>.</li>
+<li><strong>Prompts</strong> are reusable templates, discovered with <code>prompts/list</code> and rendered with <code>prompts/get</code>.</li>
+</ol>
+<p>Roots, sampling, and logging remain in the <code>2026-07-28</code> schema for compatibility, but they are deprecated. New implementations should use explicit tool or resource inputs for roots, direct model-provider APIs for sampling, and stderr or OpenTelemetry for logging. Elicitation remains available through Multi Round-Trip Requests, where a server returns an input request and the client retries the original operation. A modern server never starts an independent JSON-RPC request.</p>
+<h3 id="json-rpc-envelopes"><a class="anchor" href="#json-rpc-envelopes">#</a> JSON-RPC envelopes</h3>
+<p>MCP uses JSON-RPC 2.0:</p>
+<ul>
+<li>Request: <code>{jsonrpc, id, method, params}</code></li>
+<li>Response: <code>{jsonrpc, id, result}</code> or <code>{jsonrpc, id, error}</code></li>
+<li>Notification: <code>{jsonrpc, method, params}</code> with no <code>id</code></li>
+</ul>
+<p>The request <code>id</code> correlates one response. It does not create a protocol session.</p>
+<h3 id="required-request-metadata"><a class="anchor" href="#required-request-metadata">#</a> Required request metadata</h3>
+<p>Every modern request carries a <code>_meta</code> object inside <code>params</code>:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 7,
+  &quot;method&quot;: &quot;tools/list&quot;,
+  &quot;params&quot;: {
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {},
+      &quot;io.modelcontextprotocol/clientInfo&quot;: {
+        &quot;name&quot;: &quot;course-client&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The protocol version and client capabilities are required. Client identity is recommended. It is self-reported display and debugging data, not a security credential.</p>
+<p>The server must not infer any of these values from an earlier request, a stdio process, an HTTP connection, or a transport header alone.</p>
+<h3 id="complete-results-and-server-identity"><a class="anchor" href="#complete-results-and-server-identity">#</a> Complete results and server identity</h3>
+<p>Every successful modern result includes <code>resultType</code>. A normal final result uses <code>&quot;complete&quot;</code>. Servers should also identify themselves in result metadata:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 7,
+  &quot;result&quot;: {
+    &quot;resultType&quot;: &quot;complete&quot;,
+    &quot;tools&quot;: [],
+    &quot;ttlMs&quot;: 30000,
+    &quot;cacheScope&quot;: &quot;public&quot;,
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/serverInfo&quot;: {
+        &quot;name&quot;: &quot;notes-server&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p><code>tools/list</code>, <code>resources/list</code>, <code>prompts/list</code>, <code>resources/templates/list</code>, <code>resources/read</code>, and <code>server/discover</code> are cacheable results. They include <code>ttlMs</code> and <code>cacheScope</code>. A safe default is <code>ttlMs: 0</code> and <code>cacheScope: &quot;private&quot;</code>. List items should have deterministic ordering so equivalent responses produce stable cache keys and stable model context.</p>
+<h3 id="discovery-without-a-handshake"><a class="anchor" href="#discovery-without-a-handshake">#</a> Discovery without a handshake</h3>
+<p>Every modern server must implement <code>server/discover</code>. The client may call it before another method to retrieve:</p>
+<ul>
+<li><code>supportedVersions</code></li>
+<li>server <code>capabilities</code></li>
+<li>optional usage <code>instructions</code></li>
+<li>server identity in result <code>_meta</code></li>
+<li>cache hints</li>
+</ul>
+<p>Discovery is useful, but it is not a gate. A client can send <code>tools/list</code> first because that request already carries its protocol version and capabilities.</p>
+<p>If the requested version is unsupported, the server returns JSON-RPC code <code>-32022</code> with:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;requested&quot;: &quot;2027-01-01&quot;,
+  &quot;supported&quot;: [&quot;2026-07-28&quot;]
+}</code></pre>
+      </div>
+    <p>The client selects a mutually supported modern version and retries with a new JSON-RPC request id.</p>
+<h3 id="one-request-lifecycle"><a class="anchor" href="#one-request-lifecycle">#</a> One request lifecycle</h3>
+<p>Trace a modern request in this order:</p>
+<ol>
+<li>Parse one JSON-RPC envelope.</li>
+<li>Confirm <code>jsonrpc</code> is <code>&quot;2.0&quot;</code>, an <code>id</code> exists, <code>method</code> is a string, and <code>params</code> is an object.</li>
+<li>Require the version string and capability object in <code>params._meta</code>; malformed or missing metadata is <code>-32602</code>.</li>
+<li>At an HTTP boundary, compare the version, method, and applicable name headers with the body. A mismatch is <code>-32020</code> even when one of the two version values is unsupported.</li>
+<li>After equality is established, reject a matched but unsupported version with <code>-32022</code>.</li>
+<li>Check required capabilities, then route by <code>method</code> and validate method-specific arguments.</li>
+<li>Authenticate and authorize the concrete operation before its handler runs.</li>
+<li>Return a complete result with server identity.</li>
+<li>Forget request-scoped protocol metadata.</li>
+</ol>
+<p>That order prevents two components from interpreting different calls. A gateway must not authorize <code>Mcp-Name: notes.read</code> while the origin executes <code>params.name: notes.delete</code>. It also keeps malformed input, header confusion, version negotiation, capability failure, authorization, and handler failure as distinct evidence.</p>
+<p>Closing stdin or an HTTP response ends transport activity. It does not terminate a protocol session because modern MCP has no protocol session.</p>
+<h3 id="explicit-legacy-compatibility"><a class="anchor" href="#explicit-legacy-compatibility">#</a> Explicit legacy compatibility</h3>
+<p>Versions through <code>2025-11-25</code> use <code>initialize</code>, <code>notifications/initialized</code>, connection-scoped capabilities, and, on earlier Streamable HTTP, optional protocol sessions. That behavior is still relevant when a dual-era client talks to an old server.</p>
+<p>Keep the eras separate. A modern request is identified by the required per-request metadata. A legacy connection is selected only through the documented fallback path. Do not send <code>initialize</code> as the default for a <code>2026-07-28</code> server.</p>
+<p>“Stateless” therefore has an era-specific meaning. In <code>2026-07-28</code>, it is a protocol invariant: every ordinary request is independently interpretable and no MCP session exists. In versions through <code>2025-11-25</code>, initialization and negotiated capabilities belong to a connection, so a compatibility adapter may retain that legacy connection state. A dual-era implementation is not one permissive state machine. It is a stateless modern core beside an isolated legacy adapter, with an explicit selection decision before either parser runs.</p>
+<p>Neither meaning forbids durable application state. A workflow, task, or draft can live behind an opaque handle in a shared store. The client sends that handle as ordinary input, and every replica authenticates and authorizes its use. Protocol context must not leak into that store as a substitute for the removed session.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mcp-tool-call</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> builds, validates, traces, and dispatches modern MCP messages without a framework. Run:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py
+python3 -m unittest discover code/tests -v</code></pre>
+      </div>
+    <p>Watch for three invariants in the output:</p>
+<ul>
+<li>Every request repeats its <code>_meta</code> fields.</li>
+<li>Every successful result is <code>resultType: &quot;complete&quot;</code> and includes server identity.</li>
+<li>The list result is deterministically ordered and has explicit cache hints.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson ships <code>outputs/skill-mcp-handshake-tracer.md</code>. The historical filename remains stable, but the artifact is now a stateless request tracer. It audits each message independently and labels legacy handshake traffic only when it is genuinely present.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Change one request&#39;s protocol version to <code>2027-01-01</code>. Confirm the error code is <code>-32022</code> and the data advertises the supported version.</li>
+<li>Remove <code>io.modelcontextprotocol/clientCapabilities</code> from the second request. Confirm the server does not reuse capabilities from the first request.</li>
+<li>Reverse the in-memory tool registry. Confirm <code>tools/list</code> still returns the same deterministic order.</li>
+<li>Change <code>cacheScope</code> from <code>public</code> to <code>private</code>. Explain which authorization contexts may reuse the response in each case.</li>
+<li>Add an optional <code>clientInfo</code> omission test. The request should remain valid because client identity is recommended, not required.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Stateless protocol</td>
+<td>Every request supplies the metadata needed to interpret it</td>
+</tr>
+<tr>
+<td>Request metadata</td>
+<td>Version, client capabilities, and recommended client identity in <code>params._meta</code></td>
+</tr>
+<tr>
+<td><code>server/discover</code></td>
+<td>Mandatory server method for versions, capabilities, instructions, and identity</td>
+</tr>
+<tr>
+<td><code>resultType</code></td>
+<td>Discriminator on every successful modern result</td>
+</tr>
+<tr>
+<td>Cacheable result</td>
+<td>Result that includes required <code>ttlMs</code> and <code>cacheScope</code> hints</td>
+</tr>
+<tr>
+<td>Protocol era</td>
+<td>Modern per-request metadata or legacy connection-scoped initialization</td>
+</tr>
+<tr>
+<td>Transport lifetime</td>
+<td>Process, connection, or response-stream lifetime, not protocol session state</td>
+</tr>
+<tr>
+<td><code>-32022</code></td>
+<td>Unsupported protocol version error with requested and supported versions</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/architecture">MCP Architecture</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic">MCP Base Protocol</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP Server Discovery</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/changelog">MCP 2026-07-28 Changelog</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-tool-schema-design.html"><span>← Previous</span><b>tool schema design</b></a>
+      <a class="next" href="./07-building-an-mcp-server.html"><span>Next →</span><b>building an mcp server</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

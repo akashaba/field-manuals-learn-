@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Model Context Protocol (MCP) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/14-model-context-protocol/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#continue-the-mcp-deep-dive">Continue the MCP Deep Dive</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Model Context Protocol (MCP)</h1>
+    <p class="lesson-sub">MCP gives an AI host one protocol for discovering and invoking tools, resources, and prompts. The 2026-07-28 revision makes that protocol stateless: capability and version context travels with every request, not in a connection-bound handshake.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 · 09 (Function Calling), Phase 11 · 03 (Structured Outputs)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M73.2,82.6 L79.4,73.3 L85.6,82.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M68.4,77.3 L74.0,69.0 L79.5,77.3 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M50.6,79.8 L68.6,52.9 L86.5,79.8 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M45.9,74.5 L63.1,48.6 L80.4,74.5 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.1" y="42.5" width="33.3" height="33.3" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(233 57.7 59.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Model Context</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Protocol (MCP)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish an MCP host, client, server, transport, and server primitive.</li>
+<li>Build a JSON-RPC request with the metadata required by MCP 2026-07-28.</li>
+<li>Use <code>server/discover</code> to inspect versions, identity, and capabilities.</li>
+<li>Return typed and cache-aware results from tools, resources, and prompts.</li>
+<li>Explain how modern stateless MCP interoperates with handshake-era servers.</li>
+<li>Choose safe state, transport, and approval boundaries for a server.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your application needs a database query, a calendar operation, and a file reader. Without a shared protocol, every AI host needs custom discovery, invocation, errors, transport, and authorization glue for those same capabilities.</p>
+<p>MCP reduces that integration matrix. A server publishes a standard JSON-RPC surface. A compliant client can discover the surface, present it to a model or user, invoke it, and interpret the result without a server-specific adapter.</p>
+<p>The important boundary is easy to miss. MCP standardizes communication. It does not decide which tool the model should call, make untrusted content safe, or turn a stateless request into durable application state. Your host and server still own those decisions.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/11-llm-engineering/14-model-context-protocol/assets/mcp-architecture.svg" alt="MCP host, stateless request, and server primitives" loading="lazy" /></figure></p>
+<h3 id="the-three-server-primitives"><a class="anchor" href="#the-three-server-primitives">#</a> The three server primitives</h3>
+<ol>
+<li><strong>Tools</strong> are callable actions. Each tool has a name, description, JSON Schema input, and handler.</li>
+<li><strong>Resources</strong> are named, URI-addressed content that a client can read.</li>
+<li><strong>Prompts</strong> are reusable templates that a host can expose to a user.</li>
+</ol>
+<p>The host is the AI application. An MCP client inside that host speaks to one server. The transport carries JSON-RPC messages between them.</p>
+<h3 id="stateless-requests-replace-the-handshake"><a class="anchor" href="#stateless-requests-replace-the-handshake">#</a> Stateless requests replace the handshake</h3>
+<p>MCP 2026-07-28 removes <code>initialize</code> and <code>notifications/initialized</code>. It also removes protocol-level sessions. Every request carries the context needed to interpret it in <code>params._meta</code>:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;method&quot;: &quot;tools/list&quot;,
+  &quot;params&quot;: {
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {},
+      &quot;io.modelcontextprotocol/clientInfo&quot;: {
+        &quot;name&quot;: &quot;lesson-client&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The protocol version and client capabilities are required. Client identity is recommended. A missing <code>_meta</code>, a missing required field, or a required field with the wrong type is malformed and returns Invalid Params (<code>-32602</code>). A well-formed version string that the server does not support returns <code>UnsupportedProtocolVersionError</code> (<code>-32022</code>). A server can process a valid request without recovering a prior negotiation record.</p>
+<p>Stateless does not mean an application can never maintain state. It means that state is not hidden behind an MCP connection or <code>Mcp-Session-Id</code>. If a workflow needs continuity, the server mints an opaque handle and the client passes that handle as an ordinary tool argument on later calls. Authorization must still be checked on every request.</p>
+<h3 id="discovery-and-version-selection"><a class="anchor" href="#discovery-and-version-selection">#</a> Discovery and version selection</h3>
+<p>Every modern server implements <code>server/discover</code>. The result advertises supported versions, capabilities, and server identity:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;result&quot;: {
+    &quot;resultType&quot;: &quot;complete&quot;,
+    &quot;supportedVersions&quot;: [&quot;2026-07-28&quot;],
+    &quot;capabilities&quot;: {
+      &quot;tools&quot;: {},
+      &quot;resources&quot;: {},
+      &quot;prompts&quot;: {}
+    },
+    &quot;ttlMs&quot;: 3600000,
+    &quot;cacheScope&quot;: &quot;public&quot;,
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/serverInfo&quot;: {
+        &quot;name&quot;: &quot;demo-server&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p>A client may call another method directly and handle a version error, but discovery makes capability display and version selection explicit. An unsupported version returns <code>UnsupportedProtocolVersionError</code> with code <code>-32022</code>. Its data contains <code>supported</code>, an array of server revisions, and <code>requested</code>, the rejected revision.</p>
+<p>On stdio, a dual-era client probes with <code>server/discover</code>. A discovery result or a recognized modern error such as <code>UnsupportedProtocolVersionError</code> identifies a modern server. Any error or timeout that is not recognized as modern permits fallback to the 2025-11-25 <code>initialize</code> flow. Legacy behavior is compatibility code, not the modern default.</p>
+<h3 id="results-are-explicit"><a class="anchor" href="#results-are-explicit">#</a> Results are explicit</h3>
+<p>Every core 2026-07-28 result has <code>resultType</code>:</p>
+<ul>
+<li><code>complete</code> means the operation finished.</li>
+<li><code>input_required</code> means the server needs another round trip through the Multi Round-Trip Requests pattern. Core servers may return it only from <code>tools/call</code>, <code>resources/read</code>, or <code>prompts/get</code>.</li>
+</ul>
+<p>Clients must treat a legacy result that omits <code>resultType</code> as complete.</p>
+<p>Servers should include <code>io.modelcontextprotocol/serverInfo</code> in every result&#39;s <code>_meta</code>. This identity is self-reported and is for display, logging, and debugging, not for security decisions.</p>
+<p>List and read results also carry <code>ttlMs</code> and <code>cacheScope</code>. A deterministic <code>tools/list</code> order plus a freshness hint lets clients cache discovery safely and improves prompt-cache stability. <code>cacheScope: public</code> permits shared caching; <code>private</code> confines reuse to the calling context.</p>
+<h3 id="the-wire-format-and-transport"><a class="anchor" href="#the-wire-format-and-transport">#</a> The wire format and transport</h3>
+<p>MCP uses JSON-RPC 2.0 over stdio or Streamable HTTP.</p>
+<ul>
+<li>A request has <code>jsonrpc</code>, <code>id</code>, <code>method</code>, and <code>params</code>.</li>
+<li>A response has the matching <code>id</code> and either <code>result</code> or <code>error</code>.</li>
+<li>A notification has no <code>id</code> and expects no response.</li>
+</ul>
+<p>Modern Streamable HTTP exposes one endpoint that accepts POST. Each JSON-RPC message gets its own POST. A request POST receives either one JSON object or a request-scoped Server-Sent Events stream that ends with the final response. An accepted notification POST receives HTTP 202 with no response body; this core revision defines no client-to-server notifications over Streamable HTTP.</p>
+<p>There is no standalone MCP GET stream, DELETE session endpoint, <code>Mcp-Session-Id</code>, or <code>Last-Event-ID</code> replay in 2026-07-28. Long-lived change notifications use a <code>subscriptions/listen</code> POST whose response remains open as an SSE stream.</p>
+<h3 id="client-input-without-server-initiated-requests"><a class="anchor" href="#client-input-without-server-initiated-requests">#</a> Client input without server-initiated requests</h3>
+<p>Older revisions let a server send requests such as <code>sampling/createMessage</code>, <code>roots/list</code>, or <code>elicitation/create</code> over a stream. The current protocol uses Multi Round-Trip Requests instead. An eligible tool call, resource read, or prompt get returns <code>resultType: input_required</code> with at least one of <code>inputRequests</code> or <code>requestState</code>. The client gathers any requested input, retries the original method with a new JSON-RPC ID and the corresponding <code>inputResponses</code>, and echoes the exact <code>requestState</code> when one was provided. If no <code>inputRequests</code> were present, the retry omits <code>inputResponses</code>.</p>
+<p>Roots, Sampling, and Logging remain functional but are deprecated, so new implementations should not adopt them. Existing Roots or Sampling requests travel inside MRTR <code>inputRequests</code>, never as independent server-to-client JSON-RPC requests. Prefer explicit file or directory parameters, resource URIs, server configuration, and direct model-provider integration. Use stderr for stdio diagnostics and OpenTelemetry for production telemetry.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mcp-nxm-collapse</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-register-a-server-surface"><a class="anchor" href="#step-1-register-a-server-surface">#</a> Step 1: register a server surface</h3>
+<p>Registration stays simple even though the request contract changed:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">server = MCPServer(&quot;demo-server&quot;)
+
+@server.tool(
+    &quot;add&quot;,
+    &quot;Add two integers.&quot;,
+    {
+        &quot;type&quot;: &quot;object&quot;,
+        &quot;properties&quot;: {
+            &quot;a&quot;: {&quot;type&quot;: &quot;integer&quot;},
+            &quot;b&quot;: {&quot;type&quot;: &quot;integer&quot;}
+        },
+        &quot;required&quot;: [&quot;a&quot;, &quot;b&quot;]
+    }
+)
+def add(a: int, b: int) -&gt; dict:
+    return {&quot;sum&quot;: a + b}</code></pre>
+      </div>
+    <p>The shipped implementation in <code>code/main.py</code> also registers a resource and prompt. It deliberately uses the standard library so you can see each envelope rather than delegating the protocol to an SDK.</p>
+<h3 id="step-2-attach-metadata-to-every-request"><a class="anchor" href="#step-2-attach-metadata-to-every-request">#</a> Step 2: attach metadata to every request</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def request(method, params=None):
+    body_params = dict(params or {})
+    body_params[&quot;_meta&quot;] = {
+        &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+        &quot;io.modelcontextprotocol/clientCapabilities&quot;: {},
+        &quot;io.modelcontextprotocol/clientInfo&quot;: {
+            &quot;name&quot;: &quot;demo-client&quot;,
+            &quot;version&quot;: &quot;1.0.0&quot;
+        }
+    }
+    return {
+        &quot;jsonrpc&quot;: &quot;2.0&quot;,
+        &quot;id&quot;: 1,
+        &quot;method&quot;: method,
+        &quot;params&quot;: body_params
+    }</code></pre>
+      </div>
+    <p>Do not cache this metadata only in a connection object. The server validates it on each request.</p>
+<h3 id="step-3-optionally-discover-before-listing"><a class="anchor" href="#step-3-optionally-discover-before-listing">#</a> Step 3: optionally discover before listing</h3>
+<p>Call <code>server/discover</code>, choose a supported version, then call <code>tools/list</code>. A direct <code>tools/list</code> is also valid if you already know the version and can handle <code>-32022</code>.</p>
+<p>The demo returns tool lists in name order and attaches <code>ttlMs</code>, <code>cacheScope</code>, <code>resultType</code>, and server identity. A tool call returns a complete, non-cacheable result because its output can depend on current state.</p>
+<h3 id="step-4-map-the-same-request-to-http"><a class="anchor" href="#step-4-map-the-same-request-to-http">#</a> Step 4: map the same request to HTTP</h3>
+<p>A remote <code>tools/call</code> POST includes headers that mirror the JSON-RPC body:</p>
+
+      <div class="codeblock" data-lang="http">
+        <span class="cb-label">http</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-http hljs">POST /mcp HTTP/1.1
+Content-Type: application/json
+Accept: application/json, text/event-stream
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: tools/call
+Mcp-Name: add</code></pre>
+      </div>
+    <p>The <code>MCP-Protocol-Version</code> header must match the version in <code>_meta</code>. <code>Mcp-Method</code> is required on every JSON-RPC request and must match <code>method</code>. <code>Mcp-Name</code> is required only for <code>tools/call</code>, <code>resources/read</code>, and <code>prompts/get</code>, where it must match the tool name, resource URI, or prompt name. A missing required header or mismatch returns HTTP 400 with <code>HeaderMismatch</code> code <code>-32020</code>.</p>
+<h3 id="step-5-enforce-safety-outside-protocol-state"><a class="anchor" href="#step-5-enforce-safety-outside-protocol-state">#</a> Step 5: enforce safety outside protocol state</h3>
+<ul>
+<li>Validate authorization and audience on every HTTP request.</li>
+<li>Bind local servers to localhost and validate <code>Origin</code> on Streamable HTTP.</li>
+<li>Mark mutating tools with <code>destructiveHint: true</code> and require host approval.</li>
+<li>Pass directory and file scope explicitly instead of depending on deprecated Roots.</li>
+<li>Treat resources and tool output as untrusted data.</li>
+<li>Keep stdout reserved for JSON-RPC under stdio; write diagnostics to stderr.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Run the lesson from its directory:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py
+cd code
+python3 -m unittest discover tests -v</code></pre>
+      </div>
+    <p>The first line should report discovery of <code>demo-server</code> at protocol <code>2026-07-28</code>. Then inspect <code>MCPClient.request</code>: it reconstructs <code>_meta</code> for every call. Remove the metadata from one request and observe the server reject it.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-mcp-server-designer.md</code> turns a domain into a stateless MCP design. Its acceptance gate requires a discovery result, per-request metadata policy, deterministic cache-aware lists, explicit state handles, transport headers, authorization, and approval rules.</p>
+<h2 id="continue-the-mcp-deep-dive"><a class="anchor" href="#continue-the-mcp-deep-dive">#</a> Continue the MCP Deep Dive</h2>
+<p>This lesson gives you the protocol model. Phase 13 turns four production boundaries into separate build-and-verify lessons:</p>
+<ol>
+<li><a href="../../../13-tools-and-protocols/28-mcp-tool-contracts-and-content/docs/en.md">MCP Tool Contracts and Content</a> covers closed input schemas, structured content, routing metadata, opaque pagination, completion authorization, and the difference between protocol and tool-domain errors.</li>
+<li><a href="../../../13-tools-and-protocols/29-mcp-reliability-cancellation-and-flow-control/docs/en.md">MCP Reliability, Cancellation, and Flow Control</a> covers request cancellation, durable task cancellation, deadlines, idempotency, backpressure, proxy buffering, and reconnect behavior.</li>
+<li><a href="../../../13-tools-and-protocols/30-mcp-registry-supply-chain-and-drift/docs/en.md">MCP Registry Supply Chain, Admission, Drift, and Rollback</a> covers namespace proof, artifact provenance, immutable pins, live drift, Registry status, admission evidence, and rollback.</li>
+<li><a href="../../../13-tools-and-protocols/31-mcp-conformance-versioning-and-operations/docs/en.md">MCP Conformance Engineering</a> covers golden and negative wire transcripts, strict version eras, SDK differentials, proxy evidence, redaction, health gates, and release rollback.</li>
+</ol>
+<p>Follow them in order when the server will cross a team or trust boundary. Together they move from “the method works” to “the contract remains safe and diagnosable through deployment.”</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>subtract</code> tool and confirm <code>tools/list</code> remains alphabetically ordered.</li>
+<li>Remove the protocol-version key and verify Invalid Params (<code>-32602</code>). Then send the well-formed but unsupported version <code>2025-11-25</code>, verify <code>-32022</code>, confirm <code>requested</code> echoes that revision, and choose from <code>supported</code>.</li>
+<li>Add a server-minted <code>draftId</code> to a create operation, then require it as an argument to update. Explain why that is application state rather than a protocol session.</li>
+<li>Return <code>input_required</code> from a tool that needs user confirmation. Retry the original call with a new ID, an <code>inputResponses</code> entry, and the exact <code>requestState</code> instead of inventing a server-to-client JSON-RPC request.</li>
+<li>Sketch a dual-era stdio client. Treat a result or recognized modern error as modern, and permit fallback to <code>initialize</code> only for an unrecognized error or timeout.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MCP</td>
+<td>&quot;Tool protocol for LLMs&quot;</td>
+<td>JSON-RPC protocol for server discovery, tools, resources, prompts, and extensions</td>
+</tr>
+<tr>
+<td>Host</td>
+<td>&quot;The AI app&quot;</td>
+<td>Owns the model and UI and mounts one or more MCP clients</td>
+</tr>
+<tr>
+<td>Client</td>
+<td>&quot;The connector&quot;</td>
+<td>Speaks MCP to one server on behalf of a host</td>
+</tr>
+<tr>
+<td>Stateless MCP</td>
+<td>&quot;No session&quot;</td>
+<td>Every request carries version and capabilities; no protocol state is keyed by a connection</td>
+</tr>
+<tr>
+<td><code>server/discover</code></td>
+<td>&quot;Capability probe&quot;</td>
+<td>Required server method advertising versions, capabilities, and identity</td>
+</tr>
+<tr>
+<td><code>resultType</code></td>
+<td>&quot;Result state&quot;</td>
+<td>Marks a result as <code>complete</code> or <code>input_required</code></td>
+</tr>
+<tr>
+<td>State handle</td>
+<td>&quot;Workflow id&quot;</td>
+<td>Server-minted application identifier passed as an ordinary argument</td>
+</tr>
+<tr>
+<td>Streamable HTTP</td>
+<td>&quot;Remote transport&quot;</td>
+<td>One POST endpoint with JSON or request-scoped SSE responses</td>
+</tr>
+<tr>
+<td>MRTR</td>
+<td>&quot;Ask and retry&quot;</td>
+<td>Input request embedded in a result, followed by a retry of the original operation</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/changelog">MCP 2026-07-28 key changes</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP server discovery</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http">MCP Streamable HTTP</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr">MCP Multi Round-Trip Requests</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/deprecated">MCP deprecated features</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-production-app.html"><span>← Previous</span><b>production app</b></a>
+      <a class="next" href="./15-prompt-caching.html"><span>Next →</span><b>prompt caching</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

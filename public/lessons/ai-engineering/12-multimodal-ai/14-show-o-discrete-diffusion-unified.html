@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Show-o and Discrete-Diffusion Unified Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/14-show-o-discrete-diffusion-unified/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Show-o and Discrete-Diffusion Unified Models</h1>
+    <p class="lesson-sub">Transfusion mixes continuous and discrete representations. Show-o (Xie et al., August 2024) goes the other way: text tokens use causal next-token prediction, image tokens use masked discrete diffusion in the spirit of MaskGIT. Both sit inside one transformer with a hybrid attention mask. The result unifies VQA, text-to-image, inpainting, and mixed-modality generation on one backbone, one tokenizer per modality, one loss formulation (next-token extended to masked prediction). This lesson walks the Show-o design — why masked discrete diffusion is a parallel, few-step image generator — and contrasts with Transfusion and Emu3.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, masked-discrete-diffusion sampler)</b></div><div><span>Prerequisites</span><b>Phase 12 · 13 (Transfusion)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M67.7,76.5 L73.1,68.3 L78.6,76.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.9,79.0 L67.7,52.2 L85.5,79.0 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M45.1,73.7 L62.3,47.9 L79.5,73.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="40.3" y="41.9" width="33.1" height="33.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(230 56.9 58.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Show-o and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Discrete-Diffusion…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain masked discrete diffusion: the schedule that masks tokens uniformly then asks the transformer to recover them.</li>
+<li>Compare parallel image decoding (Show-o, MaskGIT) to autoregressive image decoding (Chameleon, Emu3) on speed and quality.</li>
+<li>Name the three tasks Show-o handles in one checkpoint: T2I, VQA, image inpainting.</li>
+<li>Pick a masking schedule (cosine, linear, truncated) and reason about its effect on sample quality.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Transfusion&#39;s two-loss training works but has trickier dynamics — the continuous diffusion loss lives on a different numerical scale from the discrete NTP loss. Balancing loss weights is a hyperparameter search. The architecture is effective but complex.</p>
+<p>Show-o&#39;s answer: keep both modalities discrete (like Chameleon), but generate images in parallel via masked discrete diffusion instead of sequentially. The training objective becomes a single masked-token-prediction that generalizes next-token-prediction naturally.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="masked-discrete-diffusion-maskgit"><a class="anchor" href="#masked-discrete-diffusion-maskgit">#</a> Masked discrete diffusion (MaskGIT)</h3>
+<p>The original Chang et al. (2022) MaskGIT trick is elegant. Start from a fully-masked image (every token is the special <code>&lt;MASK&gt;</code> id). At each step, predict all masked tokens in parallel, then keep the top-K most confident predictions and re-mask the rest. After ~8-16 iterations, all tokens are filled in. The schedule of how many tokens to unmask per step is tuned — cosine schedules work well.</p>
+<p>Training is simple: sample a masking ratio uniformly from [0, 1], apply it to the image&#39;s VQ tokens, train the transformer to recover the masked ones. Exactly what BERT did for text, scaled to image generation.</p>
+<h3 id="show-o-one-transformer-hybrid-mask"><a class="anchor" href="#show-o-one-transformer-hybrid-mask">#</a> Show-o: one transformer, hybrid mask</h3>
+<p>Show-o puts MaskGIT inside a causal-language-model transformer. The attention mask is:</p>
+<ul>
+<li>Text tokens: causal (standard LLM).</li>
+<li>Image tokens: full bidirectional within the image block (so the masked tokens can see every other image token during prediction).</li>
+<li>Text-to-image: text attends to prior images, image attends to prior text.</li>
+</ul>
+<p>Training alternates between:</p>
+<ol>
+<li>Standard NTP on text sequences.</li>
+<li>T2I samples: text → image with masked image tokens, masked-token-prediction loss.</li>
+<li>VQA samples: image → text with masked text tokens (really just NTP).</li>
+</ol>
+<p>The unified loss is cross-entropy on <code>&lt;MASK&gt;</code> tokens, which covers both text NTP (only the last token is &quot;masked&quot;) and image masked-diffusion (random subset is masked).</p>
+<h3 id="parallel-sampling"><a class="anchor" href="#parallel-sampling">#</a> Parallel sampling</h3>
+<p>Show-o generates an image in ~16 steps instead of ~1000 (autoregressive per token) or ~20 (diffusion). At each step, predict all masked tokens in parallel; commit the top-K confident; repeat.</p>
+<p>Compare:</p>
+<ul>
+<li>Chameleon / Emu3 (autoregressive over tokens): N_tokens forward passes, typically 1024-4096 per image.</li>
+<li>Transfusion (continuous diffusion): ~20 steps, each a full transformer pass.</li>
+<li>Show-o (masked discrete diffusion): ~16 steps, each a full transformer pass.</li>
+</ul>
+<p>Show-o is faster than Chameleon at similar-scale models, roughly matches Transfusion step count with lower per-step cost (discrete vocab logits vs continuous MSE loss).</p>
+<h3 id="tasks-in-one-checkpoint"><a class="anchor" href="#tasks-in-one-checkpoint">#</a> Tasks in one checkpoint</h3>
+<p>Show-o supports four tasks at inference, selected by prompt format:</p>
+<ul>
+<li>Text generation: standard autoregressive text output.</li>
+<li>VQA: image in, text out.</li>
+<li>T2I: text in, image out via masked discrete diffusion.</li>
+<li>Inpainting: image with some tokens masked, fill in.</li>
+</ul>
+<p>The inpainting capability comes for free from the masked-prediction training. Mask a region of the VQ-token grid, feed the rest plus a text prompt, predict the masked tokens.</p>
+<h3 id="masking-schedule"><a class="anchor" href="#masking-schedule">#</a> Masking schedule</h3>
+<p>The schedule of how many tokens to unmask per step shapes quality. Show-o recommends cosine:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">mask_ratio(t) = cos(pi * t / (2 * T))   # t = 0..T</code></pre>
+      </div>
+    <p>At step 0, all tokens masked (ratio 1.0). At step T, none masked. Cosine concentrates mass on mid-range ratios where prediction is most informative. Linear schedules also work but plateau faster.</p>
+<h3 id="show-o2"><a class="anchor" href="#show-o2">#</a> Show-o2</h3>
+<p>Show-o2 (2025 follow-up, arXiv 2506.15564) scales Show-o: larger LLM base, better tokenizer, improved mask schedule. Same architectural pattern.</p>
+<h3 id="where-show-o-sits"><a class="anchor" href="#where-show-o-sits">#</a> Where Show-o sits</h3>
+<p>In the 2026 taxonomy:</p>
+<ul>
+<li>Discrete tokens + NTP: Chameleon, Emu3. Simple but slow inference.</li>
+<li>Discrete tokens + masked diffusion: Show-o, MaskGIT, LlamaGen, Muse. Parallel sampling, still lossy by tokenizer.</li>
+<li>Continuous + diffusion: Transfusion, MMDiT, DiT. Highest quality, more complex training.</li>
+<li>Continuous + flow matching in a VLM: JanusFlow, InternVL-U. Newest.</li>
+</ul>
+<p>Pick by task: Show-o when you want T2I + inpainting + VQA in one open model with reasonable speed; Transfusion when quality is paramount and you can afford the two-loss plumbing.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">masked-diffusion-unmask</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates Show-o sampling:</p>
+<ul>
+<li>A toy grid of 16 VQ tokens.</li>
+<li>A mock &quot;transformer&quot; that predicts logits based on a prompt and the currently-unmasked tokens.</li>
+<li>Parallel masked sampling over 8 steps with cosine schedule.</li>
+<li>Prints the intermediate states (mask pattern evolution) and the final tokens.</li>
+</ul>
+<p>Run it, watch the mask dissolve step by step.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-unified-gen-model-picker.md</code>. Given a product that needs both understanding (VQA, captioning) and generation (T2I, inpainting) with an open-weights constraint, picks between Show-o family, Transfusion/MMDiT family, and Emu3 / Chameleon family with concrete trade-offs.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Masked discrete diffusion samples in ~16 steps. Why not 1? What breaks if you unmask everything at step 0?</p>
+</li>
+<li><p>Inpainting is free with masked diffusion. Propose a product use case (real or hypothetical) where Show-o&#39;s inpainting beats a specialist model.</p>
+</li>
+<li><p>Cosine schedule vs linear schedule: trace the number of unmasked tokens per step for T=8. Which is more balanced?</p>
+</li>
+<li><p>A 512x512 Show-o image is 1024 tokens. At vocab K=16384, the model emits 1024 * log2(16384) = 14,336 bits (<del>1.75 KiB) of data. Stable Diffusion outputs 512<em>512</em>24 bits = 6,291,456 bits (</del>768 KiB) of raw pixels. What is the compression ratio and what quality does it buy?</p>
+</li>
+<li><p>Read LlamaGen (arXiv:2406.06525). How is LlamaGen&#39;s class-conditional autoregressive image model different from Show-o&#39;s masked approach?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Masked discrete diffusion</td>
+<td>&quot;MaskGIT-style&quot;</td>
+<td>Training to predict masked tokens; at inference, iteratively unmask the most-confident predictions</td>
+</tr>
+<tr>
+<td>Cosine schedule</td>
+<td>&quot;Unmask schedule&quot;</td>
+<td>Decay of mask ratio over inference steps; concentrates confidence growth at mid-range</td>
+</tr>
+<tr>
+<td>Parallel decoding</td>
+<td>&quot;All tokens at once&quot;</td>
+<td>Every step predicts the full sequence of masked tokens in one forward pass, then commits top-K</td>
+</tr>
+<tr>
+<td>Hybrid attention</td>
+<td>&quot;Causal + bidirectional&quot;</td>
+<td>Mask that is causal over text tokens and bidirectional within image blocks</td>
+</tr>
+<tr>
+<td>Inpainting</td>
+<td>&quot;Fill-in generation&quot;</td>
+<td>Condition on an image with some tokens masked, predict the missing ones; free from the training objective</td>
+</tr>
+<tr>
+<td>Commitment rate</td>
+<td>&quot;Top-K per step&quot;</td>
+<td>How many tokens are declared &quot;done&quot; per iteration; controls inference vs quality trade-off</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2408.12528">Xie et al. — Show-o (arXiv:2408.12528)</a></li>
+<li><a href="https://arxiv.org/abs/2506.15564">Show-o2 (arXiv:2506.15564)</a></li>
+<li><a href="https://arxiv.org/abs/2202.04200">Chang et al. — MaskGIT (arXiv:2202.04200)</a></li>
+<li><a href="https://arxiv.org/abs/2406.06525">Sun et al. — LlamaGen (arXiv:2406.06525)</a></li>
+<li><a href="https://arxiv.org/abs/2301.00704">Chang et al. — Muse (arXiv:2301.00704)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-transfusion-autoregressive-diffusion.html"><span>← Previous</span><b>transfusion autoregressive diffusion</b></a>
+      <a class="next" href="./15-janus-pro-decoupled-encoders.html"><span>Next →</span><b>janus pro decoupled encoders</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Iteration Scheduler — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/56-iteration-scheduler/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-a-scheduler-not-a-worklist">Why a scheduler, not a worklist</a></li><li><a href="#the-system-shape">The system shape</a></li><li><a href="#the-hypothesis-shape">The Hypothesis shape</a></li><li><a href="#ucb-scoring">UCB scoring</a></li><li><a href="#parallel-slots-with-asyncio">Parallel slots with asyncio</a></li><li><a href="#fan-out-paper-triggers">Fan-out: paper triggers</a></li><li><a href="#fan-out-follow-up-hypotheses">Fan-out: follow-up hypotheses</a></li><li><a href="#budgets">Budgets</a></li><li><a href="#the-trace-and-final-report">The Trace and final report</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Iteration Scheduler</h1>
+    <p class="lesson-sub">A research loop without a scheduler is a queue with delusions. The scheduler is where the loop decides what to stop exploring, and that decision is the whole game.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 50-53</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 56">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="113.6" cy="110.0" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.2" cy="105.1" r="9.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.8" cy="100.2" r="9.0" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.0,100.2 L97.4,87.7 L105.7,100.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.3,94.9 L92.0,83.4 L99.6,94.9 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.5,89.6 L86.5,79.0 L93.6,89.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">56</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Iteration Scheduler</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Model a research workflow as a hypothesis queue feeding parallel experiment slots whose results fan back in.</li>
+<li>Run multiple experiments concurrently with asyncio so the scheduler can keep all slots busy.</li>
+<li>Score each hypothesis branch with UCB so the scheduler can prune low-yield branches without abandoning exploration.</li>
+<li>Fan out finished results to a paper-write stage and a re-queue stage so a high-yield branch spawns follow-up hypotheses.</li>
+<li>Surface a per-iteration trace with branch scores, slot occupancy, and pruning decisions.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-ucb-scheduler</code></pre>
+      </div>
+    <h2 id="why-a-scheduler-not-a-worklist"><a class="anchor" href="#why-a-scheduler-not-a-worklist">#</a> Why a scheduler, not a worklist</h2>
+<p>A flat worklist runs jobs in submission order. That is fine when each job is independent. Research is not independent: a finding from experiment three changes the priority of experiments four and five. A scheduler that reads the result fan-in and reorders the queue gets more useful work done per unit of compute.</p>
+<p>The interesting design choice is the scoring rule. A greedy scorer always picks the current leader and never explores. A uniform scorer never exploits. UCB (upper confidence bound) is the middle path: exploit the leader while reserving capacity for branches that have been tried less.</p>
+<h2 id="the-system-shape"><a class="anchor" href="#the-system-shape">#</a> The system shape</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+    Queue[Hypothesis queue] --&gt; Sched[Scheduler]
+    Sched --&gt; Slot1[Slot 1]
+    Sched --&gt; Slot2[Slot 2]
+    Sched --&gt; Slot3[Slot 3]
+    Slot1 --&gt; Bus[Result bus]
+    Slot2 --&gt; Bus
+    Slot3 --&gt; Bus
+    Bus --&gt; Score[UCB scorer]
+    Score --&gt; Queue
+    Bus --&gt; Paper[Paper write fan-out]</pre></div><p>The queue holds hypotheses. The scheduler picks the highest-UCB hypothesis when a slot frees. Each slot runs an experiment asynchronously. Finished experiments fan their result onto the bus. The bus updates UCB statistics on the originating branch and fans out to the paper-write stage when a branch&#39;s yield crosses a threshold.</p>
+<h2 id="the-hypothesis-shape"><a class="anchor" href="#the-hypothesis-shape">#</a> The Hypothesis shape</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+    Hyp[Hypothesis] --&gt; Id[id]
+    Hyp --&gt; Branch[branch id]
+    Hyp --&gt; Payload[payload dict]
+    Hyp --&gt; Stats[runs and reward sum]
+    Stats --&gt; Runs[runs int]
+    Stats --&gt; Sum[reward sum float]</pre></div><p><code>branch</code> is the key for UCB statistics. Multiple hypotheses may share a branch (the branch is the research direction; the hypothesis is one trial within it). <code>runs</code> is the count of completed experiments for that branch, <code>reward_sum</code> is the cumulative reward. UCB reads both.</p>
+<h2 id="ucb-scoring"><a class="anchor" href="#ucb-scoring">#</a> UCB scoring</h2>
+<p>The UCB formula used in this lesson is the classic UCB1.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">ucb(branch) = mean_reward(branch) + c * sqrt( ln(total_runs) / runs(branch) )</code></pre>
+      </div>
+    <p><code>total_runs</code> is the count of all experiments completed across all branches. <code>c</code> is the exploration weight; the lesson defaults to <code>sqrt(2)</code>. A branch with zero runs gets <code>+inf</code> so untried branches are always scheduled first. A branch with high mean reward keeps a high score until other branches catch up; a branch that runs many times without much reward gets eclipsed by less-run alternatives.</p>
+<p>The pruning gate is separate from the picker. Pruning removes a branch from future scheduling when its mean reward falls below an absolute floor (default <code>0.2</code>) after at least <code>prune_after_runs</code> trials (default <code>3</code>). This keeps the queue bounded.</p>
+<h2 id="parallel-slots-with-asyncio"><a class="anchor" href="#parallel-slots-with-asyncio">#</a> Parallel slots with asyncio</h2>
+<p>The scheduler drives experiments with <code>asyncio.create_task</code>. Each task runs the experiment runner (an <code>async def</code> callable) that returns a <code>Result</code>. The main loop waits on the set of in-flight tasks with <code>asyncio.wait(..., return_when=asyncio.FIRST_COMPLETED)</code> and fires the scoring update on each completion.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant S as Scheduler
+    participant Q as Hypothesis queue
+    participant R as Experiment runner
+    participant T as In-flight tasks
+    S-&gt;&gt;Q: pop highest UCB
+    S-&gt;&gt;R: create_task(run(hypothesis))
+    R--&gt;&gt;T: Result (task completes)
+    S-&gt;&gt;T: await wait(FIRST_COMPLETED)
+    S-&gt;&gt;S: update UCB stats
+    S-&gt;&gt;Q: re-queue follow-ups</pre></div><p>Three slots run concurrently. The main loop never blocks on a single experiment. The scheduler keeps starting new tasks as soon as a slot frees, until both the queue is empty and no tasks are in flight.</p>
+<h2 id="fan-out-paper-triggers"><a class="anchor" href="#fan-out-paper-triggers">#</a> Fan-out: paper triggers</h2>
+<p>When a branch&#39;s mean reward crosses <code>paper_threshold</code> (default <code>0.7</code>) and that branch has not yet produced a paper, the scheduler fans a <code>paper.trigger</code> event onto an output list. Downstream the paper writer from lesson fifty-four would pick this up. In this lesson the trigger is captured as a list so tests can assert it.</p>
+<h2 id="fan-out-follow-up-hypotheses"><a class="anchor" href="#fan-out-follow-up-hypotheses">#</a> Fan-out: follow-up hypotheses</h2>
+<p>When a high-yield result lands, the scheduler can call the user-supplied <code>expander</code> to produce one or more follow-up hypotheses on the same branch. The expander is a pure function from <code>Result</code> to <code>list[Hypothesis]</code>. The lesson ships a deterministic expander that produces two follow-ups for any result whose reward exceeds the paper threshold.</p>
+<h2 id="budgets"><a class="anchor" href="#budgets">#</a> Budgets</h2>
+<p>Two budgets protect the scheduler from runaway loops.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">max_experiments    : total count of experiments run across all branches
+max_seconds        : wall-clock cap (asyncio time)</code></pre>
+      </div>
+    <p>When either fires, the scheduler stops scheduling new tasks, awaits the in-flight ones, and returns the final trace. The trace includes a <code>stop_reason</code>.</p>
+<h2 id="the-trace-and-final-report"><a class="anchor" href="#the-trace-and-final-report">#</a> The Trace and final report</h2>
+<p>Each scheduling decision (pick, dispatch, result, prune, fan-out) emits one event. The final report summarises per-branch stats, total runs, total wall-clock, and the paper triggers fired. The next lesson, the end-to-end demo, reads this report to drive the paper writer.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>Hypothesis</code>, <code>Result</code>, <code>BranchStats</code>, <code>IterationScheduler</code>, and a <code>make_deterministic_runner</code> factory that returns an asyncio experiment runner with predictable rewards. The runner sleeps for a fixed <code>delay_ms</code> (default <code>5ms</code>) so concurrency is observable.</p>
+<p><code>code/tests/test_scheduler.py</code> covers: UCB picks untried branches first, parallel slot occupancy, paper triggers when threshold is crossed, branch pruning after low-yield trials, fan-out follow-up hypotheses, and budget exit (both experiment count and wall clock).</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>Three extensions a real implementation will want. First, persistent UCB stats across sessions: the current statistics live in memory; a real scheduler would checkpoint them so a restart preserves the exploration budget already spent. Second, multi-objective scoring: instead of a scalar reward, each result emits a vector and UCB becomes a Pareto-style picker. Third, contextual bandits: the picker conditions on hypothesis features (length, complexity) so similar hypotheses share exploration.</p>
+<p>The scheduler is the place where research becomes more than a worklist. Once UCB is wired and the slots run in parallel, every other improvement composes on top.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./55-critic-loop.html"><span>← Previous</span><b>critic loop</b></a>
+      <a class="next" href="./57-end-to-end-research-demo.html"><span>Next →</span><b>end to end research demo</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

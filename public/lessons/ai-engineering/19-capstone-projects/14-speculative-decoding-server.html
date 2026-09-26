@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone 14 — Speculative-Decoding Inference Server — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/14-speculative-decoding-server/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#stack">Stack</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone 14 — Speculative-Decoding Inference Server</h1>
+    <p class="lesson-sub">Speculative decoding — a cheap draft proposes tokens, the target model verifies them in one pass — is now a production-ready optimization, not a research trick. EAGLE-3 in vLLM 0.7 ships 2.5-3x throughput on real traffic. P-EAGLE (AWS 2026) pushed parallel speculation even further. SGLang&#39;s SpecForge trained draft heads at scale. Red Hat&#39;s Speculators hub published aligned drafts for common open models. TensorRT-LLM made speculative decoding first-class on NVIDIA. The 2026 production serving stack is vLLM or SGLang with EAGLE-family drafts, FP8 or INT4 quantization, and HPA on queue-wait. This capstone is to serve two open models at 2.5x+ baseline throughput with a full tail-latency report.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Capstone</b></div><div><span>Languages</span><b>Python (serving), C++ / CUDA (kernel inspection), YAML (configs)</b></div><div><span>Prerequisites</span><b>Phase 3 (deep learning), Phase 7 (transformers), Phase 10 (LLMs from scratch), Phase 17 (infrastructure)</b></div><div><span>Phases exercised</span><b>P3 · P7 · P10 · P17</b></div><div><span>Time</span><b>30 hours</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M83.0,93.5 L90.5,82.2 L98.0,93.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.3" y="118.5" width="26.1" height="26.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.4 131.6)"/>
+        <circle cx="21.9" cy="126.7" r="12.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.5" cy="121.7" r="11.8" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="121.1" cy="116.8" r="11.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone 14 —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Speculative-Decoding…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Speculative decoding became a commodity in 2026. EAGLE-3 draft heads train on the target model&#39;s hidden states and predict N tokens ahead; the target model verifies in a single pass. Acceptance rates of 60-80% translate to 2-3x end-to-end throughput. vLLM 0.7 integrates this natively. SGLang + SpecForge gives you the training pipeline. Red Hat&#39;s Speculators publishes aligned drafts for Llama 3.3 70B, Qwen3-Coder-30B MoE, GPT-OSS-120B.</p>
+<p>The craft is in the serving operations, not the model. Acceptance rate drifts with the traffic distribution (ShareGPT vs code vs domain data). Tail latency under rejection is worse than without speculation — you must report p99 at multiple batch sizes, not just steady-state tokens/sec. Cost per 1M tokens vs Anthropic / OpenAI API is the credibility lever.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<p>Speculative decoding has two layers. A <strong>draft</strong> model (EAGLE-3 head, ngram, or smaller target-aligned model) proposes k candidate tokens per step. The <strong>target</strong> model verifies all k in one pass; any prefix accepted replaces the greedy path. Acceptance rate depends on draft-target alignment and the input distribution.</p>
+<p>EAGLE-3 beats ngram drafts on most traffic. P-EAGLE runs parallel speculation for deeper draft trees. The trade-off: P99 latency on rejection is higher because the verify pass is larger. The serving config must report batch-size-bucketed latency to surface this.</p>
+<p>Deployment is Kubernetes. vLLM 0.7 runs one replica per GPU or tensor-parallel shard. HPA autoscales on queue-wait rather than CPU. FP8 (Marlin) and INT4 (AWQ) quants keep GPU memory inside an H100 / H200 envelope. The end-to-end report is throughput, acceptance rate, p50/p99 at batch 1/8/32, and $/1M tokens.</p>
+<h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">request ingress
+    |
+    v
+vLLM server (0.7) or SGLang (0.4)
+    |
+    +-- draft: EAGLE-3 heads | P-EAGLE parallel | ngram fallback
+    +-- target: Llama 3.3 70B | Qwen3-Coder-30B | GPT-OSS-120B
+    |     quantized FP8-Marlin or INT4-AWQ
+    |
+    v
+verify pass: batch k draft tokens through target
+    |
+    v (accept prefix; resample for rejected suffix)
+    v
+token stream back to client
+    |
+    v
+Prometheus metrics: throughput, acceptance rate, queue wait, latency p50/p99
+    |
+    v
+HPA on queue-wait metric</code></pre>
+      </div>
+    <h2 id="stack"><a class="anchor" href="#stack">#</a> Stack</h2>
+<ul>
+<li>Serving: vLLM 0.7 or SGLang 0.4</li>
+<li>Speculative methods: EAGLE-3 draft heads, P-EAGLE parallel speculation, ngram fallback</li>
+<li>Draft training: SpecForge (SGLang) or Red Hat Speculators</li>
+<li>Target models: Llama 3.3 70B, Qwen3-Coder-30B MoE, GPT-OSS-120B</li>
+<li>Quantization: FP8 (Marlin), INT4 AWQ</li>
+<li>Deployment: Kubernetes + NVIDIA device plugin; HPA on queue-wait metric</li>
+<li>Eval: ShareGPT, MT-Bench-v2, GSM8K, HumanEval for domain-spread acceptance measurement</li>
+<li>Reference: TensorRT-LLM speculative decoding for a vendor baseline</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-spec-decode</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<ol>
+<li><p><strong>Target model prep.</strong> Pick Llama 3.3 70B. Quantize to FP8 via Marlin. Deploy under vLLM 0.7 on 1xH100 (or 2x tensor-parallel).</p>
+</li>
+<li><p><strong>Draft source.</strong> Pull an aligned EAGLE-3 draft head from Red Hat Speculators (or train one via SpecForge). Load into vLLM&#39;s speculative-decoding config.</p>
+</li>
+<li><p><strong>Baseline numbers.</strong> Before speculation: tokens/s at batch 1/8/32, p50/p99 latency, GPU utilization. Publish.</p>
+</li>
+<li><p><strong>Enable EAGLE-3.</strong> Flip config; rerun the same benchmark. Report speedup, acceptance rate, p99 tail-latency delta.</p>
+</li>
+<li><p><strong>P-EAGLE.</strong> Enable parallel speculation; measure deeper draft tree vs serial EAGLE-3. Report the inflection where P-EAGLE helps vs hurts.</p>
+</li>
+<li><p><strong>Domain traffic.</strong> Run ShareGPT vs HumanEval vs domain-specific traffic through the same server. Measure acceptance rate per distribution. Identify when drafts drift.</p>
+</li>
+<li><p><strong>Second target model.</strong> Run the same pipeline on Qwen3-Coder-30B MoE. Draft is trickier (MoE routing noise). Report.</p>
+</li>
+<li><p><strong>K8s HPA.</strong> Deploy under K8s with HPA tracking <code>queue_wait_ms</code>. Demonstrate scale-out when load triples.</p>
+</li>
+<li><p><strong>Cost comparison.</strong> Compute $/1M tokens vs Anthropic Claude Sonnet 4.7 and OpenAI GPT-5.4 on the same eval. Publish.</p>
+</li>
+</ol>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">$ curl https://infer.example.com/v1/chat/completions -d &#39;{&quot;messages&quot;:[...]}&#39;
+[serve]     vLLM 0.7, Llama 3.3 70B FP8, EAGLE-3 active
+[decode]    bs=8, accepted_tokens_per_step=3.2, acceptance_rate=0.76
+[latency]   first-token 42ms, full-response 980ms (620 tokens)
+[cost]      $0.34 per 1M output tokens at sustained throughput</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-inference-server.md</code> describes the deliverable. A measured serving stack with speculative decoding, a full benchmark report, and a K8s deployment.</p>
+<table>
+<thead>
+<tr>
+<th align="center">Weight</th>
+<th>Criterion</th>
+<th>How it is measured</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">25</td>
+<td>Measured speedup vs baseline</td>
+<td>2.5x+ throughput at matched quality on two models</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>Acceptance rate on realistic traffic</td>
+<td>Per-distribution acceptance-rate report</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>P99 tail-latency discipline</td>
+<td>p99 at batch 1/8/32 with and without speculation</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>Ops</td>
+<td>K8s deploy, HPA on queue-wait, rollout smooth</td>
+</tr>
+<tr>
+<td align="center">15</td>
+<td>Write-up and methodology</td>
+<td>Clear explanation of what changed and why</td>
+</tr>
+<tr>
+<td align="center"><strong>100</strong></td>
+<td></td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Measure acceptance-rate degradation when the draft is one version behind the target (e.g., Llama 3.3 -&gt; 3.4 drift). Build a monitoring alert.</p>
+</li>
+<li><p>Implement ngram-fallback: if EAGLE-3 acceptance drops below a threshold, switch to ngram drafts. Report reliability improvement.</p>
+</li>
+<li><p>Run a controlled MoE experiment: same Qwen3-Coder-30B with routing noise injected vs without. Measure draft acceptance sensitivity.</p>
+</li>
+<li><p>Extend to H200 (141 GB). Report the model-size-per-replica headroom gained and whether you can serve an unquantized Llama 3.3 70B.</p>
+</li>
+<li><p>Benchmark TensorRT-LLM speculative decoding on the same H100 hardware. Report where it wins vs vLLM.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Draft model</td>
+<td>&quot;Speculator&quot;</td>
+<td>Small model that proposes N tokens for the target to verify</td>
+</tr>
+<tr>
+<td>EAGLE-3</td>
+<td>&quot;2026 draft architecture&quot;</td>
+<td>Draft head trained on target hidden states; ~75% acceptance</td>
+</tr>
+<tr>
+<td>P-EAGLE</td>
+<td>&quot;Parallel speculation&quot;</td>
+<td>Tree of draft branches verified in one target pass</td>
+</tr>
+<tr>
+<td>Acceptance rate</td>
+<td>&quot;Hit rate&quot;</td>
+<td>Fraction of drafted tokens accepted without resampling</td>
+</tr>
+<tr>
+<td>Quantization</td>
+<td>&quot;FP8 / INT4&quot;</td>
+<td>Lower-precision weights to fit more model in GPU memory</td>
+</tr>
+<tr>
+<td>Queue wait</td>
+<td>&quot;HPA metric&quot;</td>
+<td>Time a request waits in the pending queue before inference starts</td>
+</tr>
+<tr>
+<td>Speculators hub</td>
+<td>&quot;Aligned drafts&quot;</td>
+<td>Red Hat Neural Magic hub of EAGLE drafts for common open models</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://docs.vllm.ai">vLLM EAGLE and P-EAGLE documentation</a> — the reference serving stack</li>
+<li><a href="https://aws.amazon.com/blogs/machine-learning/p-eagle-faster-llm-inference-with-parallel-speculative-decoding-in-vllm/">P-EAGLE (AWS 2026)</a> — parallel speculative decoding paper + integration</li>
+<li><a href="https://github.com/sgl-project/SpecForge">SGLang SpecForge</a> — draft-head training pipeline</li>
+<li><a href="https://github.com/neuralmagic/speculators">Red Hat Speculators</a> — aligned draft hub</li>
+<li><a href="https://nvidia.github.io/TensorRT-LLM/">TensorRT-LLM speculative decoding</a> — vendor alternative</li>
+<li><a href="https://fireworks.ai/blog">Fireworks.ai serving architecture</a> — commercial reference</li>
+<li><a href="https://arxiv.org/abs/2503.01840">EAGLE-3 paper (arXiv:2503.01840)</a> — the method paper</li>
+<li><a href="https://github.com/vllm-project/vllm">vLLM repository</a> — code and benchmarks</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-mcp-server-with-registry.html"><span>← Previous</span><b>mcp server with registry</b></a>
+      <a class="next" href="./15-constitutional-safety-harness.html"><span>Next →</span><b>constitutional safety harness</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

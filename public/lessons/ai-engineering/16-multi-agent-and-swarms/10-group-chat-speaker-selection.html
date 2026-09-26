@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Group Chat and Speaker Selection — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/16-multi-agent-and-swarms/10-group-chat-speaker-selection/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multi-Agent &amp; Swarms</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multi-Agent &amp; Swarms</div>
+    <h1 class="lesson-title">Group Chat and Speaker Selection</h1>
+    <p class="lesson-sub">Shared-conversation orchestration puts N agents in one conversation; a selector function (LLM, round-robin, or custom) picks who speaks next. This is the archetype of emergent multi-agent conversation — agents do not know their role in a static graph, they just react to the shared pool. AutoGen GroupChat and AG2 GroupChat are the reference implementations: AutoGen v0.2&#39;s GroupChat semantics were preserved in the AG2 fork; AutoGen v0.4 rewrote it as an event-driven actor model. Microsoft put AutoGen into maintenance mode in February 2026 and merged it with Semantic Kernel into Microsoft Agent Framework (RC February 2026). The GroupChat primitive survives in both AG2 and Microsoft Agent Framework — learn it once, use it everywhere.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 16 · 04 (Primitive Model)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multi-Agent &amp; Swarms 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.6" y="41.2" width="32.9" height="32.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.0 57.6)"/>
+        <rect x="34.8" y="36.9" width="31.6" height="31.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(210 50.6 52.7)"/>
+        <rect x="30.0" y="32.6" width="30.3" height="30.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.2 47.8)"/>
+        <rect x="25.2" y="128.3" width="29.0" height="29.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.7 142.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MULTI-AGENT &amp; SWARMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Group Chat and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Speaker Selection</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Static graphs (LangGraph) are great when the workflow is known. Real conversations are not static: sometimes the coder asks the reviewer, sometimes the researcher, sometimes the writer. Hardcoding every possible handoff produces an edge explosion. You want <em>agents reacting to a shared pool</em>, with some function deciding who talks next.</p>
+<p>That is exactly what AutoGen GroupChat does.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<h3 id="the-shape"><a class="anchor" href="#the-shape">#</a> The shape</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">              ┌─── shared pool ────┐
+              │   m1  m2  m3  ...  │
+              └─────────┬──────────┘
+                        │ (everyone reads all)
+      ┌───────┬─────────┼─────────┬───────┐
+      ▼       ▼         ▼         ▼       ▼
+    Agent A  Agent B  Agent C  Agent D  Selector
+                                           │
+                                           ▼
+                                  &quot;next speaker = C&quot;</code></pre>
+      </div>
+    <p>Every agent sees every message. A selector function is invoked at each turn to pick who speaks next.</p>
+<h3 id="the-three-selector-flavors"><a class="anchor" href="#the-three-selector-flavors">#</a> The three selector flavors</h3>
+<p><strong>Round-robin.</strong> Fixed cycle. Deterministic. Scales linearly in N but ignores context — a coder gets the turn even when the topic is legal review.</p>
+<p><strong>LLM-selected.</strong> A call to an LLM that reads the recent pool and returns the best next speaker. Context-aware but slow: every turn adds an LLM call. AutoGen&#39;s default.</p>
+<p><strong>Custom.</strong> A Python function with whatever logic you want. Typical: LLM-selected with fallback rules (e.g., &quot;always give the verifier the turn after the coder&quot;).</p>
+<h3 id="the-conversableagent-api"><a class="anchor" href="#the-conversableagent-api">#</a> The ConversableAgent API</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">agent = ConversableAgent(
+    name=&quot;coder&quot;,
+    system_message=&quot;You write Python.&quot;,
+    llm_config={...},
+)
+chat = GroupChat(agents=[coder, reviewer, tester], messages=[])
+manager = GroupChatManager(groupchat=chat, llm_config={...})</code></pre>
+      </div>
+    <p><code>GroupChatManager</code> holds the selector. When an agent completes a turn, the manager calls the selector, which returns the next agent. Loop continues until a termination condition.</p>
+<h3 id="termination"><a class="anchor" href="#termination">#</a> Termination</h3>
+<p>Three common patterns:</p>
+<ul>
+<li><strong>Max rounds.</strong> Hard cap on total turns.</li>
+<li><strong>&quot;TERMINATE&quot; token.</strong> Agents can emit a sentinel message; the manager stops when one appears.</li>
+<li><strong>Goal-reached check.</strong> A lightweight verifier runs each turn and stops the chat when done.</li>
+</ul>
+<h3 id="lineage-forks-and-mergers"><a class="anchor" href="#lineage-forks-and-mergers">#</a> Lineage: forks and mergers</h3>
+<p>In early 2025, Microsoft began a major rewrite of AutoGen (v0.4) around an event-driven actor model. The community forked AutoGen v0.2&#39;s GroupChat semantics as AG2, preserving the API that early adopters had integrated.</p>
+<p>In February 2026, Microsoft announced AutoGen would go to maintenance mode, with the event-driven actor model merging into <strong>Microsoft Agent Framework</strong> (RC February 2026, now merged with Semantic Kernel). The GroupChat concept survives in both tracks; the implementation details differ. AG2 is the preferred upstream for v0.2-compatible code.</p>
+<h3 id="when-groupchat-fits"><a class="anchor" href="#when-groupchat-fits">#</a> When GroupChat fits</h3>
+<ul>
+<li><strong>Emergent conversations.</strong> You do not want to pre-wire every possible next-speaker.</li>
+<li><strong>Role-mixing tasks.</strong> Coder asks researcher, researcher asks archivist, archivist asks coder back. Flow is not a DAG.</li>
+<li><strong>Exploratory problem-solving.</strong> Think &quot;brainstorm meeting,&quot; not &quot;assembly line.&quot;</li>
+</ul>
+<h3 id="when-it-fails"><a class="anchor" href="#when-it-fails">#</a> When it fails</h3>
+<ul>
+<li><strong>Strict determinism.</strong> The LLM selector can be inconsistent. Same prompt, different runs, different next speakers.</li>
+<li><strong>Sycophancy cascades.</strong> Agents defer to whoever spoke most confidently. Counter-prompt explicitly.</li>
+<li><strong>Context bloat.</strong> Every agent reads every message; after 10 turns the context is huge. Use projections (Lesson 15) to scope views.</li>
+<li><strong>Hot speakers.</strong> One agent dominates the conversation because the selector favors its specialties. Introduce speaker balance as a selector feature.</li>
+</ul>
+<h3 id="group-chat-vs-supervisor"><a class="anchor" href="#group-chat-vs-supervisor">#</a> Group chat vs supervisor</h3>
+<p>Same primitives, different defaults:</p>
+<ul>
+<li>Supervisor: one agent plans and others execute. Selector is &quot;ask the planner what to do.&quot;</li>
+<li>Group chat: all agents are peers; selector is a function over the shared pool.</li>
+</ul>
+<p>Both use the four primitives from Lesson 04. Group chat defaults to LLM-selected orchestration and full-pool shared state.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">swarm-speaker</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements a GroupChat from scratch in stdlib. Three agents (coder, reviewer, manager), round-robin and LLM-selected variants, and a termination on a <code>TERMINATE</code> token.</p>
+<p>The demo prints the conversation transcript plus the selector&#39;s decision trace for both variants.</p>
+<p>Run:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>outputs/skill-groupchat-selector.md</code> configures a GroupChat selector for a given task — round-robin vs LLM-selected vs custom, and what selector inputs (recent messages, agent specialties, turn counts) to use.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Checklist:</p>
+<ul>
+<li><strong>Max rounds cap.</strong> Always. 10-20 for typical tasks.</li>
+<li><strong>Speaker-balance metric.</strong> Track turns per agent; alert when imbalance exceeds a threshold.</li>
+<li><strong>Termination token.</strong> <code>TERMINATE</code> or a dedicated verifier agent.</li>
+<li><strong>Projection or scoped memory.</strong> After ~10 messages, consider giving each agent only a scoped view to prevent context bloat.</li>
+<li><strong>Selector logging.</strong> For LLM-selected variants, log both the selector&#39;s input and its choice. Otherwise debugging is impossible.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Compare the conversation under round-robin vs LLM-selected. Which agent dominates under each?</li>
+<li>Add a &quot;max-speaks-per-agent&quot; rule in the selector. How does it affect the transcript?</li>
+<li>Implement a goal-reached termination: stop when the reviewer returns &quot;approved.&quot; How often does it trigger before the round cap?</li>
+<li>Read the AutoGen stable docs on GroupChat (<a href="https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/design-patterns/group-chat.html">https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/design-patterns/group-chat.html</a>). Identify the default selector used by <code>GroupChatManager</code>.</li>
+<li>Read the AG2 repo (<a href="https://github.com/ag2ai/ag2">https://github.com/ag2ai/ag2</a>) and compare its v0.2 GroupChat to the v0.4 event-driven version. What concrete property (throughput, fault-tolerance, composability) does v0.4 add?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GroupChat</td>
+<td>&quot;Agents in one chat room&quot;</td>
+<td>Shared message pool + selector function. AutoGen / AG2 primitive.</td>
+</tr>
+<tr>
+<td>Speaker selection</td>
+<td>&quot;Who talks next&quot;</td>
+<td>The function that picks the next agent. Round-robin, LLM-selected, or custom.</td>
+</tr>
+<tr>
+<td>GroupChatManager</td>
+<td>&quot;The meeting host&quot;</td>
+<td>AutoGen component that owns the selector and loops over turns.</td>
+</tr>
+<tr>
+<td>ConversableAgent</td>
+<td>&quot;The base agent&quot;</td>
+<td>AutoGen base class; an agent that can send and receive messages.</td>
+</tr>
+<tr>
+<td>Termination token</td>
+<td>&quot;The &#39;stop&#39; word&quot;</td>
+<td>Sentinel string (usually <code>TERMINATE</code>) that ends the chat.</td>
+</tr>
+<tr>
+<td>Hot speaker</td>
+<td>&quot;One agent dominates&quot;</td>
+<td>Failure mode where the selector keeps picking the same agent.</td>
+</tr>
+<tr>
+<td>Context bloat</td>
+<td>&quot;Pool grows unbounded&quot;</td>
+<td>Each agent reads every prior message; context grows with turns.</td>
+</tr>
+<tr>
+<td>Projection</td>
+<td>&quot;Scoped view&quot;</td>
+<td>Role-specific view into the shared pool to prevent context bloat.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/design-patterns/group-chat.html">AutoGen group chat docs</a> — the reference implementation</li>
+<li><a href="https://github.com/ag2ai/ag2">AG2 repo</a> — community AutoGen v0.2 continuation</li>
+<li><a href="https://learn.microsoft.com/en-us/agent-framework/">Microsoft Agent Framework docs</a> — the merged successor, RC February 2026</li>
+<li><a href="https://microsoft.github.io/autogen/stable/">AutoGen v0.4 release notes</a> — event-driven actor model rewrite details</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-parallel-swarm-networks.html"><span>← Previous</span><b>parallel swarm networks</b></a>
+      <a class="next" href="./11-handoffs-and-routines.html"><span>Next →</span><b>handoffs and routines</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Lesson 27: Eval Harness with Fixture Tasks — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/27-eval-harness-fixture-tasks/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#what-you-will-build">What you will build</a></li><li><a href="#why-passk-and-not-just-pass1">Why pass@k and not just pass@1</a></li><li><a href="#how-this-composes-with-the-rest-of-track-a">How this composes with the rest of Track A</a></li><li><a href="#running-it">Running it</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone Lesson 27: Eval Harness with Fixture Tasks</h1>
+    <p class="lesson-sub">A coding agent is only as good as the suite of tasks you measure it against. This lesson builds an evaluation harness that takes a folder of fixture tasks, runs each through a candidate agent, scores pass or fail through a deterministic verifier, and aggregates the results into pass@1, pass@k, mean latency, and mean cost. The harness is the source of truth that lets you tell a regression from a refactor.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 19 · 25 (verification gates), Phase 19 · 26 (sandbox runner), Phase 14 · 30 (eval-driven agent development), Phase 14 · 19 (SWE-bench and GAIA benchmarks)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 27">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="26.8" y="129.8" width="29.5" height="29.5" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(180 41.6 144.5)"/>
+        <rect x="22.0" y="125.5" width="28.2" height="28.2" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(163 36.1 139.6)"/>
+        <rect x="17.3" y="121.2" width="26.9" height="26.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(145 30.7 134.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">27</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Lesson 27:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Eval Harness with…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Define a fixture task as a triple of goal, setup, and verifier.</li>
+<li>Score multiple sample runs per task and compute pass@1 and pass@k.</li>
+<li>Aggregate latency and cost into mean and 95th-percentile metrics.</li>
+<li>Wire deterministic verifiers (file diff, exit code, regex match) into reusable functions.</li>
+<li>Emit a structured JSON report a regression-tracking script can ingest.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Three failure modes plague agent benchmarks built without an eval harness.</p>
+<p>The first is unverified pass. The agent says it fixed the bug, the human glances at the diff, the suite is marked green, and three weeks later the regression test surfaces the same bug. The agent had reasoned plausibly without actually fixing anything.</p>
+<p>The second is undetected regression. A change to the prompt template makes the agent 4% better on the loud task and 14% worse on the quiet one. Without a goldset and a per-task score, the regression rides into main and surfaces only when a customer complains.</p>
+<p>The third is per-task drift. The eval was run on Monday with 100 tasks and on Friday with 95 of them, because somebody renamed five fixtures. The pass rate looks like a 5% improvement. It isn&#39;t.</p>
+<p>The harness is the program that turns these failures into facts. It runs every fixture, every time, in a reproducible order, against a verifier that returns true or false on a deterministic check.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  F1[fixtures/task_001/&lt;br/&gt;task.json + expected/] --&gt; Harness
+  F2[fixtures/task_002/&lt;br/&gt;...] --&gt; Harness
+  Harness[Harness&lt;br/&gt;for each task:&lt;br/&gt;setup / run agent k samples /&lt;br/&gt;verify each sample /&lt;br/&gt;record latency, cost]
+  Harness --&gt; Report[EvalReport&lt;br/&gt;pass@1 / pass@k&lt;br/&gt;mean ms / p95 ms&lt;br/&gt;mean cost]</pre></div><p>A <code>FixtureTask</code> is a small JSON file plus an optional <code>expected/</code> directory. The JSON declares an <code>id</code>, a <code>goal</code> (the prompt fed to the agent), a <code>setup</code> block (files to drop into the scratch dir), and a <code>verifier</code> block. The verifier block names a function in the harness&#39;s verifier registry and supplies its arguments.</p>
+<p>Three verifier shapes cover the majority of useful tasks.</p>
+<p>The first is <code>file_equals</code>. After the agent runs, compare a named file against an expected content. This catches &quot;fix this bug in this exact way&quot; tasks.</p>
+<p>The second is <code>regex_match</code>. The named file&#39;s contents are matched against a regex. This catches &quot;the function must exist and return X&quot; tasks where there are many acceptable solutions.</p>
+<p>The third is <code>shell_exit_zero</code>. The harness runs a shell command (through the sandbox from lesson 26) and passes the task only if the command exits zero. This catches &quot;the tests must pass&quot; tasks.</p>
+<p>The harness runs each task <code>k</code> times. Pass@k is <code>1 - (1 - p)^k</code> where p is the empirical pass rate; the harness also reports raw counts so you can spot variance. Latency is wall-clock per sample. Cost is whatever the agent self-reports (token count, USD, or both); the harness sums it across samples and presents the per-task and aggregate numbers.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">pass-at-k</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Harness[EvalHarness] --&gt;|load| Task[FixtureTask&lt;br/&gt;goal / setup / verifier]
+  Harness --&gt; Loop[for each task:&lt;br/&gt;prepare scratch dir from setup&lt;br/&gt;for sample in range k:&lt;br/&gt;run candidate task, scratch_dir -&gt; SampleResult&lt;br/&gt;verify sample, task -&gt; bool&lt;br/&gt;record per-task aggregate]
+  Loop --&gt; TaskReport[TaskReport&lt;br/&gt;task_id / k / passes / pass_rate&lt;br/&gt;mean_latency / mean_cost]
+  TaskReport --&gt;|aggregate| EvalReport[EvalReport&lt;br/&gt;total tasks / pass@1 / pass@k / p95 latency]</pre></div><p>The candidate is a callable: <code>Callable[[FixtureTask, str], SampleResult]</code>. The harness creates the scratch directory via <code>tempfile.mkdtemp()</code> and passes its path as a plain string. The harness does not care how the candidate works. The candidate could be a deterministic patch applier (useful for harness self-tests), a real LLM agent, a fuzzer. The contract is the SampleResult.</p>
+<h2 id="what-you-will-build"><a class="anchor" href="#what-you-will-build">#</a> What you will build</h2>
+<p><code>main.py</code> ships:</p>
+<ol>
+<li><code>FixtureTask</code> dataclass.</li>
+<li><code>SampleResult</code> dataclass: success_self_reported, latency_ms, cost_units, edits.</li>
+<li><code>TaskReport</code>, <code>EvalReport</code> dataclasses with <code>to_dict()</code>.</li>
+<li><code>VerifierRegistry</code> mapping verifier name to function. Built-in verifiers: file_equals, regex_match, shell_exit_zero.</li>
+<li><code>EvalHarness</code> class. Runs a directory of tasks against a candidate. Returns EvalReport.</li>
+<li>Five fixture tasks bundled in <code>tasks/</code>:<ul>
+<li>off-by-one in <code>fizzbuzz</code></li>
+<li>missing return in <code>factorial</code></li>
+<li>typo in error message</li>
+<li>empty function body</li>
+<li>off-by-one in linked-list traversal</li>
+</ul>
+</li>
+<li>A deterministic reference candidate (<code>apply_known_fixes</code>) the harness uses to demonstrate a clean pass@1 of 1.0.</li>
+<li>Demo prints the EvalReport JSON and exits zero.</li>
+</ol>
+<p>The fixture tasks are bundled as JSON files in <code>tasks/</code> plus paired source files in <code>tasks/&lt;id&gt;/buggy/</code> and <code>tasks/&lt;id&gt;/expected/</code>. The harness copies buggy into a scratch dir, hands it to the candidate, and verifies against expected.</p>
+<h2 id="why-passk-and-not-just-pass1"><a class="anchor" href="#why-passk-and-not-just-pass1">#</a> Why pass@k and not just pass@1</h2>
+<p>Real LLM agents are stochastic. A pass@1 of 0.6 looks like a failure. A pass@5 of 0.95 says the agent gets the right answer most of the time but is choosing wrong on early samples. The fix is sampling and ranking, not always more training. Pass@k makes that visible.</p>
+<p>Pass@k is reported alongside pass@1 because pass@k papers over a real failure: if the model gets the right answer once in twenty tries you do not have a useful agent. The harness shows both.</p>
+<h2 id="how-this-composes-with-the-rest-of-track-a"><a class="anchor" href="#how-this-composes-with-the-rest-of-track-a">#</a> How this composes with the rest of Track A</h2>
+<p>Lesson 25 produced the gate chain. Lesson 26 produced the sandbox. The harness uses the sandbox for any <code>shell_exit_zero</code> verifier. Lesson 28 wraps each harness run in an OTel trace. Lesson 29 runs the end-to-end demo against one of the bundled fixtures and asserts pass@1 = 1.0 for the reference candidate.</p>
+<h2 id="running-it"><a class="anchor" href="#running-it">#</a> Running it</h2>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/19-capstone-projects/27-eval-harness-fixture-tasks
+python3 code/main.py
+python3 -m pytest code/tests/ -v</code></pre>
+      </div>
+    <p>The demo prints the EvalReport in JSON, including pass@1, pass@5, mean latency, and per-task breakdown. The exit code is zero. The tests cover the verifier functions, the pass@k math, fixture loading, and the harness end-to-end against the bundled reference candidate.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./26-sandbox-runner-denylist.html"><span>← Previous</span><b>sandbox runner denylist</b></a>
+      <a class="next" href="./28-observability-otel-traces.html"><span>Next →</span><b>observability otel traces</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

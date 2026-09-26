@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Information Retrieval and Search — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/05-nlp-foundations-to-advanced/14-information-retrieval-search/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">NLP Foundations to Advanced</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · NLP Foundations to Advanced</div>
+    <h1 class="lesson-title">Information Retrieval and Search</h1>
+    <p class="lesson-sub">BM25 is precise but brittle. Dense casts a wide net but misses keywords. Hybrid is the 2026 default. Everything else is tuning.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 5 · 02 (BoW + TF-IDF), Phase 5 · 04 (GloVe, FastText, Subword)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — NLP Foundations to Advanced 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.5,73.0 L61.7,47.4 L78.8,73.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.8" y="41.4" width="32.9" height="32.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.2 57.8)"/>
+        <rect x="35.0" y="37.1" width="31.7" height="31.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(211 50.8 52.9)"/>
+        <rect x="30.2" y="32.8" width="30.4" height="30.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.4 48.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">NLP FOUNDATIONS TO ADVANCED</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Information</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Retrieval and Search</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The user types &quot;what happens if someone lies to get money&quot; and expects to find the statute that actually covers that: &quot;Section 420 IPC.&quot; A keyword search misses it entirely (no shared vocabulary). A semantic search misses it if the embeddings were not trained on legal text. Real search has to handle both.</p>
+<p>IR is the pipeline under every RAG system, every search bar, every docs site&#39;s fuzzy lookup. The 2026 architecture that works in production is not a single method. It is a chain of complementary methods, each catching the failures of the one before.</p>
+<p>This lesson builds each piece and names which failures each catches.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/05-nlp-foundations-to-advanced/14-information-retrieval-search/assets/retrieval.svg" alt="Hybrid retrieval: BM25 + dense + RRF + cross-encoder rerank" loading="lazy" /></figure></p>
+<p>Four layers. Pick the ones you need.</p>
+<ol>
+<li><strong>Sparse retrieval (BM25).</strong> Fast, precise on exact matches, terrible on semantics. Run over an inverted index. Sub-10ms per query on millions of documents. Gets you statute references, product codes, error messages, named entities right.</li>
+<li><strong>Dense retrieval.</strong> Encode query and documents into vectors. Nearest neighbor search. Captures paraphrases and semantic similarity. Misses exact keyword matches that differ by one character. 50-200ms per query with FAISS or a vector DB.</li>
+<li><strong>Fusion.</strong> Merge the ranked lists from sparse and dense. Reciprocal Rank Fusion (RRF) is the easy default because it ignores raw scores (which live in different scales) and only uses rank positions. Weighted fusion is an option when you know one signal dominates for your domain.</li>
+<li><strong>Cross-encoder rerank.</strong> Take the top-30 from fusion. Run a cross-encoder (query + document together, scoring each pair). Keep the top-5. Cross-encoders are slower per pair than bi-encoders but far more accurate. You amortize by only running them on the top-30.</li>
+</ol>
+<p>Three-way retrieval (BM25 + dense + learned-sparse like SPLADE) outperforms two-way in 2026 benchmarks but needs infrastructure for learned-sparse indexes. For most teams, two-way plus cross-encoder rerank is the sweet spot.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gx-hybrid-retrieval</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-bm25-from-scratch"><a class="anchor" href="#step-1-bm25-from-scratch">#</a> Step 1: BM25 from scratch</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+import re
+from collections import Counter
+
+TOKEN_RE = re.compile(r&quot;[a-z0-9]+&quot;)
+
+
+def tokenize(text):
+    return TOKEN_RE.findall(text.lower())
+
+
+class BM25:
+    def __init__(self, corpus, k1=1.5, b=0.75):
+        if not corpus:
+            raise ValueError(&quot;corpus must not be empty&quot;)
+        self.corpus = [tokenize(d) for d in corpus]
+        self.k1 = k1
+        self.b = b
+        self.n_docs = len(self.corpus)
+        self.avg_dl = sum(len(d) for d in self.corpus) / self.n_docs
+        self.df = Counter()
+        for doc in self.corpus:
+            for term in set(doc):
+                self.df[term] += 1
+
+    def idf(self, term):
+        n = self.df.get(term, 0)
+        return math.log(1 + (self.n_docs - n + 0.5) / (n + 0.5))
+
+    def score(self, query, doc_idx):
+        q_tokens = tokenize(query)
+        doc = self.corpus[doc_idx]
+        dl = len(doc)
+        freq = Counter(doc)
+        score = 0.0
+        for term in q_tokens:
+            f = freq.get(term, 0)
+            if f == 0:
+                continue
+            numerator = f * (self.k1 + 1)
+            denominator = f + self.k1 * (1 - self.b + self.b * dl / self.avg_dl)
+            score += self.idf(term) * numerator / denominator
+        return score
+
+    def rank(self, query, top_k=10):
+        scored = [(self.score(query, i), i) for i in range(self.n_docs)]
+        scored.sort(reverse=True)
+        return scored[:top_k]</code></pre>
+      </div>
+    <p>Two parameters worth knowing. <code>k1=1.5</code> controls term-frequency saturation; higher means more weight on term repetition. <code>b=0.75</code> controls length normalization; 0 ignores document length, 1 fully normalizes. The defaults are Robertson&#39;s recommendations from the original paper and rarely need tuning.</p>
+<h3 id="step-2-dense-retrieval-with-a-bi-encoder"><a class="anchor" href="#step-2-dense-retrieval-with-a-bi-encoder">#</a> Step 2: dense retrieval with a bi-encoder</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sentence_transformers import SentenceTransformer
+import numpy as np
+
+
+def build_dense_index(corpus, model_id=&quot;sentence-transformers/all-MiniLM-L6-v2&quot;):
+    encoder = SentenceTransformer(model_id)
+    embeddings = encoder.encode(corpus, normalize_embeddings=True)
+    return encoder, embeddings
+
+
+def dense_search(encoder, embeddings, query, top_k=10):
+    q_emb = encoder.encode([query], normalize_embeddings=True)
+    sims = (embeddings @ q_emb.T).flatten()
+    order = np.argsort(-sims)[:top_k]
+    return [(float(sims[i]), int(i)) for i in order]</code></pre>
+      </div>
+    <p>L2-normalize embeddings so dot product equals cosine. <code>all-MiniLM-L6-v2</code> is 384-dim, fast, and strong enough for most English retrieval. For multilingual work, use <code>paraphrase-multilingual-MiniLM-L12-v2</code>. For top accuracy, <code>bge-large-en-v1.5</code> or <code>e5-large-v2</code>.</p>
+<h3 id="step-3-reciprocal-rank-fusion"><a class="anchor" href="#step-3-reciprocal-rank-fusion">#</a> Step 3: Reciprocal Rank Fusion</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def reciprocal_rank_fusion(rankings, k=60):
+    scores = {}
+    for ranking in rankings:
+        for rank, (_, doc_idx) in enumerate(ranking):
+            scores[doc_idx] = scores.get(doc_idx, 0.0) + 1.0 / (k + rank + 1)
+    fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [(score, doc_idx) for doc_idx, score in fused]</code></pre>
+      </div>
+    <p>The <code>k=60</code> constant comes from the original RRF paper. Higher <code>k</code> flattens the contribution of rank differences; lower <code>k</code> makes top ranks dominate. 60 is the published default and rarely needs tuning.</p>
+<h3 id="step-4-hybrid-search-rerank"><a class="anchor" href="#step-4-hybrid-search-rerank">#</a> Step 4: hybrid search + rerank</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sentence_transformers import CrossEncoder
+
+reranker = CrossEncoder(&quot;cross-encoder/ms-marco-MiniLM-L-6-v2&quot;)
+
+
+def hybrid_search(query, bm25, encoder, dense_embeddings, corpus, top_k=5, pool_size=30, reranker=reranker):
+    sparse_ranking = bm25.rank(query, top_k=pool_size)
+    dense_ranking = dense_search(encoder, dense_embeddings, query, top_k=pool_size)
+    fused = reciprocal_rank_fusion([sparse_ranking, dense_ranking])[:pool_size]
+
+    pairs = [(query, corpus[doc_idx]) for _, doc_idx in fused]
+    scores = reranker.predict(pairs)
+    reranked = sorted(zip(scores, [doc_idx for _, doc_idx in fused]), reverse=True)
+    return reranked[:top_k]</code></pre>
+      </div>
+    <p>Three stages composed. BM25 finds lexical matches. Dense finds semantic matches. RRF merges the two rankings without needing score calibration. Cross-encoder rescores the top-30 using query-document pairs together, which captures fine-grained relevance the bi-encoder missed. Keep top-5.</p>
+<h3 id="step-5-evaluation"><a class="anchor" href="#step-5-evaluation">#</a> Step 5: evaluation</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Recall@k</td>
+<td>Of queries where the correct document exists, how often is it in the top-k?</td>
+</tr>
+<tr>
+<td>MRR (Mean Reciprocal Rank)</td>
+<td>Average of 1/rank of first relevant document.</td>
+</tr>
+<tr>
+<td>nDCG@k</td>
+<td>Accounts for relevance gradations, not just binary relevant/not.</td>
+</tr>
+</tbody></table>
+<p>For RAG specifically, <strong>Recall@k</strong> of the retriever is the most important number. Your reader cannot answer if the right passage is not in the retrieved set.</p>
+<p>Debugging tip: for failing queries, diff the sparse and dense rankings. If one finds the right document and the other does not, you have a vocabulary mismatch (fix: add the missing half) or a semantic ambiguity (fix: better embeddings or a reranker).</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Scale</th>
+<th>Stack</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1k-100k docs</td>
+<td>In-memory BM25 + <code>all-MiniLM-L6-v2</code> embeddings + RRF. No separate DB.</td>
+</tr>
+<tr>
+<td>100k-10M docs</td>
+<td>FAISS or pgvector for dense + Elasticsearch / OpenSearch for BM25. Run in parallel.</td>
+</tr>
+<tr>
+<td>10M+ docs</td>
+<td>Qdrant / Weaviate / Vespa / Milvus with hybrid support. Cross-encoder rerank on top-30.</td>
+</tr>
+<tr>
+<td>Best-quality frontier</td>
+<td>Three-way (BM25 + dense + SPLADE) + ColBERT late-interaction reranking</td>
+</tr>
+</tbody></table>
+<p>Whatever you pick, budget for evaluation. Benchmark retrieval recall before benchmarking end-to-end RAG accuracy. A reader cannot fix what the retriever missed.</p>
+<h3 id="the-hard-won-lessons-from-2026-production-rag"><a class="anchor" href="#the-hard-won-lessons-from-2026-production-rag">#</a> The hard-won lessons from 2026 production RAG</h3>
+<ul>
+<li><strong>80% of RAG failures trace to ingestion and chunking, not the model.</strong> Teams spend weeks swapping LLMs and tuning prompts while the retrieval quietly returns the wrong context every third query. Fix chunking first.</li>
+<li><strong>Chunking strategy matters more than chunk size.</strong> Fixed-size splits break tables, code, and nested headers. Sentence-aware is the default; semantic or LLM-based chunking pays off for technical docs and product manuals.</li>
+<li><strong>Parent-doc pattern.</strong> Retrieve small &quot;child&quot; chunks for precision. When multiple children from the same parent section appear, swap in the parent block to preserve context. This consistently lifts answer quality without retraining.</li>
+<li><strong>k_rerank=3 is usually optimal.</strong> Every extra chunk past that adds token cost and generation latency without lifting answer quality. If k=8 is still better than k=3 for you, the reranker is underperforming.</li>
+<li><strong>HyDE / query expansion.</strong> Generate a hypothetical answer from the query, embed that, retrieve. Bridges the phrasing gap between short questions and long documents. Free precision lift with no training.</li>
+<li><strong>Context budget under 8K tokens.</strong> Consistent hits at that limit mean the reranker threshold is too loose.</li>
+<li><strong>Version everything.</strong> Prompts, chunking rules, embedding model, reranker. Any drift silently breaks answer quality. CI gates on faithfulness, context precision, and unanswered-question rate block regressions before users see them.</li>
+<li><strong>Three-way retrieval (BM25 + dense + learned-sparse like SPLADE) outperforms two-way</strong> on 2026 benchmarks, especially for queries mixing proper nouns with semantics. Ship it when infrastructure supports SPLADE indexes.</li>
+</ul>
+<p>Proper retrieval design reduces hallucinations by 70-90% according to 2026 industry measurements. Most RAG performance gains come from better retrieval, not model fine-tuning.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-retrieval-picker.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: retrieval-picker
+description: Pick a retrieval stack for a given corpus and query pattern.
+version: 1.0.0
+phase: 5
+lesson: 14
+tags: [nlp, retrieval, rag, search]
+---
+
+Given requirements (corpus size, query pattern, latency budget, quality bar, infra constraints), output:
+
+1. Stack. BM25 only, dense only, hybrid (BM25 + dense + RRF), hybrid + cross-encoder rerank, or three-way (BM25 + dense + learned-sparse).
+2. Dense encoder. Name the specific model. Match to language(s), domain, and context length.
+3. Reranker. Name the specific cross-encoder model if used. Flag that rerank adds 30-100ms latency on top-30.
+4. Evaluation plan. Recall@10 is the primary retriever metric. MRR for multi-answer. Baseline first, incremental improvements measured against it.
+
+Refuse to recommend dense-only for corpora with named entities, error codes, or product SKUs unless the user has evidence dense handles exact matches. Refuse to skip reranking for high-stakes retrieval (legal, medical) where the final top-5 decides the user&#39;s answer.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Implement <code>hybrid_search</code> above on a 500-document corpus. Test 20 queries. Compare recall at 5 between BM25-only, dense-only, and hybrid.</li>
+<li><strong>Medium.</strong> Add MRR calculation. For each test query with a known correct document, find the rank of the correct doc in BM25, dense, and hybrid rankings. Report the MRR for each.</li>
+<li><strong>Hard.</strong> Fine-tune a dense encoder on your domain using MultipleNegativesRankingLoss (Sentence Transformers). Build a training set from 500 query-document pairs. Compare pre- and post-fine-tune recall.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BM25</td>
+<td>Keyword search</td>
+<td>Okapi BM25. Scores documents by term frequency, IDF, and length.</td>
+</tr>
+<tr>
+<td>Dense retrieval</td>
+<td>Vector search</td>
+<td>Encode query + doc into vectors, find nearest neighbors.</td>
+</tr>
+<tr>
+<td>Bi-encoder</td>
+<td>Embedding model</td>
+<td>Encodes query and doc independently. Fast at query time.</td>
+</tr>
+<tr>
+<td>Cross-encoder</td>
+<td>Reranker model</td>
+<td>Encodes query + doc together. Slow but accurate.</td>
+</tr>
+<tr>
+<td>RRF</td>
+<td>Rank fusion</td>
+<td>Combine two rankings by summing <code>1/(k + rank)</code>.</td>
+</tr>
+<tr>
+<td>Recall@k</td>
+<td>Retrieval metric</td>
+<td>Fraction of queries where a relevant doc is in the top-k.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf">Robertson and Zaragoza (2009). The Probabilistic Relevance Framework: BM25 and Beyond</a> — the definitive BM25 treatment.</li>
+<li><a href="https://arxiv.org/abs/2004.04906">Karpukhin et al. (2020). Dense Passage Retrieval for Open-Domain QA</a> — DPR, the canonical bi-encoder.</li>
+<li><a href="https://arxiv.org/abs/2107.05720">Formal et al. (2021). SPLADE: Sparse Lexical and Expansion Model</a> — the learned-sparse retriever that closes the gap with dense.</li>
+<li><a href="https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf">Cormack, Clarke, Büttcher (2009). Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods</a> — RRF paper.</li>
+<li><a href="https://arxiv.org/abs/2004.12832">Khattab and Zaharia (2020). ColBERT: Efficient and Effective Passage Search</a> — late-interaction retrieval.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-question-answering.html"><span>← Previous</span><b>question answering</b></a>
+      <a class="next" href="./15-topic-modeling.html"><span>Next →</span><b>topic modeling</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

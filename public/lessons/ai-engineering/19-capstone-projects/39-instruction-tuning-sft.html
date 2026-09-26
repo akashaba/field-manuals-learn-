@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Lesson 39: Instruction Tuning by Supervised Fine-Tuning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/39-instruction-tuning-sft/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#the-data">The Data</a></li><li><a href="#tokenisation-and-padding">Tokenisation and Padding</a></li><li><a href="#training">Training</a></li><li><a href="#generation">Generation</a></li><li><a href="#exact-match-evaluation">Exact-Match Evaluation</a></li><li><a href="#what-you-will-build">What you will build</a></li><li><a href="#why-the-mask-matters">Why the mask matters</a></li><li><a href="#stretch-goals">Stretch goals</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone Lesson 39: Instruction Tuning by Supervised Fine-Tuning</h1>
+    <p class="lesson-sub">A pretrained base model can extend a sequence but cannot follow an instruction. Supervised fine-tuning is the smallest change that fixes this: feed the model paired examples of an instruction and a desired response, and train the body to predict the response tokens. The trick is that you only want the loss to count the response, not the instruction. This lesson builds an Alpaca-style SFT loop with a custom collate function that masks instruction tokens with `ignore_index=-100`, trains on 200 instruction-response pairs, and evaluates on a held-out split using exact-match.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (torch, numpy)</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (NLP LLM track: tokenizer, embedding table, attention block, transformer body, pre-training loop, checkpointing, generation, perplexity)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 39">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="15.4" y="119.5" width="26.4" height="26.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(138 28.5 132.7)"/>
+        <circle cx="23.1" cy="127.7" r="12.6" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.7" cy="122.8" r="11.9" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">39</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Lesson 39:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Instruction Tuning…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Format paired instruction-response data into a single causal sequence with explicit boundary tokens.</li>
+<li>Build a collate function that masks instruction tokens so cross-entropy only counts response tokens.</li>
+<li>Train a tiny transformer body under the SFT objective and watch the eval metric move.</li>
+<li>Implement greedy and temperature-sampled generation that respects the response-start boundary.</li>
+<li>Compute held-out exact-match on generated completions.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A base model trained on next-token prediction has no idea what an instruction is. Show it the string <code>&quot;What is the capital of France?&quot;</code> and it will continue the question or invent a new sentence. The model has the language but not the format contract.</p>
+<p>The SFT contract is a string template. Every training example becomes a single sequence with three regions:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">&lt;INST&gt; What is the capital of France? &lt;RESP&gt; The capital of France is Paris.</code></pre>
+      </div>
+    <p>The boundary tokens are special tokens reserved at training time. The model learns that everything after <code>&lt;RESP&gt;</code> is the response and the response is what gets graded. The base model&#39;s next-token objective still applies; it is just trained on a corpus where every example has this shape.</p>
+<p>But there is a catch. If you feed the entire sequence to a vanilla cross-entropy loss, you are training the model to also predict the instruction tokens. The instruction is given. You want zero gradient on those positions. The fix is the mask.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Pair[instruction + response] --&gt; Tmpl[apply template&lt;br/&gt;INST + RESP tokens]
+  Tmpl --&gt; Tokens[token ids]
+  Tokens --&gt; Mask[loss mask&lt;br/&gt;-100 on instruction]
+  Mask --&gt; Model[transformer body + LM head]
+  Model --&gt; CE[cross-entropy&lt;br/&gt;ignore_index=-100]
+  CE --&gt; Step[backward + optimiser step]</pre></div><p><code>ignore_index</code> is a feature of <code>torch.nn.functional.cross_entropy</code>. Any target position equal to <code>ignore_index</code> contributes zero loss and zero gradient. The convention in PyTorch is <code>-100</code>. The collate function builds two tensors per example: <code>input_ids</code> (the full sequence) and <code>labels</code> (a copy of <code>input_ids</code> with the instruction positions overwritten by <code>-100</code>).</p>
+<p>The model sees the whole sequence during the forward pass; attention can attend to the instruction. The loss only counts response tokens. This is exactly what you want: condition on the instruction, predict the response.</p>
+<h2 id="the-data"><a class="anchor" href="#the-data">#</a> The Data</h2>
+<p>Two hundred instruction-response pairs are generated deterministically in <code>main.py</code>. They cover six task types:</p>
+<ul>
+<li>factual single-shot (capital of X)</li>
+<li>arithmetic</li>
+<li>list extraction</li>
+<li>one-sentence summary</li>
+<li>code (print, sort)</li>
+<li>definition</li>
+</ul>
+<p>Each task has a templated instruction and a deterministic response. This is intentionally simple. Exact-match is brittle, and the lesson uses a fixture where the right answer is one specific string. Real SFT datasets need fuzzy metrics; the principle is identical.</p>
+<p>Splits are 160 train, 40 test. The test set covers all six task types so per-category exact-match can be reported.</p>
+<h2 id="tokenisation-and-padding"><a class="anchor" href="#tokenisation-and-padding">#</a> Tokenisation and Padding</h2>
+<p>The tokeniser is byte-level with three reserved specials:</p>
+<ul>
+<li><code>INST_ID = 256</code>: marks the start of the instruction region.</li>
+<li><code>RESP_ID = 257</code>: marks the boundary between instruction and response.</li>
+<li><code>PAD_ID = 258</code>: padding for variable-length batches.</li>
+</ul>
+<p>The sequence is <code>[INST] inst_bytes [RESP] resp_bytes [PAD]*</code>. The collate function:</p>
+<ol>
+<li>Tokenises each example.</li>
+<li>Pads every example in the batch to the longest sequence in the batch.</li>
+<li>Builds <code>labels</code> = <code>input_ids</code> shifted by one (causal LM target), with:<ul>
+<li>The instruction region replaced by <code>-100</code>.</li>
+<li>The padding region replaced by <code>-100</code>.</li>
+<li>The <code>RESP_ID</code> boundary position itself replaced by <code>-100</code> (you do not train the model to predict the boundary token; it predicts what follows).</li>
+</ul>
+</li>
+</ol>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Batch[(examples)] --&gt; Tok[encode + insert specials]
+  Tok --&gt; Pad[pad to longest]
+  Pad --&gt; Shift[shift labels by one]
+  Shift --&gt; Mask[set -100 on&lt;br/&gt;inst / pad / boundary]
+  Mask --&gt; Out[(input_ids, labels)]</pre></div><p>The shift is the standard causal trick: position <code>i</code> of <code>input_ids</code> predicts position <code>i+1</code>, so <code>labels[i] = input_ids[i+1]</code> (with the final position dropped from the input and the first dropped from the target). The mask is applied after the shift to land on the right positions.</p>
+<h2 id="training"><a class="anchor" href="#training">#</a> Training</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  DL[Train loader&lt;br/&gt;200 pairs] --&gt; Fwd[forward]
+  Fwd --&gt; Logits[B x T x V]
+  Logits --&gt; Loss[CE with -100 mask]
+  Loss --&gt; Bwd[backward]
+  Bwd --&gt; Opt[Adam optimiser]
+  Opt --&gt; Body[(updated body)]</pre></div><p>The loop is the standard PyTorch SFT loop. Adam, learning rate around 3e-4 to 1e-3, ten to twenty epochs on this fixture, no scheduler. The model is small enough (hidden 96, 2 blocks, max length 64) to train to convergence on CPU inside two minutes.</p>
+<p>Every fifth epoch the loop runs a tiny eval pass on the held-out set and prints exact-match. Watching exact-match go from 0.0 at epoch one to something like 0.85 at epoch fifteen is the lesson&#39;s payoff: you can see the model learning the format and the answers at the same time.</p>
+<h2 id="generation"><a class="anchor" href="#generation">#</a> Generation</h2>
+<p>At eval time the model gets the instruction prefix <code>[INST] inst_bytes [RESP]</code> and generates tokens until either:</p>
+<ul>
+<li>the sequence reaches <code>max_len</code>, or</li>
+<li>the model emits a special stop heuristic: two consecutive sentence-ending bytes (<code>.</code>, <code>!</code>, <code>?</code>).</li>
+</ul>
+<p>The lesson ships greedy decoding plus an optional temperature sampler. Exact-match uses greedy because temperature would make the metric stochastic. Real systems often sample, then judge fuzzily; that pipeline is lesson 41.</p>
+<h2 id="exact-match-evaluation"><a class="anchor" href="#exact-match-evaluation">#</a> Exact-Match Evaluation</h2>
+<p>Exact-match is the strictest text metric. The predicted response string is normalised (lowercase, strip whitespace, collapse double spaces) and compared to the reference response, normalised the same way. The metric is either 1 or 0 per example. The aggregate is the mean.</p>
+<p>Real SFT pipelines complement exact-match with token-level F1 (lesson 41) and a judge model. Exact-match remains useful because it is unambiguous; if it says 0.7, exactly 70 percent of test instructions produced the gold response character for character.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cc-sft-loss-mask</code></pre>
+      </div>
+    <h2 id="what-you-will-build"><a class="anchor" href="#what-you-will-build">#</a> What you will build</h2>
+<p>The implementation is one <code>main.py</code> plus tests.</p>
+<ol>
+<li><code>InstructionTokenizer</code>: byte-level encoder with reserved specials. Encodes either an instruction prefix or a full pair.</li>
+<li><code>make_dataset</code>: generates 200 pairs across six task types with a fixed seed.</li>
+<li><code>SFTDataset</code>: returns <code>(input_ids, labels)</code> per example, already mask-prepared.</li>
+<li><code>sft_collate</code>: dynamic padding, builds the batch tensor, sets <code>-100</code> on instruction and pad positions.</li>
+<li><code>TinyGPT</code>: transformer body plus tied or untied LM head.</li>
+<li><code>train_sft</code>: the SFT loop, with per-epoch eval hooks.</li>
+<li><code>generate</code>: causal decode from a prefix, greedy or sampled, with the stop heuristic.</li>
+<li><code>exact_match</code>: normalised string comparison, returns float in <code>[0, 1]</code>.</li>
+<li><code>run_demo</code>: builds the data, trains for twenty epochs, evaluates, prints a per-category breakdown, exits zero on success.</li>
+</ol>
+<h2 id="why-the-mask-matters"><a class="anchor" href="#why-the-mask-matters">#</a> Why the mask matters</h2>
+<p>Without the mask, the loss treats instruction tokens as targets. The model learns to predict the instruction. This is a different objective and produces a worse model in two ways. First, model capacity is wasted reconstructing inputs the user always provides. Second, the response loss is smaller in the gradient sum because instruction tokens outnumber response tokens in most batches; the optimiser&#39;s effective learning rate on the part you care about is lower than you intended. The mask is not a polish; it is the objective.</p>
+<h2 id="stretch-goals"><a class="anchor" href="#stretch-goals">#</a> Stretch goals</h2>
+<ul>
+<li>Add a learning-rate warmup followed by cosine decay. SFT is more sensitive to LR than pretraining.</li>
+<li>Add per-token loss logging and plot the loss curve over training. Notice that early epochs are dominated by template tokens (<code>&lt;RESP&gt;</code>, common prefixes) and later epochs are dominated by the actual answer tokens.</li>
+<li>Extend the eval to BLEU-1 or chrF. Exact-match underestimates models that produce a paraphrase with the same answer.</li>
+<li>Add a chat template with multi-turn formatting and train on a fixture that includes follow-ups.</li>
+</ul>
+<p>The implementation gives you the format contract, the mask, and the loop. The objective change from base model to instruction follower is one collate function.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./38-classifier-finetuning.html"><span>← Previous</span><b>classifier finetuning</b></a>
+      <a class="next" href="./40-dpo-from-scratch.html"><span>Next →</span><b>dpo from scratch</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

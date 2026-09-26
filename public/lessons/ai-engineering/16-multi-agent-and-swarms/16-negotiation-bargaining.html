@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Negotiation and Bargaining — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/16-multi-agent-and-swarms/16-negotiation-bargaining/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multi-Agent &amp; Swarms</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multi-Agent &amp; Swarms</div>
+    <h1 class="lesson-title">Negotiation and Bargaining</h1>
+    <p class="lesson-sub">Agents negotiate resources, prices, task allocations, and terms. The 2026 benchmark set is clear: NegotiationArena (arXiv:2402.05863) shows LLMs can improve payoffs ~20% via persona manipulation (&quot;desperation&quot;); &quot;Measuring Bargaining Abilities&quot; (arXiv:2402.15813) shows buyer is harder than seller and scale does not help — their **OG-Narrator** (deterministic offer generator + LLM narrator) pushed deal rate from 26.67% to 88.88%; the Large-Scale Autonomous Negotiation Competition (arXiv:2503.06416) ran ~180k negotiations and found that **chain-of-thought-concealing** agents win by hiding reasoning from counterparts; Bhattacharya et al. 2025 on Harvard Negotiation Project metrics ranked Llama-3 most-effective, Claude-3 aggressive, GPT-4 fairest. This lesson implements Contract Net Protocol (the FIPA ancestor, Lesson 02), wires an LLM-style buyer/seller, runs an OG-Narrator-style decomposition, and measures how deal rate changes with each structural choice.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 16 · 02 (FIPA-ACL Heritage), Phase 16 · 09 (Parallel Swarm Networks)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multi-Agent &amp; Swarms 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="29.4" y="32.1" width="30.1" height="30.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(190 44.4 47.1)"/>
+        <rect x="24.6" y="127.8" width="28.9" height="28.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(172 39.0 142.2)"/>
+        <rect x="19.8" y="123.5" width="27.6" height="27.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(154 33.6 137.3)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MULTI-AGENT &amp; SWARMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Negotiation and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Bargaining</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Two agents need to agree on a price. Left to themselves with pure language prompts, 2024-2026 LLMs close deals at surprisingly low rates (~27% on tightly-parameterized bargains in arXiv:2402.15813). Scale does not fix it: GPT-4 is not structurally better at bargaining than GPT-3.5; it is better at the <em>language</em> of bargaining.</p>
+<p>The root issue is that LLMs conflate two jobs — deciding the offer and narrating the offer. OG-Narrator separated these: a deterministic offer generator computes numeric moves; the LLM only narrates. Deal rate jumps to ~89%.</p>
+<p>This mirrors a classical multi-agent finding: decoupling the mechanism from the communication layer wins. Contract Net Protocol (FIPA, 1996; Smith, 1980) is the reference task-market mechanism. Plug an LLM into the narration slot and you get a modern LLM-powered task market.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<h3 id="contract-net-in-one-paragraph"><a class="anchor" href="#contract-net-in-one-paragraph">#</a> Contract Net, in one paragraph</h3>
+<p>Smith&#39;s 1980 Contract Net Protocol: a <strong>manager</strong> broadcasts a <strong>call for proposals (cfp)</strong>; <strong>bidders</strong> respond with <strong>propose</strong> messages containing their offers; the manager picks a winner and sends <strong>accept-proposal</strong> to the winner and <strong>reject-proposal</strong> to the losers. The winner performs the work. Optional message: <strong>refuse</strong> (bidder declines to propose). FIPA codified this as <code>fipa-contract-net</code> interaction protocol.</p>
+<h3 id="why-og-narrator-wins"><a class="anchor" href="#why-og-narrator-wins">#</a> Why OG-Narrator wins</h3>
+<p>&quot;Measuring Bargaining Abilities of Language Models&quot; (arXiv:2402.15813) observed that:</p>
+<ul>
+<li>LLMs often break the bargaining rules (offer at nonsensical prices, ignore the other side&#39;s ZOPA).</li>
+<li>They anchor poorly (accept bad first offers; counter-offer at symbolic rather than strategic amounts).</li>
+<li>Scale alone does not fix these. Larger models make more-plausible language with similar strategic error.</li>
+</ul>
+<p>The OG-Narrator decomposition:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">           ┌──────────────────┐        ┌──────────────────┐
+  state  → │ offer generator  │ price → │  LLM narrator    │ → message
+           │  (deterministic) │        │  (writes the     │
+           │                  │        │   human-style    │
+           └──────────────────┘        │   accompaniment) │
+                                       └──────────────────┘</code></pre>
+      </div>
+    <p>The offer generator is a classical negotiation strategy: a Rubinstein bargaining model, a Zeuthen strategy, or a simple tit-for-tat over price. The LLM narrates. The message contains the deterministic price and the natural-language framing.</p>
+<p>Deal rate jumps because:</p>
+<ul>
+<li>Prices stay in the bargaining zone.</li>
+<li>Anchors are strategic, not emotional.</li>
+<li>The LLM does what it is good at: writing.</li>
+</ul>
+<h3 id="negotiationarena-findings"><a class="anchor" href="#negotiationarena-findings">#</a> NegotiationArena findings</h3>
+<p>arXiv:2402.05863 provides the canonical benchmark. Headline findings:</p>
+<ul>
+<li>LLMs can improve payoffs ~20% by adopting personas (&quot;I am desperate to sell this by Friday&quot;) — persona manipulation is a real tactic.</li>
+<li>Fair/cooperative agents are exploited by adversarial ones; defense requires explicit counter-posturing.</li>
+<li>Symmetric pair-ups converge to inequitable outcomes on about 40% of the benchmark scenarios.</li>
+</ul>
+<p>This is not &quot;LLMs are bad negotiators.&quot; It is &quot;LLMs negotiate too much like humans, including the exploitable parts.&quot;</p>
+<h3 id="chain-of-thought-concealment"><a class="anchor" href="#chain-of-thought-concealment">#</a> Chain-of-thought concealment</h3>
+<p>The Large-Scale Autonomous Negotiation Competition (arXiv:2503.06416) ran ~180k negotiations across many LLM strategies. Winners concealed their reasoning from counterparts:</p>
+<ul>
+<li>If an agent prints &quot;I will only go to $75; my reservation price is $70&quot; into a publicly visible scratchpad, the opponent reads it.</li>
+<li>Winners compute strategy privately; the output channel contains only the offer and minimum required narration.</li>
+</ul>
+<p>This is a 2026 echo of classical game theory (Aumann 1976 on rationality and information): revealing your private valuation costs payoff. LLMs do not intuit this and happily type their reservations in reasoning traces that become visible to the counterpart.</p>
+<p>Engineering takeaway: separate private-scratchpad context from public-message context. Not optional.</p>
+<h3 id="bhattacharya-et-al-2025-model-rankings"><a class="anchor" href="#bhattacharya-et-al-2025-model-rankings">#</a> Bhattacharya et al. 2025 — model rankings</h3>
+<p>On Harvard Negotiation Project metrics (principled negotiation, BATNA respect, interest reciprocity):</p>
+<ul>
+<li><strong>Llama-3</strong> was most-effective at striking bargains (deal rate + payoff).</li>
+<li><strong>Claude-3</strong> was the most-aggressive negotiator (high anchors, late concessions).</li>
+<li><strong>GPT-4</strong> was the fairest (smallest variance in payoff across pairings).</li>
+</ul>
+<p>This is a 2025 snapshot. The point is not which model wins in April 2026 — it is that different base models have persistent negotiation styles. Heterogeneous ensembles (Lesson 15) include this as a diversity source.</p>
+<h3 id="task-allocation-via-contract-net-llm"><a class="anchor" href="#task-allocation-via-contract-net-llm">#</a> Task allocation via Contract Net + LLM</h3>
+<p>The modern re-use of Contract Net for LLM multi-agent:</p>
+<ol>
+<li>Manager agent decomposes a task into units.</li>
+<li>Broadcasts <code>cfp</code> with task description to worker agents.</li>
+<li>Each worker returns an offer: <code>(price, eta, confidence)</code> where price could be tokens, compute units, or dollars.</li>
+<li>Manager picks winners (single or multiple, depending on task) and awards.</li>
+<li>Rejected workers are free to bid on other tasks.</li>
+</ol>
+<p>This scales well past 100 workers because coordination is broadcast-and-respond, not synchronous chat. Used in production: Microsoft Agent Framework&#39;s orchestration patterns, some LangGraph implementations.</p>
+<h3 id="llm-stakeholders-interactive-negotiation"><a class="anchor" href="#llm-stakeholders-interactive-negotiation">#</a> LLM-Stakeholders Interactive Negotiation</h3>
+<p>NeurIPS 2024 (<a href="https://proceedings.neurips.cc/paper_files/paper/2024/file/984dd3db213db2d1454a163b65b84d08-Paper-Datasets_and_Benchmarks_Track.pdf">https://proceedings.neurips.cc/paper_files/paper/2024/file/984dd3db213db2d1454a163b65b84d08-Paper-Datasets_and_Benchmarks_Track.pdf</a>) introduces multi-party scorable games with <strong>secret scores</strong> and <strong>minimum-acceptance thresholds</strong>. Each stakeholder has private utilities; the LLM must infer them from messages. This is the generalization of two-party bargaining to N-party coalition formation. Relevant for production task markets with heterogeneous worker capabilities.</p>
+<h3 id="the-narration-vs-mechanism-rule"><a class="anchor" href="#the-narration-vs-mechanism-rule">#</a> The narration-vs-mechanism rule</h3>
+<p>Across all 2024-2026 negotiation benchmarks, the consistent engineering rule is:</p>
+<blockquote>
+<p>Let the LLM narrate. Do not let the LLM compute the offer.</p>
+</blockquote>
+<p>If the offer needs to be a number (price, ETA, quantity), generate it deterministically from the negotiation state and have the LLM produce the framing. If the offer needs to be a proposal structure (task decomposition, role assignment), let the LLM draft it, but validate it against a schema and constraint-check before sending.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">a5-og-narrator</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>ContractNetManager</code>, <code>ContractNetTask</code>, <code>Bid</code> — manager + bidders, broadcast cfp, collect proposals, award.</li>
+<li><code>og_narrator_bargain(state, rng)</code> — OG-Narrator buyer: deterministic Zeuthen-style concession toward the midpoint.</li>
+<li><code>seller_response(state, rng)</code> — deterministic seller counter-offer policy (the structural ground truth for both styles).</li>
+<li><code>naive_llm_bargain(state, rng)</code> — simulates an all-LLM bargainer: picks prices with high variance, often outside the ZOPA.</li>
+<li>Measurement: deal rate over 1000 trials with fresh reservation prices sampled per trial.</li>
+</ul>
+<p>Run:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Expected output: naive-LLM deal rate ~65-75%; OG-Narrator deal rate ~85-95%; the 15-25 point gap is the structural advantage of decomposing offer-generation from narration. Plus a Contract Net task-market allocation example with three bidders and one task.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>outputs/skill-bargainer-designer.md</code> designs a bargaining protocol: who generates offers (deterministic or LLM), who narrates, how private scratchpads separate from public messages, and how deal rate is monitored.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Production bargaining checklist:</p>
+<ul>
+<li><strong>Separate scratchpad.</strong> Private state never reaches the counterpart&#39;s context. This is non-negotiable.</li>
+<li><strong>Deterministic offer generation.</strong> Prices, quantities, ETAs: compute, do not prompt.</li>
+<li><strong>Validate all incoming offers</strong> against a schema. Reject out-of-ZOPA offers at the protocol boundary.</li>
+<li><strong>Bound rounds.</strong> 3-5 rounds maximum; escalate to mediator on deadlock.</li>
+<li><strong>Measure deal rate and payoff variance</strong> continuously. A falling deal rate is a symptom — often a prompt drift or a counterpart-side attack.</li>
+<li><strong>Log all rejected proposals</strong> with the deterministic rationale. For Contract Net managers, losing bidders need to understand why.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Confirm OG-Narrator beats naive-LLM on deal rate. By how much?</li>
+<li>Implement <strong>persona-based payoff improvement</strong> (arXiv:2402.05863) — the buyer adopts a &quot;desperate to buy this week&quot; persona in the narration only, offer generator unchanged. Does the deal rate or payoff change?</li>
+<li>Implement chain-of-thought <strong>concealment</strong>: maintain a private scratchpad string that is not passed to the counterpart. What happens if you accidentally leak it (simulate by swapping the channels)?</li>
+<li>Extend Contract Net to N-bidder auction with reserve price. When bids all exceed reserve, how does the manager decide between lowest-price and highest-quality? Which award rule do you pick and why?</li>
+<li>Read Bhattacharya et al. 2025 on Harvard Negotiation Project metrics. Implement two bargainers with different styles (aggressive vs fair). Measure payoff variance under symmetric and asymmetric pairings.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Contract Net</td>
+<td>&quot;Task market&quot;</td>
+<td>Smith 1980, FIPA 1996. cfp + propose + accept/reject. The canonical task-market.</td>
+</tr>
+<tr>
+<td>ZOPA</td>
+<td>&quot;Zone of possible agreement&quot;</td>
+<td>Overlap between buyer&#39;s max and seller&#39;s min. Offers outside it cannot close.</td>
+</tr>
+<tr>
+<td>BATNA</td>
+<td>&quot;Best alternative to a negotiated agreement&quot;</td>
+<td>Your fallback if this deal fails. Sets your reservation price.</td>
+</tr>
+<tr>
+<td>OG-Narrator</td>
+<td>&quot;Offer generator + narrator&quot;</td>
+<td>Decomposition: deterministic offer, LLM narration.</td>
+</tr>
+<tr>
+<td>Zeuthen strategy</td>
+<td>&quot;Risk-minimizing concession&quot;</td>
+<td>Classical offer-generator that concedes based on risk limits.</td>
+</tr>
+<tr>
+<td>Rubinstein bargaining</td>
+<td>&quot;Alternating-offer equilibrium&quot;</td>
+<td>Game-theoretic model for infinite-horizon bargaining with discounting.</td>
+</tr>
+<tr>
+<td>CoT concealment</td>
+<td>&quot;Hide your reasoning&quot;</td>
+<td>Winners in arXiv:2503.06416 kept private scratchpads; public channel shows offer only.</td>
+</tr>
+<tr>
+<td>Persona manipulation</td>
+<td>&quot;Emotional posturing&quot;</td>
+<td>arXiv:2402.05863: ~20% payoff gain from desperation/urgency personas.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2402.05863">NegotiationArena</a> — the benchmark; persona manipulation and exploitation findings</li>
+<li><a href="https://arxiv.org/abs/2402.15813">Measuring Bargaining Abilities of Language Models</a> — OG-Narrator and the buyer-harder-than-seller result</li>
+<li><a href="https://arxiv.org/abs/2503.06416">Large-Scale Autonomous Negotiation Competition</a> — ~180k negotiations; chain-of-thought concealment wins</li>
+<li><a href="https://proceedings.neurips.cc/paper_files/paper/2024/file/984dd3db213db2d1454a163b65b84d08-Paper-Datasets_and_Benchmarks_Track.pdf">LLM-Stakeholders Interactive Negotiation (NeurIPS 2024)</a> — multi-party scorable games with secret utilities</li>
+<li><a href="https://ieeexplore.ieee.org/document/1675516">Smith 1980 — The Contract Net Protocol</a> — the classical mechanism, IEEE Transactions on Computers</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-voting-debate-topology.html"><span>← Previous</span><b>voting debate topology</b></a>
+      <a class="next" href="./17-generative-agents-simulation.html"><span>Next →</span><b>generative agents simulation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

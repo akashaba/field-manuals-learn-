@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Debugging and Profiling — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/00-setup-and-tooling/12-debugging-and-profiling/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Setup &amp; Tooling</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Setup &amp; Tooling</div>
+    <h1 class="lesson-title">Debugging and Profiling</h1>
+    <p class="lesson-sub">The worst AI bugs don&#39;t crash. They train silently on garbage and report a beautiful loss curve.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Lesson 1 (Dev Environment), basic PyTorch familiarity</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Setup &amp; Tooling 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="32.9" y="35.2" width="31.1" height="31.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(203 48.4 50.7)"/>
+        <rect x="28.1" y="30.9" width="29.8" height="29.8" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(185 43.0 45.8)"/>
+        <rect x="23.3" y="126.6" width="28.5" height="28.5" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(167 37.6 140.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">SETUP &amp; TOOLING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Debugging and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Profiling</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Use conditional <code>breakpoint()</code> and <code>debug_print</code> to inspect tensor shapes, dtypes, and NaN values mid-training</li>
+<li>Profile training loops with <code>cProfile</code>, <code>line_profiler</code>, and <code>tracemalloc</code> to find bottlenecks</li>
+<li>Detect common AI bugs: shape mismatches, NaN loss, data leakage, and wrong-device tensors</li>
+<li>Set up TensorBoard to visualize loss curves, weight histograms, and gradient distributions</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>AI code fails differently than regular code. A web app crashes with a stack trace. A misconfigured training loop runs for 8 hours, burns $200 in GPU time, and produces a model that predicts the mean of every input. The code never errored. The bug was a tensor on the wrong device, a forgotten <code>.detach()</code>, or labels leaking into features.</p>
+<p>You need debugging tools that catch these silent failures before they waste your time and compute.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p>AI debugging operates at three levels:</p>
+<div class="fig"><pre class="mermaid">graph TD
+    L3[&quot;3. Training Dynamics&lt;br/&gt;Loss curves, gradient norms, activations&quot;] --&gt; L2
+    L2[&quot;2. Tensor Operations&lt;br/&gt;Shapes, dtypes, devices, NaN/Inf values&quot;] --&gt; L1
+    L1[&quot;1. Standard Python&lt;br/&gt;Breakpoints, logging, profiling, memory&quot;]</pre></div><p>Most people jump straight to level 3 (staring at TensorBoard). But 80% of AI bugs live at levels 1 and 2.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">s0-flame-hot</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="part-1-print-debugging-yes-it-works"><a class="anchor" href="#part-1-print-debugging-yes-it-works">#</a> Part 1: Print Debugging (Yes, It Works)</h3>
+<p>Print debugging gets dismissed. It shouldn&#39;t. For tensor code, a targeted print statement beats stepping through a debugger because you need to see shapes, dtypes, and value ranges all at once.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def debug_print(name, tensor):
+    print(f&quot;{name}: shape={tensor.shape}, dtype={tensor.dtype}, &quot;
+          f&quot;device={tensor.device}, &quot;
+          f&quot;min={tensor.min().item():.4f}, max={tensor.max().item():.4f}, &quot;
+          f&quot;mean={tensor.mean().item():.4f}, &quot;
+          f&quot;has_nan={tensor.isnan().any().item()}&quot;)</code></pre>
+      </div>
+    <p>Call this after every suspicious operation. When the bug is found, remove the prints. Simple.</p>
+<h3 id="part-2-python-debugger-pdb-and-breakpoint"><a class="anchor" href="#part-2-python-debugger-pdb-and-breakpoint">#</a> Part 2: Python Debugger (pdb and breakpoint)</h3>
+<p>The built-in debugger is underrated for AI work. Drop <code>breakpoint()</code> into your training loop and inspect tensors interactively.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def training_step(model, batch, criterion, optimizer):
+    inputs, labels = batch
+    outputs = model(inputs)
+    loss = criterion(outputs, labels)
+
+    if loss.item() &gt; 100 or torch.isnan(loss):
+        breakpoint()
+
+    loss.backward()
+    optimizer.step()</code></pre>
+      </div>
+    <p>When the debugger drops you in, useful commands:</p>
+<ul>
+<li><code>p outputs.shape</code> to check shapes</li>
+<li><code>p loss.item()</code> to see the loss value</li>
+<li><code>p torch.isnan(outputs).sum()</code> to count NaNs</li>
+<li><code>p model.fc1.weight.grad</code> to check gradients</li>
+<li><code>c</code> to continue, <code>q</code> to quit</li>
+</ul>
+<p>This is conditional debugging. You only stop when something looks wrong. For a 10,000-step training run, that matters.</p>
+<h3 id="part-3-python-logging"><a class="anchor" href="#part-3-python-logging">#</a> Part 3: Python Logging</h3>
+<p>Replace print statements with logging when your debugging goes beyond a quick check.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format=&quot;%(asctime)s [%(levelname)s] %(message)s&quot;,
+    handlers=[
+        logging.FileHandler(&quot;training.log&quot;),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+logger.info(&quot;Starting training: lr=%.4f, batch_size=%d&quot;, lr, batch_size)
+logger.warning(&quot;Loss spike detected: %.4f at step %d&quot;, loss.item(), step)
+logger.error(&quot;NaN loss at step %d, stopping&quot;, step)</code></pre>
+      </div>
+    <p>Logging gives you timestamps, severity levels, and file output. When a training run fails at 3 AM, you want a log file, not terminal output that scrolled off screen.</p>
+<h3 id="part-4-timing-code-sections"><a class="anchor" href="#part-4-timing-code-sections">#</a> Part 4: Timing Code Sections</h3>
+<p>Knowing where time goes is the first step to optimization.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import time
+
+class Timer:
+    def __init__(self, name=&quot;&quot;):
+        self.name = name
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        elapsed = time.perf_counter() - self.start
+        print(f&quot;[{self.name}] {elapsed:.4f}s&quot;)
+
+with Timer(&quot;data loading&quot;):
+    batch = next(dataloader_iter)
+
+with Timer(&quot;forward pass&quot;):
+    outputs = model(batch)
+
+with Timer(&quot;backward pass&quot;):
+    loss.backward()</code></pre>
+      </div>
+    <p>Common finding: data loading takes 60% of training time. The fix is <code>num_workers &gt; 0</code> in your DataLoader, not a faster GPU.</p>
+<h3 id="part-5-cprofile-and-line_profiler"><a class="anchor" href="#part-5-cprofile-and-line_profiler">#</a> Part 5: cProfile and line_profiler</h3>
+<p>When you need more than manual timers:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python -m cProfile -s cumtime train.py</code></pre>
+      </div>
+    <p>This shows every function call sorted by cumulative time. For line-by-line profiling:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install line_profiler</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@profile
+def train_step(model, data, target):
+    output = model(data)
+    loss = F.cross_entropy(output, target)
+    loss.backward()
+    return loss
+
+# Run with: kernprof -l -v train.py</code></pre>
+      </div>
+    <h3 id="part-6-memory-profiling"><a class="anchor" href="#part-6-memory-profiling">#</a> Part 6: Memory Profiling</h3>
+<h4 id="cpu-memory-with-tracemalloc"><a class="anchor" href="#cpu-memory-with-tracemalloc">#</a> CPU Memory with tracemalloc</h4>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import tracemalloc
+
+tracemalloc.start()
+
+# your code here
+model = build_model()
+data = load_dataset()
+
+snapshot = tracemalloc.take_snapshot()
+top_stats = snapshot.statistics(&quot;lineno&quot;)
+for stat in top_stats[:10]:
+    print(stat)</code></pre>
+      </div>
+    <h4 id="cpu-memory-with-memory_profiler"><a class="anchor" href="#cpu-memory-with-memory_profiler">#</a> CPU Memory with memory_profiler</h4>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install memory_profiler</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from memory_profiler import profile
+
+@profile
+def load_data():
+    raw = read_csv(&quot;data.csv&quot;)       # watch memory jump here
+    processed = preprocess(raw)       # and here
+    return processed</code></pre>
+      </div>
+    <p>Run with <code>python -m memory_profiler your_script.py</code> to see line-by-line memory usage.</p>
+<h4 id="gpu-memory-with-pytorch"><a class="anchor" href="#gpu-memory-with-pytorch">#</a> GPU Memory with PyTorch</h4>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+if torch.cuda.is_available():
+    print(torch.cuda.memory_summary())
+
+    print(f&quot;Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB&quot;)
+    print(f&quot;Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB&quot;)</code></pre>
+      </div>
+    <p>When you hit OOM (Out of Memory):</p>
+<ol>
+<li>Reduce batch size (first thing to try, always)</li>
+<li>Use <code>torch.cuda.empty_cache()</code> to free cached memory</li>
+<li>Use <code>del tensor</code> followed by <code>torch.cuda.empty_cache()</code> for large intermediates</li>
+<li>Use mixed precision (<code>torch.cuda.amp</code>) to halve memory usage</li>
+<li>Use gradient checkpointing for very deep models</li>
+</ol>
+<h3 id="part-7-common-ai-bugs-and-how-to-catch-them"><a class="anchor" href="#part-7-common-ai-bugs-and-how-to-catch-them">#</a> Part 7: Common AI Bugs and How to Catch Them</h3>
+<h4 id="shape-mismatch"><a class="anchor" href="#shape-mismatch">#</a> Shape Mismatch</h4>
+<p>The most frequent bug. A tensor has shape <code>[batch, features]</code> when the model expects <code>[batch, channels, height, width]</code>.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def check_shapes(model, sample_input):
+    print(f&quot;Input: {sample_input.shape}&quot;)
+    hooks = []
+
+    def make_hook(name):
+        def hook(module, inp, out):
+            in_shape = inp[0].shape if isinstance(inp, tuple) else inp.shape
+            out_shape = out.shape if hasattr(out, &quot;shape&quot;) else type(out)
+            print(f&quot;  {name}: {in_shape} -&gt; {out_shape}&quot;)
+        return hook
+
+    for name, module in model.named_modules():
+        hooks.append(module.register_forward_hook(make_hook(name)))
+
+    with torch.no_grad():
+        model(sample_input)
+
+    for h in hooks:
+        h.remove()</code></pre>
+      </div>
+    <p>Run this once with a sample batch. It maps every shape transformation in your model.</p>
+<h4 id="nan-loss"><a class="anchor" href="#nan-loss">#</a> NaN Loss</h4>
+<p>NaN loss means something exploded. Common causes:</p>
+<ul>
+<li>Learning rate too high</li>
+<li>Division by zero in custom loss</li>
+<li>Log of zero or negative number</li>
+<li>Exploding gradients in RNNs</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def detect_nan(model, loss, step):
+    if torch.isnan(loss):
+        print(f&quot;NaN loss at step {step}&quot;)
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                if torch.isnan(param.grad).any():
+                    print(f&quot;  NaN gradient in {name}&quot;)
+                if torch.isinf(param.grad).any():
+                    print(f&quot;  Inf gradient in {name}&quot;)
+        return True
+    return False</code></pre>
+      </div>
+    <h4 id="data-leakage"><a class="anchor" href="#data-leakage">#</a> Data Leakage</h4>
+<p>Your model gets 99% accuracy on the test set. Sounds great. It&#39;s a bug.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def check_data_leakage(train_set, test_set, id_column=&quot;id&quot;):
+    train_ids = set(train_set[id_column].tolist())
+    test_ids = set(test_set[id_column].tolist())
+    overlap = train_ids &amp; test_ids
+    if overlap:
+        print(f&quot;DATA LEAKAGE: {len(overlap)} samples in both train and test&quot;)
+        return True
+    return False</code></pre>
+      </div>
+    <p>Also check for temporal leakage: using future data to predict the past. Sort by timestamp before splitting.</p>
+<h4 id="wrong-device"><a class="anchor" href="#wrong-device">#</a> Wrong Device</h4>
+<p>Tensors on different devices (CPU vs GPU) cause runtime errors. But sometimes a tensor silently stays on CPU while everything else is on GPU, and training just runs slowly.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def check_devices(model, *tensors):
+    model_device = next(model.parameters()).device
+    print(f&quot;Model device: {model_device}&quot;)
+    for i, t in enumerate(tensors):
+        if t.device != model_device:
+            print(f&quot;  WARNING: tensor {i} on {t.device}, model on {model_device}&quot;)</code></pre>
+      </div>
+    <h3 id="part-8-tensorboard-basics"><a class="anchor" href="#part-8-tensorboard-basics">#</a> Part 8: TensorBoard Basics</h3>
+<p>TensorBoard shows you what&#39;s happening inside training over time.</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install tensorboard</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from torch.utils.tensorboard import SummaryWriter
+
+writer = SummaryWriter(&quot;runs/experiment_1&quot;)
+
+for step in range(num_steps):
+    loss = train_step(model, batch)
+
+    writer.add_scalar(&quot;loss/train&quot;, loss.item(), step)
+    writer.add_scalar(&quot;lr&quot;, optimizer.param_groups[0][&quot;lr&quot;], step)
+
+    if step % 100 == 0:
+        for name, param in model.named_parameters():
+            writer.add_histogram(f&quot;weights/{name}&quot;, param, step)
+            if param.grad is not None:
+                writer.add_histogram(f&quot;grads/{name}&quot;, param.grad, step)
+
+writer.close()</code></pre>
+      </div>
+    <p>Launch it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">tensorboard --logdir=runs</code></pre>
+      </div>
+    <p>What to look for:</p>
+<ul>
+<li><strong>Loss not decreasing</strong>: Learning rate too low, or model architecture issue</li>
+<li><strong>Loss oscillating wildly</strong>: Learning rate too high</li>
+<li><strong>Loss goes to NaN</strong>: Numerical instability (see NaN section above)</li>
+<li><strong>Train loss decreasing, val loss increasing</strong>: Overfitting</li>
+<li><strong>Weight histograms collapsing to zero</strong>: Vanishing gradients</li>
+<li><strong>Gradient histograms exploding</strong>: Need gradient clipping</li>
+</ul>
+<h3 id="part-9-vs-code-debugger"><a class="anchor" href="#part-9-vs-code-debugger">#</a> Part 9: VS Code Debugger</h3>
+<p>For interactive debugging, configure VS Code with a <code>launch.json</code>:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+    &quot;version&quot;: &quot;0.2.0&quot;,
+    &quot;configurations&quot;: [
+        {
+            &quot;name&quot;: &quot;Debug Training&quot;,
+            &quot;type&quot;: &quot;debugpy&quot;,
+            &quot;request&quot;: &quot;launch&quot;,
+            &quot;program&quot;: &quot;${file}&quot;,
+            &quot;console&quot;: &quot;integratedTerminal&quot;,
+            &quot;justMyCode&quot;: false
+        }
+    ]
+}</code></pre>
+      </div>
+    <p>Set breakpoints by clicking the gutter. Use the Variables pane to inspect tensor properties. The Debug Console lets you run arbitrary Python expressions mid-execution.</p>
+<p>Useful for stepping through data preprocessing pipelines where you want to see each transformation.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Here&#39;s the debugging workflow that catches most AI bugs:</p>
+<ol>
+<li><strong>Before training</strong>: Run <code>check_shapes</code> with a sample batch. Verify input and output dimensions match expectations.</li>
+<li><strong>First 10 steps</strong>: Use <code>debug_print</code> on loss, outputs, and gradients. Confirm nothing is NaN and values are in reasonable ranges.</li>
+<li><strong>During training</strong>: Log loss, learning rate, and gradient norms. Use TensorBoard for visualization.</li>
+<li><strong>When something breaks</strong>: Drop <code>breakpoint()</code> at the failure point. Inspect tensors interactively.</li>
+<li><strong>For performance</strong>: Time your data loading vs forward vs backward pass. Profile memory if you&#39;re near OOM.</li>
+</ol>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Run the debugging toolkit script:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python phases/00-setup-and-tooling/12-debugging-and-profiling/code/debug_tools.py</code></pre>
+      </div>
+    <p>See <code>outputs/prompt-debug-ai-code.md</code> for a prompt that helps diagnose AI-specific bugs.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>debug_tools.py</code> and read through each section&#39;s output. Modify the dummy model to introduce a NaN (hint: divide by zero in the forward pass) and watch the detector catch it.</li>
+<li>Profile a training loop with <code>cProfile</code> and identify the slowest function.</li>
+<li>Use <code>tracemalloc</code> to find which line in your data loading pipeline allocates the most memory.</li>
+<li>Set up TensorBoard for a simple training run and identify whether the model is overfitting.</li>
+<li>Use <code>breakpoint()</code> inside a training loop. Practice inspecting tensor shapes, devices, and gradient values from the debugger prompt.</li>
+</ol>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-linux-for-ai.html"><span>← Previous</span><b>linux for ai</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

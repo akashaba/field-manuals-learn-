@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Whisper — Architecture &amp; Fine-Tuning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/05-whisper-architecture-finetuning/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#pitfalls-that-still-ship-in-2026">Pitfalls that still ship in 2026</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Whisper — Architecture &amp; Fine-Tuning</h1>
+    <p class="lesson-sub">Whisper is a 30-second-window transformer encoder-decoder, trained on 680k hours of multilingual weakly-supervised audio-text pairs. One architecture, multiple tasks, robust across 99 languages. The 2026 reference ASR.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 04 (ASR), Phase 5 · 10 (Attention), Phase 7 · 05 (Full Transformer)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="113.1" cy="109.5" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.6" cy="104.6" r="9.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.2" cy="99.7" r="8.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.5,99.7 L96.8,87.3 L105.1,99.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.8,94.4 L91.4,82.9 L99.0,94.4 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <rect x="15.1" y="119.2" width="26.3" height="26.3" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.2 132.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Whisper —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Architecture &amp;…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Whisper, released by OpenAI in September 2022, was the first ASR model to ship as a commodity: paste audio, get text, 99 languages, robust to noise, runs on a laptop. By 2024 OpenAI had shipped Large-v3 and Turbo variants; by 2026, Whisper is the default baseline for everything from podcast transcription to voice assistants to YouTube subtitles.</p>
+<p>But Whisper is not a pipeline you can treat as a black box forever. Domain shift kills it — technical jargon, speaker accents, proper nouns, short clips, silence. You need to know:</p>
+<ol>
+<li>What it actually is inside.</li>
+<li>How to give it chunked, streaming, or long-form audio correctly.</li>
+<li>When to fine-tune and how.</li>
+</ol>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/05-whisper-architecture-finetuning/assets/whisper.svg" alt="Whisper encoder-decoder, tasks, chunked inference, fine-tune" loading="lazy" /></figure></p>
+<p><strong>Architecture.</strong> Standard transformer encoder-decoder.</p>
+<ul>
+<li>Input: 30-second log-mel spectrogram, 80 mels, 10 ms hop → 3000 frames. Clips shorter are zero-padded, clips longer are chunked.</li>
+<li>Encoder: conv-downsample (stride 2) + <code>N</code> transformer blocks. For Large-v3: 32 layers, 1280-dim, 20 heads.</li>
+<li>Decoder: <code>N</code> transformer blocks with causal self-attn + cross-attn to encoder output. Same size as encoder.</li>
+<li>Output: BPE tokens over a 51,865-token vocab.</li>
+</ul>
+<p>Large-v3 has 1.55B params. Turbo uses a 4-layer decoder (from 32), cutting latency 8× with a &lt;1% WER hit.</p>
+<p><strong>The prompt format.</strong> Whisper is a multitask model steered by special tokens in the decoder prompt:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&lt;|startoftranscript|&gt;&lt;|en|&gt;&lt;|transcribe|&gt;&lt;|notimestamps|&gt; Hello world.&lt;|endoftext|&gt;</code></pre>
+      </div>
+    <ul>
+<li><code>&lt;|en|&gt;</code> — language tag; forces translation-vs-transcription behavior.</li>
+<li><code>&lt;|transcribe|&gt;</code> or <code>&lt;|translate|&gt;</code> — translate English output from any-language input, or verbatim.</li>
+<li><code>&lt;|notimestamps|&gt;</code> — skip word-level timestamps (faster).</li>
+</ul>
+<p>The prompt is what lets one model do many tasks. Change <code>&lt;|en|&gt;</code> to <code>&lt;|fr|&gt;</code> and it transcribes French.</p>
+<p><strong>30-second window.</strong> Everything is pinned to 30 seconds. Longer clips need chunking; shorter clips are padded. Windows are not streamed natively — this is why WhisperX, Whisper-Streaming, and faster-whisper exist.</p>
+<p><strong>Log-mel normalization.</strong> <code>(log_mel - mean) / std</code> where the stats come from Whisper&#39;s own training corpus. You <em>must</em> use Whisper&#39;s preprocessing (<code>whisper.audio.log_mel_spectrogram</code>), not <code>librosa.feature.melspectrogram</code>.</p>
+<h3 id="variants-in-2026"><a class="anchor" href="#variants-in-2026">#</a> Variants in 2026</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Params</th>
+<th>Latency (A100)</th>
+<th>WER (LibriSpeech-clean)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tiny</td>
+<td>39M</td>
+<td>1× realtime</td>
+<td>5.4%</td>
+</tr>
+<tr>
+<td>Base</td>
+<td>74M</td>
+<td>1×</td>
+<td>4.1%</td>
+</tr>
+<tr>
+<td>Small</td>
+<td>244M</td>
+<td>1×</td>
+<td>3.0%</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td>769M</td>
+<td>1×</td>
+<td>2.7%</td>
+</tr>
+<tr>
+<td>Large-v3</td>
+<td>1.55B</td>
+<td>2×</td>
+<td>1.8%</td>
+</tr>
+<tr>
+<td>Large-v3-turbo</td>
+<td>809M</td>
+<td>8×</td>
+<td>1.58%</td>
+</tr>
+<tr>
+<td>Whisper-Streaming (2024)</td>
+<td>1.55B</td>
+<td>streaming</td>
+<td>2.0%</td>
+</tr>
+</tbody></table>
+<h3 id="fine-tuning"><a class="anchor" href="#fine-tuning">#</a> Fine-tuning</h3>
+<p>Canonical workflow in 2026:</p>
+<ol>
+<li>Collect 10–100 hours of target-domain audio with aligned transcripts.</li>
+<li>Run <code>transformers.Seq2SeqTrainer</code> with <code>generate_with_loss</code> callback.</li>
+<li>Parameter-efficient: LoRA on <code>q_proj</code>, <code>k_proj</code>, <code>v_proj</code> of attention layers reduces GPU memory 4× with &lt;0.3 WER cost.</li>
+<li>Freeze the encoder if you have &lt;10 hours. Only tune the decoder.</li>
+<li>Use Whisper&#39;s own tokenizer and prompt format; never swap tokenizers.</li>
+</ol>
+<p>Community results: fine-tuning Medium on 20 hours of medical dictation drops WER from 12% to 4.5% on medical vocabulary. Fine-tuning Turbo on 4 hours of Icelandic drops WER from 18% to 6%.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sp-asr-attention</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-run-whisper-out-of-the-box"><a class="anchor" href="#step-1-run-whisper-out-of-the-box">#</a> Step 1: run Whisper out of the box</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import whisper
+model = whisper.load_model(&quot;large-v3-turbo&quot;)
+result = model.transcribe(
+    &quot;clip.wav&quot;,
+    language=&quot;en&quot;,
+    task=&quot;transcribe&quot;,
+    temperature=0.0,
+    condition_on_previous_text=False,  # prevents runaway repetition
+)
+print(result[&quot;text&quot;])
+for seg in result[&quot;segments&quot;]:
+    print(f&quot;[{seg[&#39;start&#39;]:.2f}–{seg[&#39;end&#39;]:.2f}] {seg[&#39;text&#39;]}&quot;)</code></pre>
+      </div>
+    <p>Key defaults you should always override: <code>temperature=0.0</code> (sampling defaults to 0.0 → 0.2 → 0.4 … fallback chain), <code>condition_on_previous_text=False</code> (prevents the cascading hallucination problem), and <code>no_speech_threshold=0.6</code> (silence detection).</p>
+<h3 id="step-2-chunked-long-form"><a class="anchor" href="#step-2-chunked-long-form">#</a> Step 2: chunked long-form</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># whisperx is the 2026 reference for long-form with word-level timestamps
+import whisperx
+model = whisperx.load_model(&quot;large-v3-turbo&quot;, device=&quot;cuda&quot;, compute_type=&quot;float16&quot;)
+segments = model.transcribe(&quot;1hour.mp3&quot;, batch_size=16, chunk_size=30)</code></pre>
+      </div>
+    <p>WhisperX adds (1) Silero VAD gating, (2) word-level alignment via wav2vec 2.0, (3) diarization via <code>pyannote.audio</code>. The 2026 workhorse for production transcription.</p>
+<h3 id="step-3-fine-tune-with-lora"><a class="anchor" href="#step-3-fine-tune-with-lora">#</a> Step 3: fine-tune with LoRA</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import WhisperForConditionalGeneration, WhisperProcessor
+from peft import LoraConfig, get_peft_model
+
+model = WhisperForConditionalGeneration.from_pretrained(&quot;openai/whisper-large-v3-turbo&quot;)
+lora = LoraConfig(
+    r=16, lora_alpha=32, target_modules=[&quot;q_proj&quot;, &quot;v_proj&quot;],
+    lora_dropout=0.1, bias=&quot;none&quot;, task_type=&quot;SEQ_2_SEQ_LM&quot;,
+)
+model = get_peft_model(model, lora)
+# model.print_trainable_parameters()  -&gt; ~3M trainable / 809M total</code></pre>
+      </div>
+    <p>Then standard Trainer loop. Checkpoint every 1000 steps. Evaluate with WER on held-out.</p>
+<h3 id="step-4-inspect-what-each-layer-learns"><a class="anchor" href="#step-4-inspect-what-each-layer-learns">#</a> Step 4: inspect what each layer learns</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Grab cross-attention weights during decode to see what the decoder attends to.
+with torch.inference_mode():
+    out = model.generate(
+        input_features=features,
+        return_dict_in_generate=True,
+        output_attentions=True,
+    )
+# out.cross_attentions: layer × head × step × src_len</code></pre>
+      </div>
+    <p>Visualize with a heatmap — you will see diagonal alignment as decoder steps scan through encoder frames. That diagonal is Whisper&#39;s notion of word timestamps.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>General English, offline</td>
+<td>Large-v3-turbo via <code>whisperx</code></td>
+</tr>
+<tr>
+<td>Mobile / edge</td>
+<td>Whisper-Tiny quantized (int8) or Moonshine</td>
+</tr>
+<tr>
+<td>Multilingual long-form</td>
+<td>Large-v3 via <code>whisperx</code> + diarization</td>
+</tr>
+<tr>
+<td>Low-resource language</td>
+<td>Fine-tune Medium or Turbo with LoRA</td>
+</tr>
+<tr>
+<td>Streaming (2 s latency)</td>
+<td>Whisper-Streaming or Parakeet-TDT</td>
+</tr>
+<tr>
+<td>Word-level timestamps</td>
+<td>WhisperX (forced alignment via wav2vec 2.0)</td>
+</tr>
+</tbody></table>
+<p><code>faster-whisper</code> (CTranslate2 backend) is the fastest CPU+GPU inference runtime in 2026 — 4× faster than vanilla with identical output.</p>
+<h2 id="pitfalls-that-still-ship-in-2026"><a class="anchor" href="#pitfalls-that-still-ship-in-2026">#</a> Pitfalls that still ship in 2026</h2>
+<ul>
+<li><strong>Hallucinated text on silence.</strong> Whisper trained on captions includes &quot;Thanks for watching!&quot;, &quot;Subscribe!&quot;, song lyrics. Always VAD-gate before calling.</li>
+<li><strong><code>condition_on_previous_text</code> cascade.</strong> One hallucination pollutes subsequent windows. Set <code>False</code> unless you need fluency across chunks.</li>
+<li><strong>Short-clip padding.</strong> A 2-second clip padded to 30 seconds can hallucinate in the trailing silence. Use <code>pad=False</code> or VAD-gate.</li>
+<li><strong>Wrong mel stats.</strong> Using librosa&#39;s mels instead of Whisper&#39;s produces near-random output. Use <code>whisper.audio.log_mel_spectrogram</code>.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-whisper-tuner.md</code>. Design a Whisper fine-tune or inference pipeline for a given domain.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. It tokenizes a Whisper-style prompt, computes decoded shape budgets, and prints the chunk schedule for a 10-minute clip.</li>
+<li><strong>Medium.</strong> Install <code>faster-whisper</code>, transcribe a 10-minute podcast, compare WER against a human transcript. Try <code>language=&quot;auto&quot;</code> vs forced <code>language=&quot;en&quot;</code>.</li>
+<li><strong>Hard.</strong> Using HF <code>datasets</code>, pick a language Whisper struggles with (e.g., Urdu), fine-tune Medium with LoRA for 2 epochs on 2 hours, and report WER delta.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>30-sec window</td>
+<td>Whisper&#39;s limit</td>
+<td>Hard input cap; chunk longer audio.</td>
+</tr>
+<tr>
+<td>SOT</td>
+<td>Start-of-transcript</td>
+<td><code>&lt;|startoftranscript|&gt;</code> kicks off the decoder prompt.</td>
+</tr>
+<tr>
+<td>Timestamps token</td>
+<td>Temporal alignment</td>
+<td>Every 0.02 s offset is a special token in the 51k vocab.</td>
+</tr>
+<tr>
+<td>Turbo</td>
+<td>The fast variant</td>
+<td>4-decoder layers, 8× faster, &lt;1% WER regression.</td>
+</tr>
+<tr>
+<td>WhisperX</td>
+<td>The long-form wrapper</td>
+<td>VAD + Whisper + wav2vec alignment + diarization.</td>
+</tr>
+<tr>
+<td>LoRA fine-tune</td>
+<td>Efficient tuning</td>
+<td>Add low-rank adapters to attention; train ~0.3% of params.</td>
+</tr>
+<tr>
+<td>Hallucination</td>
+<td>The silent failure</td>
+<td>Whisper produces fluent English from noise/silence.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.04356">Radford et al. (2022). Whisper paper</a> — the original architecture and training recipe.</li>
+<li><a href="https://github.com/openai/whisper/discussions/2363">OpenAI (2024). Whisper Large-v3-turbo release</a> — 4-layer decoder, 8× speedup.</li>
+<li><a href="https://arxiv.org/abs/2303.00747">Bain et al. (2023). WhisperX</a> — long-form, word-aligned, diarized.</li>
+<li><a href="https://github.com/SYSTRAN/faster-whisper">Systran — faster-whisper repo</a> — CTranslate2-backed, 4× faster.</li>
+<li><a href="https://huggingface.co/blog/fine-tune-whisper">HuggingFace — Whisper fine-tune tutorial</a> — canonical LoRA / full-FT walkthrough.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-speech-recognition-asr.html"><span>← Previous</span><b>speech recognition asr</b></a>
+      <a class="next" href="./06-speaker-recognition-verification.html"><span>Next →</span><b>speaker recognition verification</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

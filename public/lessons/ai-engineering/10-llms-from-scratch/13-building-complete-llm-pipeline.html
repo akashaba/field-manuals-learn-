@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building a Complete LLM Pipeline — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/13-building-complete-llm-pipeline/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Building a Complete LLM Pipeline</h1>
+    <p class="lesson-sub">Everything from Lessons 01 to 12 is one stage of one pipeline. This lesson is the scaffold that turns those stages into a single end-to-end run: tokenize, pre-train, scale, SFT, align, evaluate, quantize, serve. You will not train a 70B model on a laptop. You will produce the orchestration layer, the manifest, the eval gate, and the rollback plan that a 2026 frontier team uses to decide what gets shipped. This is the capstone.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>All Phase 10 lessons 01-12</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="25.8" y="128.9" width="29.2" height="29.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(177 40.4 143.5)"/>
+        <rect x="21.1" y="124.6" width="27.9" height="27.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(159 35.0 138.6)"/>
+        <rect x="16.3" y="120.3" width="26.6" height="26.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(141 29.6 133.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Building a Complete</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">LLM Pipeline</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compose the eleven prior lessons (tokenizer, data, pre-training, scaling, SFT, RLHF, DPO, CAI, eval, quantization, inference) into a single reproducible pipeline spec</li>
+<li>Define the artifact contract between stages: what each stage consumes, what it produces, and how the next stage verifies the input</li>
+<li>Build an orchestrator that tracks experiments, hashes artifacts, and gates ship decisions on eval thresholds</li>
+<li>Design the rollback plan: which artifacts are cheap to re-run, which are expensive, and what a corrupted checkpoint costs</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The previous lessons each work. Tokenizer trained. Tiny GPT pre-trained. SFT dataset assembled. Reward model trained. DPO run. Evals measured. Quantized weights exported. Inference server spun up. Each one is a notebook. Each one has its own conventions, its own output paths, its own seed.</p>
+<p>A frontier training run is not a notebook. Llama 3 405B took 30 million H100 hours over roughly 54 days. DeepSeek-V3 used around 2.8 million H800 hours. During that time, one corrupted checkpoint, one data contamination, one eval regression can cost a team a week of wall-clock and a month of GPU budget. The way teams survive this is through pipeline hygiene: every stage has a deterministic input, a deterministic output, a manifest, a hash, and a gate.</p>
+<p>This is the capstone. You will not run the pipeline end-to-end on a laptop. You will write the orchestrator that coordinates the stages, the manifest that describes the run, the verifier that gates ship decisions, and the replay plan that lets a third party re-run your work from a single file. The code is small; the discipline is large.</p>
+<p>The pattern scales from 100M to 1T parameters unchanged. The same four components -- manifest, orchestrator, eval gate, artifact store -- run Llama 3 and also run your hobby GPT. The difference is the size of the numbers inside each stage&#39;s config, not the shape of the pipeline.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-twelve-stages"><a class="anchor" href="#the-twelve-stages">#</a> The Twelve Stages</h3>
+<p>Every Phase 10 lesson is a stage. Here is the full dependency graph.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    S1[&quot;01 Tokenizer vocab&quot;] --&gt; S2[&quot;02 Trained tokenizer&quot;]
+    S2 --&gt; S3[&quot;03 Sharded dataset&quot;]
+    S3 --&gt; S4[&quot;04 Base model checkpoint&quot;]
+    S4 --&gt; S5[&quot;05 Scaled training recipe&quot;]
+    S5 --&gt; S6[&quot;06 SFT checkpoint&quot;]
+    S6 --&gt; S7[&quot;07 Reward model + PPO policy&quot;]
+    S6 --&gt; S8[&quot;08 DPO policy&quot;]
+    S7 --&gt; S9[&quot;09 CAI / GRPO refined policy&quot;]
+    S8 --&gt; S9
+    S9 --&gt; S10[&quot;10 Eval report&quot;]
+    S9 --&gt; S11[&quot;11 Quantized weights&quot;]
+    S11 --&gt; S12[&quot;12 Inference server&quot;]
+    S10 --&gt; GATE[&quot;Ship gate&quot;]
+    S12 --&gt; GATE
+
+    style S1 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style S4 fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style S9 fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style GATE fill:#1a1a2e,stroke:#51cf66,color:#fff</pre></div><p>Stages 07 and 08 can run in parallel. Everything else is a hard dependency. A change in stage 02 (tokenizer) invalidates every downstream artifact. A change in stage 10 (eval) invalidates only the ship decision.</p>
+<h3 id="the-manifest"><a class="anchor" href="#the-manifest">#</a> The Manifest</h3>
+<p>A manifest is a single file that describes a run completely enough to replay it. Nothing the pipeline produces should depend on state that is not in the manifest. The fields are boring and mandatory.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">pipeline_version: 1.2.3
+seed: 42
+git_commit: a1b2c3d4
+stages:
+  01_tokenizer:
+    recipe: bpe_32k
+    input_hash: sha256:...
+    output_hash: sha256:...
+    wall_clock_sec: 3600
+    cost_usd: 12</code></pre>
+      </div>
+    <p>The output hash of stage N is the input hash of stage N+1. Any deviation and the pipeline halts. This is how you catch data corruption early. It is also how a teammate on a different continent verifies that their replay produced the same artifact as yours.</p>
+<p>In practice teams use a small YAML schema plus a manifest checker that diffs against the previous successful run. Any delta outside the expected fields (cost, wall clock) is a red flag.</p>
+<h3 id="artifact-typing"><a class="anchor" href="#artifact-typing">#</a> Artifact Typing</h3>
+<p>Each stage&#39;s output is a typed artifact. Not a directory blob, not a pickle, but a named type with a known schema.</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Artifact Type</th>
+<th>Key Fields</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>01-02</td>
+<td>Tokenizer</td>
+<td>vocab.json, merges.txt, config.json, hash</td>
+</tr>
+<tr>
+<td>03</td>
+<td>Dataset</td>
+<td>shards[], row count, token count, dedup stats</td>
+</tr>
+<tr>
+<td>04-05</td>
+<td>Checkpoint</td>
+<td>weights.safetensors, config.json, optimizer state, step count</td>
+</tr>
+<tr>
+<td>06</td>
+<td>SFT Model</td>
+<td>checkpoint + SFT recipe + data mix</td>
+</tr>
+<tr>
+<td>07</td>
+<td>Reward Model</td>
+<td>RM checkpoint + preference data hash</td>
+</tr>
+<tr>
+<td>08-09</td>
+<td>Policy</td>
+<td>checkpoint + reference hash + beta + KL budget consumed</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Eval Report</td>
+<td>benchmark scores + regression diffs + eval data hash</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Quantized Model</td>
+<td>quantized weights + calibration data + accuracy delta vs FP16</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Server Spec</td>
+<td>endpoint + model hash + config + observability hooks</td>
+</tr>
+</tbody></table>
+<p>The typing prevents the most common failure mode: using a stage 08 output as a stage 06 input, shipping a DPO-trained model through the SFT path. Typed artifacts and typed stage signatures make these errors compile-time failures, not day-five failures.</p>
+<h3 id="the-eval-gate"><a class="anchor" href="#the-eval-gate">#</a> The Eval Gate</h3>
+<p>Shipping is not &quot;training finished.&quot; Shipping is &quot;training finished and the eval gate passed.&quot; The gate is defined before the run starts.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">gates:
+  mmlu:      &gt;= baseline + 0.5   # no regression
+  humaneval: &gt;= baseline + 1.0
+  truthfulqa: &gt;= baseline         # no drop
+  safety_refusal_rate: &lt;= 0.05
+  kl_from_reference: &lt;= 25.0
+  cost_total_usd: &lt;= 50000</code></pre>
+      </div>
+    <p>Every gate is a numeric threshold. No &quot;looks good&quot; gates. No subjective sign-offs. If every gate passes, the artifact is marked shippable. If any gate fails, the run is held pending explicit override by a named reviewer, which itself is logged in the manifest.</p>
+<p>Two gates catch most disasters. A <em>regression</em> gate (the new model must be at least as good as the previous on core benchmarks) catches training bugs. A <em>KL budget</em> gate (the aligned policy must not have drifted further than X from its reference) catches alignment overcooking. Every production pipeline has both.</p>
+<h3 id="the-orchestrator"><a class="anchor" href="#the-orchestrator">#</a> The Orchestrator</h3>
+<p>A small piece of code that reads the manifest, dispatches stages, tracks artifacts, and halts on any contract violation. This is not Airflow. This is not Kubeflow. For pipeline hygiene you want something boring that you wrote.</p>
+<p>The orchestrator&#39;s job is narrow:</p>
+<ol>
+<li>Resolve the DAG from the manifest.</li>
+<li>For each stage, check if the expected output already exists at the correct hash (skip if so).</li>
+<li>Run the stage, capture stdout/stderr, measure wall clock and cost.</li>
+<li>Verify the output hash against the downstream stage&#39;s expected input hash.</li>
+<li>On failure, write a partial manifest with the exact failing stage and exit nonzero.</li>
+</ol>
+<p>That is 200 lines of Python. It will look like the file <code>code/main.py</code> in this lesson. Under the hood, the real pipeline uses <code>torchrun</code> or <code>ray</code> to execute individual stages on clusters, but the orchestrator itself runs on a single box.</p>
+<h3 id="experiment-tracking-and-artifact-storage"><a class="anchor" href="#experiment-tracking-and-artifact-storage">#</a> Experiment Tracking and Artifact Storage</h3>
+<p>Two external systems anchor the pipeline.</p>
+<p><strong>Experiment tracker (wandb, neptune, mlflow).</strong> Logs loss curves, eval metrics, system telemetry per stage. The tracker is where you go when you need to compare run A against run B three weeks later. Teams almost always use a hosted tracker for this -- writing your own loses time that should go into training.</p>
+<p><strong>Artifact store (S3, R2, GCS).</strong> Immutable object store for checkpoints, datasets, tokenizers, eval reports. Artifacts are addressed by hash, not by filename. A filename like <code>latest.pt</code> is a foot-gun; <code>ckpt-7b-step-20000-sha256:abc123.safetensors</code> is a contract.</p>
+<p>The orchestrator writes to both. The tracker is for humans looking at charts. The artifact store is for the next stage looking up inputs.</p>
+<h3 id="costing"><a class="anchor" href="#costing">#</a> Costing</h3>
+<p>A frontier run has a dollar number attached. Budget discipline happens in two places.</p>
+<p><strong>Pre-run estimate.</strong> From the manifest, compute expected FLOPs (for pre-training: 6 x params x tokens), expected GPU hours (FLOPs / peak throughput / utilization), and dollar cost at the current rental rate. If the estimate exceeds the budget gate, the pipeline refuses to start.</p>
+<p><strong>In-run tracking.</strong> Stage-by-stage wall clock and cost are logged to the manifest. After every stage, the remaining budget is checked. If a stage overran, the next stage&#39;s gate is evaluated with the new remaining budget. You do not find out you are out of money when the VC calls.</p>
+<p>Llama 3&#39;s reported cost was $61M. DeepSeek-V3 reported $5.6M for the main pre-training run. The ratio is mostly hardware efficiency plus mixture-of-experts -- but the specific cost is visible because both teams tracked it per stage, not per run.</p>
+<h3 id="reproducibility-vs-determinism"><a class="anchor" href="#reproducibility-vs-determinism">#</a> Reproducibility vs Determinism</h3>
+<p>These are not the same. <em>Reproducible</em> means the same manifest plus the same code plus the same infrastructure produces a checkpoint with equivalent downstream metrics. <em>Deterministic</em> means bit-identical output.</p>
+<p>Modern LLM training is reproducible but not deterministic. Distributed training&#39;s reduce-order, GPU kernel non-determinism (cuBLAS, flash-attn), and mixed precision rounding combine to produce floats that differ at the 1e-5 level between runs. This is fine for the final metrics, which do not move. It is fatal if you are trying to debug with bit-level diffs. The cure is to log every stage&#39;s input hash, output hash, and headline metrics -- if those match, the run is &quot;reproduced&quot; even if the weights are not bit-identical.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    M[&quot;Manifest v1.2.3&quot;] --&gt; O[&quot;Orchestrator&quot;]
+    O --&gt; S[&quot;Stages 01 → 12&quot;]
+    S --&gt; AS[&quot;Artifact Store\n(content-addressed)&quot;]
+    S --&gt; ET[&quot;Experiment Tracker\n(metrics, curves)&quot;]
+    AS --&gt; GATE[&quot;Eval Gate&quot;]
+    ET --&gt; GATE
+    GATE --&gt;|pass| SHIP[&quot;Ship&quot;]
+    GATE --&gt;|fail| ROLL[&quot;Rollback plan&quot;]
+
+    style M fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style GATE fill:#1a1a2e,stroke:#e94560,color:#fff
+    style SHIP fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style ROLL fill:#1a1a2e,stroke:#c0392b,color:#fff</pre></div><h3 id="rollback-plan"><a class="anchor" href="#rollback-plan">#</a> Rollback Plan</h3>
+<p>Before the run starts, write down what happens on failure of each stage. Three categories.</p>
+<ul>
+<li><strong>Cheap to re-run</strong> (hours): tokenizer, eval, quantization, inference server. Just re-run.</li>
+<li><strong>Medium</strong> (days): SFT, DPO, CAI. Keep the base model; re-run only the alignment stages.</li>
+<li><strong>Expensive</strong> (weeks and millions of dollars): pre-training. The rollback plan here is not &quot;re-run.&quot; It is &quot;use the last good checkpoint and re-run the cheaper downstream stages with revised data.&quot;</li>
+</ul>
+<p>Because stage dependencies are typed and hashed, the orchestrator can compute the rollback set automatically: invalidate the failed stage plus every descendant. A failure at stage 06 (SFT) invalidates 06, 07, 08, 09, 10, 11, 12. A failure at stage 11 (quantization) invalidates only 11 and 12. Naming this up front avoids improvising while the team is exhausted at 4am.</p>
+<h3 id="production-recipes-observed-in-2026"><a class="anchor" href="#production-recipes-observed-in-2026">#</a> Production Recipes Observed in 2026</h3>
+<p>Most frontier teams converged on the same skeleton.</p>
+<ul>
+<li>Tokenizer: 128k BPE with byte fallback. Trained on a small, balanced multilingual slice.</li>
+<li>Pre-training: 10-20T tokens, mostly web plus code plus synthetic. Muon or AdamW optimizer. FSDP2 or DeepSpeed ZeRO-3. Gradient checkpointing. BF16 weights, FP32 master.</li>
+<li>SFT: 500k-2M instruction pairs, mixed human and synthetic, with strict dedup against the eval set.</li>
+<li>Alignment: DPO or CAI + GRPO. RLHF only where the preference signal is too multidimensional for DPO.</li>
+<li>Eval: MMLU-Pro, MATH, HumanEval+, GPQA, SWE-Bench Verified, LiveBench, plus a private held-out set the public never sees.</li>
+<li>Quantization: 4-bit GPTQ or AWQ for serving, 8-bit for safety evals where accuracy deltas matter.</li>
+<li>Serving: vLLM, TensorRT-LLM, or in-house. Continuous batching. Speculative decoding. KV cache eviction.</li>
+</ul>
+<p>The numbers change every six months. The skeleton does not.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">beam-search</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The lesson&#39;s code is an orchestrator and a manifest checker, not twelve training scripts. Each stage is simulated with a placeholder that produces an output artifact with the correct shape and hash. Running the orchestrator end-to-end proves the pipeline&#39;s plumbing works before you burn GPU money on the real stages.</p>
+<p>See <code>code/main.py</code> for the full implementation. The key pieces:</p>
+<ul>
+<li><code>Manifest</code> dataclass: pipeline version, seed, git commit, stages, gates.</li>
+<li><code>Stage</code> dataclass: name, type, inputs (hashes), output (hash), wall clock, cost.</li>
+<li><code>Orchestrator.run()</code>: resolves DAG, dispatches stages, verifies hashes, updates manifest.</li>
+<li><code>EvalGate.check()</code>: reads thresholds, compares against latest eval report, returns pass/fail.</li>
+<li><code>ArtifactStore</code> (in-memory stub): put/get by hash, simulates S3.</li>
+<li><code>CostTracker</code>: per-stage and cumulative, halts when cap exceeded.</li>
+</ul>
+<p>The pipeline in <code>main.py</code> runs twelve placeholder stages, produces a manifest, and exercises a failing eval gate to show what a held run looks like. Swap each placeholder for the real training script from the corresponding lesson and you have the skeleton a real frontier pipeline uses.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The canonical workflow has three commands.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python code/main.py plan    # validate manifest, compute cost estimate, print DAG
+python code/main.py run     # execute stages, writing to manifest.out.yaml
+python code/main.py gate    # read manifest.out.yaml, apply eval gates, ship-or-hold</code></pre>
+      </div>
+    <p>Run <code>plan</code> first every time. Most pipeline bugs show up at plan time -- missing gate thresholds, stale hashes, budget overruns. Running <code>plan</code> is free. Running <code>run</code> is expensive. Save money by catching bugs on the cheap side.</p>
+<p>The output of <code>gate</code> is either <code>SHIP</code> or <code>HOLD: &lt;reason&gt;</code>. A held run is not a failure; it is a decision point. A named reviewer either overrides (and the override is logged), or they approve the rollback.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-llm-pipeline-reviewer.md</code>. Feed it a proposed pipeline manifest and it checks all the contracts: stage typing, hash chain, gates, rollback plan, cost estimate. It refuses to approve a manifest with a missing eval gate, an unbounded KL budget, or a run that mixes eval and training data.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Extend the orchestrator to support parallel execution of stages 07 and 08. Use the stdlib <code>concurrent.futures</code> module. Confirm the final manifest records both stages&#39; outputs and that stage 09&#39;s input hash is a deterministic combination of both.</p>
+</li>
+<li><p>Add a &quot;contamination check&quot; gate. Given the eval dataset hash and the training dataset shards, compute the overlap (exact string match or 13-gram match). The gate fails if overlap exceeds 0.1%. Feed it a contaminated training set and confirm the gate holds the run.</p>
+</li>
+<li><p>Implement a cost estimator from first principles. For stage 04 (pre-training), estimate FLOPs as 6 x params x tokens, assume 40% MFU (model FLOPs utilization) on H100 at 989 TFLOPs BF16, at $2.50/GPU-hour. Report the estimate for a 7B model trained on 2T tokens. Compare to published Llama 2 numbers.</p>
+</li>
+<li><p>Build a partial rollback. Simulate a failure at stage 09 (CAI), then re-run stages 09 through 12 while leaving 01-08 cached. The orchestrator should detect the cached artifacts by hash and skip them. Measure wall-clock saved versus full re-run.</p>
+</li>
+<li><p>Add observability. Emit OpenTelemetry spans for each stage, with attributes for params, tokens seen, loss, and cost. Pipe the spans to a local collector. The point is not dashboards; the point is that every stage&#39;s health is traceable from a single trace ID.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Manifest</td>
+<td>&quot;The recipe file&quot;</td>
+<td>YAML or JSON describing pipeline version, seed, per-stage config, and gate thresholds — sufficient to replay a run</td>
+</tr>
+<tr>
+<td>Content-addressed</td>
+<td>&quot;By hash not name&quot;</td>
+<td>Artifacts stored by SHA-256 of their contents, so you can never confuse version A with version B</td>
+</tr>
+<tr>
+<td>Eval gate</td>
+<td>&quot;The ship criteria&quot;</td>
+<td>Numeric thresholds on benchmark metrics and safety scores that must pass before an artifact is marked shippable</td>
+</tr>
+<tr>
+<td>KL budget</td>
+<td>&quot;How far alignment drifted&quot;</td>
+<td>A cap on cumulative KL(policy</td>
+</tr>
+<tr>
+<td>MFU</td>
+<td>&quot;How much of the GPU you used&quot;</td>
+<td>Model FLOPs Utilization — achieved FLOPs divided by theoretical peak. 40% is typical at 70B scale, 55% at 7B</td>
+</tr>
+<tr>
+<td>Rollback plan</td>
+<td>&quot;What we do when it breaks&quot;</td>
+<td>Pre-written set of actions per stage on failure: re-run, fall back, retrain with revised inputs</td>
+</tr>
+<tr>
+<td>Orchestrator</td>
+<td>&quot;The conductor&quot;</td>
+<td>The process that reads the manifest, dispatches stages, verifies hashes, halts on any contract violation</td>
+</tr>
+<tr>
+<td>Artifact store</td>
+<td>&quot;Versioned S3 for weights&quot;</td>
+<td>Immutable content-addressed object store — single source of truth for checkpoints, datasets, eval reports</td>
+</tr>
+<tr>
+<td>Reproducible</td>
+<td>&quot;Same metrics on replay&quot;</td>
+<td>Different bit-level weights but equivalent downstream metrics — the realistic target for distributed LLM training</td>
+</tr>
+<tr>
+<td>Cost gate</td>
+<td>&quot;You cannot exceed X&quot;</td>
+<td>Pre-run cost estimate plus in-run tracker — the pipeline refuses to start if the estimate exceeds budget</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2407.21783">Dubey et al., 2024 -- &quot;The Llama 3 Herd of Models&quot;</a> -- the most detailed public description of a frontier pipeline including data, training, alignment, eval</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI, 2024 -- &quot;DeepSeek-V3 Technical Report&quot;</a> -- efficiency-first pipeline at roughly 1/10th the cost of Llama 3 class training</li>
+<li><a href="https://arxiv.org/abs/2001.08361">Kaplan et al., 2020 -- &quot;Scaling Laws for Neural Language Models&quot;</a> -- the original compute-data-params scaling relationship</li>
+<li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al., 2022 -- &quot;Training Compute-Optimal Large Language Models (Chinchilla)&quot;</a> -- the correction to Kaplan that recalibrated modern data budgets</li>
+<li><a href="https://pytorch.org/docs/stable/fsdp.html">PyTorch FSDP2 documentation</a> -- the distributed training primitive replacing FSDP1 in PyTorch 2.4+</li>
+<li><a href="https://wandb.ai/site/llms">Weights &amp; Biases LLM Reports</a> -- real manifests and experiment tracker output for open-source LLM runs, useful as plagiarizable templates</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-inference-optimization.html"><span>← Previous</span><b>inference optimization</b></a>
+      <a class="next" href="./14-open-models-architecture-walkthroughs.html"><span>Next →</span><b>open models architecture walkthroughs</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

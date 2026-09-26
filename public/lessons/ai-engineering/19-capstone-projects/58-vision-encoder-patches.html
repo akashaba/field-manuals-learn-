@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision Encoder Patches — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/58-vision-encoder-patches/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#tests">Tests</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Vision Encoder Patches</h1>
+    <p class="lesson-sub">A vision model that reads pixels needs a tokenizer for pixels. Patch embedding is that tokenizer. Cut the image into a grid of squares, flatten each square, project it through one linear layer, then add a 2D position signal so the transformer knows where each square sat in the original image.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (Track B foundations)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 58">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M68.3,77.2 L73.9,68.9 L79.4,77.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M50.6,79.7 L68.5,52.8 L86.4,79.7 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M45.8,74.4 L63.0,48.5 L80.3,74.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.0" y="42.5" width="33.3" height="33.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(233 57.6 59.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">58</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Vision Encoder</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Patches</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Tokenize an image into a fixed-length sequence of patch embeddings.</li>
+<li>Implement a <code>Conv2d</code>-based patch projection that matches the math of unfold-then-linear.</li>
+<li>Build a deterministic 2D sinusoidal position embedding so token order encodes spatial position.</li>
+<li>Verify patch count, embedding shape, and <code>Conv2d</code>/unfold equivalence on a synthetic fixture.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A transformer eats a sequence of vectors. An image is a 3-channel grid. Reading every pixel as a token explodes the sequence length: a 224x224 RGB image is 150,528 tokens, which a 12-layer transformer cannot afford in attention. Reading the image as one giant flat vector throws away locality, which the attention layer cannot recover from. The job of the encoder front end is to compress the pixel grid into a few hundred tokens that each summarize a square region.</p>
+<p>Patch embedding solves this with one linear projection. A 224x224 image cut into 16x16 patches produces a 14x14 grid of 196 patches. Each patch is flattened from <code>(3, 16, 16) = 768</code> pixel values into one vector, then a linear layer maps it to the model&#39;s hidden dimension. The transformer sees 196 tokens of dimension <code>hidden</code> (commonly 768) plus a CLS token. That is a sequence the rest of the network can chew on.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Image[224x224x3 image] --&gt; Cut[cut into 16x16 patches]
+  Cut --&gt; Grid[14x14 grid of patches]
+  Grid --&gt; Flatten[flatten each patch]
+  Flatten --&gt; Proj[linear projection]
+  Proj --&gt; Tokens[196 tokens of dim hidden]
+  Tokens --&gt; Pos[add 2D sinusoidal position]
+  Pos --&gt; Out[final token sequence]</pre></div><h3 id="why-patches-not-pixels"><a class="anchor" href="#why-patches-not-pixels">#</a> Why patches, not pixels</h3>
+<p>Attention is quadratic in sequence length. A 196-token sequence costs <code>196 * 196 = 38,416</code> attention scores per head per layer; a 150,528-token sequence costs <code>150,528 * 150,528 = 22.6 billion</code>. Patches buy a 590,000x reduction in attention compute, and a single 16x16 region carries enough signal for high-level vision tasks. The cost is a loss of fine-grained spatial detail inside one patch, which is why downstream multimodal stacks often run a second high-resolution branch when fine localization matters.</p>
+<h3 id="why-a-linear-projection-is-enough"><a class="anchor" href="#why-a-linear-projection-is-enough">#</a> Why a linear projection is enough</h3>
+<p>Each patch is treated as an independent vector. The projection learns a basis: edge detectors, color filters, simple textures. A single linear layer is small (<code>768 * 768 = 589,824</code> parameters for ViT-Base) and trains fast. Deeper convolutional stems exist (the &quot;hybrid&quot; ViT), but a flat linear projection is the standard, and most modern open-weight encoders ship with this exact shape.</p>
+<h3 id="the-conv2d-trick"><a class="anchor" href="#the-conv2d-trick">#</a> The <code>Conv2d</code> trick</h3>
+<p>A <code>Conv2d(in_channels=3, out_channels=hidden, kernel_size=patch_size, stride=patch_size)</code> with no padding gives the same numerical result as unfold-then-linear, because each output position dot-products the patch pixels against one filter. The convolution is the patch projection, and most production codebases ship it that way because it is faster on GPU and uses one fewer reshape.</p>
+<h3 id="position-embeddings"><a class="anchor" href="#position-embeddings">#</a> Position embeddings</h3>
+<p>Tokens carry no order out of the projection. The 2D sinusoidal embedding gives each token a fixed signal that encodes its <code>(row, col)</code> position. Half the embedding dimension encodes row position with sin/cos at multiple frequencies; the other half encodes column position. The encoding is deterministic so you can swap resolutions without retraining, and it interpolates cleanly to grids the model never saw at training time.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Shape</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Patch projection (<code>Conv2d</code>)</td>
+<td><code>(hidden, 3, patch, patch)</code></td>
+<td><code>3 * P * P * hidden + hidden</code></td>
+</tr>
+<tr>
+<td>Position embedding (fixed)</td>
+<td><code>(num_patches, hidden)</code></td>
+<td>0 (computed, not learned)</td>
+</tr>
+<tr>
+<td>CLS token (learned)</td>
+<td><code>(1, hidden)</code></td>
+<td><code>hidden</code></td>
+</tr>
+</tbody></table>
+<p>For ViT-Base/16 at 224 resolution: 590,592 parameters in the projection, 768 in the CLS token, and zero for sinusoidal position. The next lesson (59) stacks a 12-layer transformer on top of this front end.</p>
+<h3 id="equivalence-as-a-sanity-check"><a class="anchor" href="#equivalence-as-a-sanity-check">#</a> Equivalence as a sanity check</h3>
+<p>The patch step has two spellings: a <code>Conv2d</code> projection and an explicit unfold-then-linear. They must produce the same output for the same weights. If they do not, the unfold math is wrong, and the rest of the encoder is built on sand. The tests in this lesson exercise that equivalence.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-patch-tokenizer</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>PatchEmbed</code>, an <code>nn.Module</code> wrapping <code>Conv2d</code> for patch projection.</li>
+<li><code>sinusoidal_2d(grid_h, grid_w, dim)</code>, a stateless function that builds the 2D position table.</li>
+<li><code>VisionFrontEnd</code>, which composes patch embedding, CLS prepend, and position addition into one forward pass.</li>
+<li>A <code>synthesize_image(seed)</code> helper that builds a deterministic 224x224x3 fixture from <code>numpy.random</code>.</li>
+<li>A demo that runs one fixture image through the front end and prints the output shape, the CLS token norm, and one row of the position embedding.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: the 224x224 fixture is tokenized to a sequence of shape <code>(1, 197, 768)</code>. The first token is the CLS; the next 196 are patch tokens. The position embedding norms are uniform within a row, which is the sinusoidal signature.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The same patch front end shows up in every modern vision-language model: CLIP ViT-L/14, SigLIP, DINOv2, the Qwen-VL family, and the InternVL stack all start from a <code>Conv2d</code> patch projection plus a position signal. Differences across families live downstream (CLS vs no-CLS pooling, register tokens, varying patch sizes 14 vs 16, dynamic resolution via interpolated positions). The frontend in this lesson is the substrate every one of those models stands on.</p>
+<h2 id="tests"><a class="anchor" href="#tests">#</a> Tests</h2>
+<p><code>code/test_main.py</code> covers:</p>
+<ul>
+<li>patch count matches <code>(image_size / patch_size) ** 2</code></li>
+<li>output shape matches <code>(batch, num_patches + 1, hidden)</code></li>
+<li>the <code>Conv2d</code> projection equals manual unfold-then-linear on a small fixture</li>
+<li>sinusoidal position table is deterministic across calls</li>
+<li>CLS token broadcasts across batch dim without leakage</li>
+</ul>
+<p>Run them:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 -m unittest code/test_main.py</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Replace the sinusoidal position with a learned <code>nn.Parameter</code> and compare the first-epoch loss on a tiny synthetic classification task. Learned positions win at fixed resolution; sinusoidal wins when you change resolution after training.</p>
+</li>
+<li><p>Swap the <code>Conv2d</code> for an explicit <code>nn.Unfold</code> plus <code>nn.Linear</code> and assert the outputs match to within float tolerance. Same math, two ways to spell it.</p>
+</li>
+<li><p>Add support for non-square patch sizes (e.g. 32x16 for wide-aspect inputs) and verify the position table handles non-square grids.</p>
+</li>
+<li><p>Profile the patch step at batch sizes 1, 8, 64. The patch projection is rarely the bottleneck; the attention layers downstream dominate.</p>
+</li>
+<li><p>Train the front end as a frozen feature extractor on a 4-class synthetic shape dataset (circles, squares, triangles, stars). The CLS token output should linearly separate.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Patch</td>
+<td>A square sub-region of the image, typically 14x14 or 16x16</td>
+</tr>
+<tr>
+<td>Patch embedding</td>
+<td>Linear projection of one flattened patch to the hidden dim</td>
+</tr>
+<tr>
+<td>Sequence length</td>
+<td>Number of tokens after patch tokenization, usually plus CLS</td>
+</tr>
+<tr>
+<td>Sinusoidal position</td>
+<td>Fixed sin/cos signal that encodes 2D grid coordinates</td>
+</tr>
+<tr>
+<td>CLS token</td>
+<td>Learned vector prepended to the sequence as the pooling head</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>An Image is Worth 16x16 Words (ViT, 2021) for the original patch-embed framing.</li>
+<li>Attention Is All You Need (2017) for the sinusoidal position formula adapted here to 2D.</li>
+<li>DINOv2 paper for register tokens, an extension you can add as exercise 6.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./57-end-to-end-research-demo.html"><span>← Previous</span><b>end to end research demo</b></a>
+      <a class="next" href="./59-vit-transformer.html"><span>Next →</span><b>vit transformer</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

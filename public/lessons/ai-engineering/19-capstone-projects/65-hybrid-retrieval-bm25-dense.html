@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hybrid Retrieval with BM25 and Dense Embeddings — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/65-hybrid-retrieval-bm25-dense/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#tuning-the-knobs">Tuning the knobs</a></li><li><a href="#failure-modes-the-demo-will-hide">Failure modes the demo will hide</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Hybrid Retrieval with BM25 and Dense Embeddings</h1>
+    <p class="lesson-sub">Lexical and semantic retrieval fail on opposite query distributions. Hybrid retrieval with reciprocal rank fusion does not interpolate, it votes - and the vote wins on every query class.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 lessons 04 (embeddings), 06 (RAG); Phase 19 Track B foundations (lessons 20-29); Phase 19 lesson 64 (chunking strategies)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 65">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="102.0" cy="99.4" r="8.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.3,99.4 L96.5,87.1 L104.8,99.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.5,94.1 L91.1,82.7 L98.7,94.1 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.9" y="119.0" width="26.3" height="26.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(136 28.0 132.2)"/>
+        <circle cx="22.6" cy="127.2" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">65</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hybrid Retrieval</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">with BM25 and Dense…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement BM25 from scratch from the Robertson and Sparck Jones formulation, with field weighting, document length normalization, and tunable k1 and b.</li>
+<li>Build a dense retriever on top of a deterministic mock embedding so the loop runs offline.</li>
+<li>Implement reciprocal rank fusion exactly as Cormack, Clarke, and Buettcher published it in 2009, and explain why it dominates score-weighted interpolation.</li>
+<li>Tune the RRF k constant and the per-modality weights and read the trade-offs on a small fixture corpus.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Lexical search wins when the query carries a literal identifier the corpus contains verbatim. A query for <code>AbortMultipartOnFail</code> returns the right Go function via BM25 in microseconds. The same query, embedded, sits at the boundary of three similarity clusters and a dense retriever ranks the wrong file first.</p>
+<p>Dense search wins when the query is paraphrased away from the corpus&#39;s literal tokens. A user asking &quot;how do we handle cancelled uploads&quot; never typed the word abort or multipart. BM25 returns the documentation chunk on &quot;uploading large files&quot; because that page contains the word uploads. Dense retrieval finds the abort function whose summary mentions cancellation.</p>
+<p>The choice between the two is not a static one. The query distribution is the variable. A production RAG system handles both classes from the same endpoint, so retrieval has to handle both at once. That is hybrid retrieval. The merge step is the part that has to be right.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Query[Query] --&gt; BM25[BM25 Index]
+  Query --&gt; Dense[Dense Index]
+  BM25 --&gt; RanksA[Ranked List A]
+  Dense --&gt; RanksB[Ranked List B]
+  RanksA --&gt; RRF[Reciprocal Rank Fusion]
+  RanksB --&gt; RRF
+  RRF --&gt; Top[Top-k Chunks]</pre></div><h3 id="bm25-in-one-paragraph"><a class="anchor" href="#bm25-in-one-paragraph">#</a> BM25 in one paragraph</h3>
+<p>BM25 scores a query-document pair by summing, over query terms, an inverse document frequency factor multiplied by a saturating term-frequency factor that includes a length-normalization correction. Two knobs. <code>k1</code> controls term-frequency saturation; the default 1.5 is the published recommendation and you should not move it without a benchmark. <code>b</code> controls how much document length matters; the default 0.75 says longer documents are penalized, but not linearly.</p>
+<p>The IDF formula uses the smoothed Robertson and Sparck Jones definition, which is <code>log((N - df + 0.5) / (df + 0.5) + 1)</code>. The plus-one inside the log keeps the IDF positive when a term appears in more than half the corpus. This matters in small corpora where stopwords are technically rare.</p>
+<p>Field weighting lets you tell BM25 that a match on the symbol name counts more than a match in the body. Implementation is a multiplier on the term counts during indexing, not at scoring time. That keeps the math identical and avoids a separate score per field.</p>
+<h3 id="dense-retrieval-in-one-paragraph"><a class="anchor" href="#dense-retrieval-in-one-paragraph">#</a> Dense retrieval in one paragraph</h3>
+<p>Embed each chunk into a fixed-dimension vector with an embedding model. At query time, embed the query, cosine-rank every chunk by similarity, and return the top-k. The model is the variable that decides quality. The retrieval algorithm itself is two lines: dot product and sort.</p>
+<p>This lesson uses a deterministic hash-based embedding so you can read the fusion math without a network call. The hash sums token-keyed offsets into a 96-dimensional vector and normalizes. The cosine ranks are deterministic across runs, which is what the test suite requires.</p>
+<h3 id="reciprocal-rank-fusion-the-published-formula"><a class="anchor" href="#reciprocal-rank-fusion-the-published-formula">#</a> Reciprocal rank fusion, the published formula</h3>
+<p>Two ranked lists. For each candidate that appears in either list, sum its reciprocal-rank contributions. The 2009 paper used <code>1 / (k + rank)</code> with k equal to 60 as the default. Sort by total score. That is the whole algorithm.</p>
+<p>The published constant k = 60 is not arbitrary. With k = 60 the rank-1 contribution is 1 / 61 and the rank-10 contribution is 1 / 70. The contribution decays slowly so deep candidates still vote. Smaller k makes the top results dominate. Larger k flattens the contribution curve.</p>
+<p>Two tunable knobs in our implementation. The <code>k</code> constant. A pair of per-modality weights so you can boost BM25 or dense when you have prior evidence one is better on your corpus. Multiplying the rank contribution by the weight is the simplest principled implementation; it preserves the rank-decay shape and stays scale-free.</p>
+<h3 id="why-fusion-beats-score-weighted-interpolation"><a class="anchor" href="#why-fusion-beats-score-weighted-interpolation">#</a> Why fusion beats score-weighted interpolation</h3>
+<p>BM25 scores are unbounded and corpus-dependent. Cosine similarities are bounded in -1 to 1. A linear combination <code>alpha * bm25 + (1 - alpha) * cosine</code> requires per-corpus alpha tuning and breaks every time you reindex. The rank-based fusion does not. Two ranks are comparable across modalities. The published RRF baseline beats score-interpolation in every public TREC track since 2010.</p>
+<p>This is the same argument you hear about RankFusion vs RRF in Vespa and Weaviate documentation. They came to the same conclusion: stay rank-based unless you have very strong evidence to interpolate scores.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">rrf-fusion</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>tokenize(text)</code> - a fast regex tokenizer.</li>
+<li><code>BM25Index</code> - field-weighted, with <code>add</code> and <code>search</code> and tunable k1, b.</li>
+<li><code>mock_embed</code>, <code>DenseIndex</code> - the same deterministic embedding as lesson 64 so chunks are comparable.</li>
+<li><code>rrf(rankings, k, weights)</code> - the published fusion with multi-modality weights.</li>
+<li><code>HybridRetriever</code> - combines BM25 and dense.</li>
+<li>A demo <code>main()</code> that loads a small fixture corpus, runs three queries that target each retriever&#39;s strength and weakness, and prints the rankings each modality produced plus the fused list.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Read the demo output side by side. The literal identifier query lands at BM25 rank 1, dense rank 4, RRF rank 1. The paraphrased query lands at BM25 rank 6, dense rank 1, RRF rank 1. The ambiguous query lands at BM25 rank 3, dense rank 3, RRF rank 1. The fusion is not a tie-breaker; it is the system that wins on every query class.</p>
+<h2 id="tuning-the-knobs"><a class="anchor" href="#tuning-the-knobs">#</a> Tuning the knobs</h2>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>Default</th>
+<th>Move it up when</th>
+<th>Move it down when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BM25 k1</td>
+<td>1.5</td>
+<td>Terms repeat in documents and you want frequency to matter more</td>
+<td>Documents are short and term repetition is noise</td>
+</tr>
+<tr>
+<td>BM25 b</td>
+<td>0.75</td>
+<td>Long documents really do say less per word</td>
+<td>Document length is uncorrelated with topic</td>
+</tr>
+<tr>
+<td>RRF k</td>
+<td>60</td>
+<td>Deep candidates should keep voting</td>
+<td>The top-1 should dominate</td>
+</tr>
+<tr>
+<td>BM25 weight</td>
+<td>1.0</td>
+<td>Your corpus contains literal identifiers and queries match them</td>
+<td>Your queries are user-paraphrased</td>
+</tr>
+<tr>
+<td>Dense weight</td>
+<td>1.0</td>
+<td>Queries are paraphrased</td>
+<td>Queries are literal</td>
+</tr>
+</tbody></table>
+<p>Tune by re-running lesson 68&#39;s eval harness on your held-out query set, not by intuition.</p>
+<h2 id="failure-modes-the-demo-will-hide"><a class="anchor" href="#failure-modes-the-demo-will-hide">#</a> Failure modes the demo will hide</h2>
+<p><strong>Out-of-vocabulary tokens.</strong> BM25&#39;s IDF is computed from the corpus, so terms only in the query contribute zero. Dense embeddings hallucinate a vector for the same term. On out-of-corpus identifiers the dense modality returns plausible-looking but wrong neighbors. The fusion absorbs this because BM25 returns nothing and the rank contribution drops out, but only if you de-duplicate by document, not by chunk.</p>
+<p><strong>Stop-token domination.</strong> BM25 against the word &quot;the&quot; produces a uniform ranking over the corpus. Filter stop tokens in the indexer or accept that high-IDF terms dominate naturally.</p>
+<p><strong>Identical content across modalities.</strong> If your corpus is small enough that the top-1 of BM25 is also the top-1 of dense, RRF gives you the same top-1 with the same neighbors. That is correct behavior, not a failure, but it makes the fusion look invisible. Add an adversarial query pair in your eval to verify the fusion is actually working.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li>Index BM25 in process; the bottleneck is the term-frequency dictionary, not the vectors.</li>
+<li>Index dense vectors in a separate store (in this lesson we use a flat list; in production you would use HNSW).</li>
+<li>Run both queries in parallel; the fusion is a constant-time merge over the union.</li>
+<li>Persist the modality of each retrieved hit so a downstream reranker can see which modality voted for it.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Lesson 66 takes the fused top-k from this lesson and reranks with a cross-encoder. Lesson 68 evaluates the entire pipeline with precision, recall, MRR, and nDCG. The hybrid retriever in this lesson is the first stage of the end-to-end system in lesson 69.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Replace <code>mock_embed</code> with a real model from your provider. Re-run the demo and report how the dense-only ranking changes on the paraphrased query.</li>
+<li>Add a third modality: chunk summaries indexed separately and fused as a third ranked list. Measure the gain.</li>
+<li>Sweep RRF k across 10, 30, 60, 100, 200. Plot the recall@k curve from lesson 68. Report the value of k where the curve peaks on your corpus.</li>
+<li>Implement BM25F properly (per-field length normalization rather than the multiplier trick) and compare on a corpus where symbol matches matter most.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BM25</td>
+<td>&quot;Lexical search&quot;</td>
+<td>Probabilistic ranking with idf x saturating tf x length normalization</td>
+</tr>
+<tr>
+<td>RRF</td>
+<td>&quot;Rank fusion&quot;</td>
+<td>Sum of 1 / (k + rank) across ranked lists; k = 60 default</td>
+</tr>
+<tr>
+<td>k1</td>
+<td>&quot;TF saturation&quot;</td>
+<td>Controls how fast a repeated term stops adding more score</td>
+</tr>
+<tr>
+<td>b</td>
+<td>&quot;Length penalty&quot;</td>
+<td>0 means ignore document length, 1 means full normalization</td>
+</tr>
+<tr>
+<td>Field weighting</td>
+<td>&quot;Symbol boost&quot;</td>
+<td>Repeat tokens during indexing to boost matches in that field</td>
+</tr>
+<tr>
+<td>Rank-based vs score-based fusion</td>
+<td>&quot;Why RRF beats linear&quot;</td>
+<td>Ranks are comparable across modalities; scores are not</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Cormack, Clarke, Buettcher, &quot;Reciprocal Rank Fusion outperforms Condorcet and individual rank learning methods&quot;, SIGIR 2009</li>
+<li>Robertson, Walker, Beaulieu, Gatford, Payne, &quot;Okapi at TREC-3&quot; (the original BM25 paper)</li>
+<li><a href="https://docs.vespa.ai/en/tutorials/hybrid-search.html">Vespa: Hybrid Retrieval with BM25 and Embeddings</a></li>
+<li><a href="https://weaviate.io/developers/weaviate/search/hybrid">Weaviate: Hybrid Search</a></li>
+<li>Phase 11 lesson 06 - RAG fundamentals</li>
+<li>Phase 19 lesson 64 - chunkers whose output is indexed here</li>
+<li>Phase 19 lesson 66 - cross-encoder reranker that consumes the fused top-k</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./64-chunking-strategies-advanced.html"><span>← Previous</span><b>chunking strategies advanced</b></a>
+      <a class="next" href="./66-reranker-cross-encoder.html"><span>Next →</span><b>reranker cross encoder</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

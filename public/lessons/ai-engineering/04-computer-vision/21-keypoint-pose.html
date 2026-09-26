@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Keypoint Detection &amp; Pose Estimation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/21-keypoint-pose/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Keypoint Detection &amp; Pose Estimation</h1>
+    <p class="lesson-sub">A pose is a set of ordered keypoints. A keypoint detector is a heatmap regressor. Everything else is bookkeeping.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 06 (Detection), Phase 4 Lesson 07 (U-Net)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 21">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M76.4,86.2 L83.0,76.2 L89.6,86.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M71.6,80.8 L77.6,71.9 L83.6,80.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M66.8,75.5 L72.2,67.5 L77.5,75.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.0,78.0 L66.7,51.5 L84.4,78.0 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M44.2,72.7 L61.3,47.1 L78.4,72.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">21</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Keypoint Detection &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Pose Estimation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish top-down and bottom-up pose estimation and state when each is used</li>
+<li>Regress heatmaps for K keypoints with a Gaussian-per-keypoint target and extract keypoint coordinates at inference</li>
+<li>Explain Part Affinity Fields (PAFs) and how bottom-up pipelines associate keypoints into instances</li>
+<li>Use MediaPipe Pose or MMPose for production keypoint estimation and understand their output format</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Keypoint tasks hide under many names: human pose (17 body joints), face landmarks (68 or 478 points), hand (21 points), animal pose, robotic object pose, medical anatomy landmarks. Every one of them shares the same structure: detect K discrete points on an object and output their (x, y) coordinates.</p>
+<p>Pose estimation is the foundation of motion capture, fitness apps, sports analytics, gesture control, animation, AR try-on, and robotic grasping. The 2D case is mature; 3D pose (estimating joint positions in world coordinates from a single camera) is the current research frontier.</p>
+<p>The engineering question is scale. A single-image, single-person pose is a 20ms problem. Multi-person pose in a crowd at 30 fps is a different problem with different architectures.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="top-down-vs-bottom-up"><a class="anchor" href="#top-down-vs-bottom-up">#</a> Top-down vs bottom-up</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph TD[&quot;Top-down pipeline&quot;]
+        A1[&quot;Detect person boxes&quot;] --&gt; A2[&quot;Crop each box&quot;]
+        A2 --&gt; A3[&quot;Per-box keypoint model&lt;br/&gt;(HRNet, ViTPose)&quot;]
+    end
+    subgraph BU[&quot;Bottom-up pipeline&quot;]
+        B1[&quot;One pass over image&quot;] --&gt; B2[&quot;All keypoint heatmaps&lt;br/&gt;+ association field&quot;]
+        B2 --&gt; B3[&quot;Group keypoints into&lt;br/&gt;instances (greedy matching)&quot;]
+    end
+
+    style TD fill:#dbeafe,stroke:#2563eb
+    style BU fill:#fef3c7,stroke:#d97706</pre></div><ul>
+<li><strong>Top-down</strong> — detect people first, then run a per-person keypoint model on each crop. Highest accuracy; scales linearly with number of people.</li>
+<li><strong>Bottom-up</strong> — one forward pass predicts all keypoints plus an association field; group them. Constant time regardless of crowd size.</li>
+</ul>
+<p>Top-down (HRNet, ViTPose) is the accuracy leader; bottom-up (OpenPose, HigherHRNet) is the throughput leader for crowded scenes.</p>
+<h3 id="heatmap-regression"><a class="anchor" href="#heatmap-regression">#</a> Heatmap regression</h3>
+<p>Instead of regressing <code>(x, y)</code> directly, predict an <code>H x W</code> heatmap per keypoint with a Gaussian blob centred at the true location.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">target[k, y, x] = exp(-((x - cx_k)^2 + (y - cy_k)^2) / (2 sigma^2))</code></pre>
+      </div>
+    <p>At inference, the argmax of each heatmap is the predicted keypoint location.</p>
+<p>Why heatmaps work better than direct regression: the network&#39;s spatial structure (conv feature map) aligns naturally with spatial output. Gaussian targets also regularise — a small localisation error produces a small loss, not zero.</p>
+<h3 id="sub-pixel-localisation"><a class="anchor" href="#sub-pixel-localisation">#</a> Sub-pixel localisation</h3>
+<p>Argmax gives integer coordinates. For sub-pixel precision, refine by fitting a parabola to the argmax and its neighbours, or use the well-known offset <code>(dx, dy) = 0.25 * (heatmap[y, x+1] - heatmap[y, x-1], ...)</code> direction.</p>
+<h3 id="part-affinity-fields-pafs"><a class="anchor" href="#part-affinity-fields-pafs">#</a> Part Affinity Fields (PAFs)</h3>
+<p>OpenPose&#39;s trick for bottom-up association. For each pair of connected keypoints (e.g. left shoulder to left elbow), predict a 2-channel field that encodes the unit vector pointing from one to the other. To associate a shoulder with its elbow, integrate the PAF along the line connecting candidate pairs; the pair with the highest integral is matched.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">For each connection (limb):
+  PAF channels: 2 (unit vector x, y)
+  Line integral: sum over sample points of (PAF . line_direction)
+  Higher integral = stronger match</code></pre>
+      </div>
+    <p>Elegant and scales to arbitrary crowd sizes without per-person crops.</p>
+<h3 id="coco-keypoints"><a class="anchor" href="#coco-keypoints">#</a> COCO keypoints</h3>
+<p>The standard body-pose dataset: 17 keypoints per person, PCK (Percentage of Correct Keypoints) and OKS (Object Keypoint Similarity) as metrics. OKS is the keypoint analogue of IoU and is what COCO mAP@OKS reports.</p>
+<h3 id="2d-vs-3d"><a class="anchor" href="#2d-vs-3d">#</a> 2D vs 3D</h3>
+<ul>
+<li><strong>2D pose</strong> — image coordinates; solved at production quality (MediaPipe, HRNet, ViTPose).</li>
+<li><strong>3D pose</strong> — world / camera coordinates; still active research. Common approaches:<ul>
+<li>Lift 2D predictions to 3D with a small MLP (VideoPose3D).</li>
+<li>Direct 3D regression from image (PyMAF, MHFormer).</li>
+<li>Multi-view setups (CMU Panoptic) for ground truth.</li>
+</ul>
+</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-pose-heatmap</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-gaussian-heatmap-target"><a class="anchor" href="#step-1-gaussian-heatmap-target">#</a> Step 1: Gaussian heatmap target</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+import torch
+
+def gaussian_heatmap(size, cx, cy, sigma=2.0):
+    yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+    return np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * sigma ** 2)).astype(np.float32)
+
+hm = gaussian_heatmap(64, 32, 32, sigma=2.0)
+print(f&quot;peak: {hm.max():.3f} at ({hm.argmax() % 64}, {hm.argmax() // 64})&quot;)</code></pre>
+      </div>
+    <p>Per-keypoint heatmaps stacked along a channel axis give the full target tensor.</p>
+<h3 id="step-2-tiny-keypoint-head"><a class="anchor" href="#step-2-tiny-keypoint-head">#</a> Step 2: Tiny keypoint head</h3>
+<p>A U-Net-style model that outputs K heatmap channels.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn as nn
+import torch.nn.functional as F
+
+class TinyKeypointNet(nn.Module):
+    def __init__(self, num_keypoints=4, base=16):
+        super().__init__()
+        self.down1 = nn.Sequential(nn.Conv2d(3, base, 3, 2, 1), nn.ReLU(inplace=True))
+        self.down2 = nn.Sequential(nn.Conv2d(base, base * 2, 3, 2, 1), nn.ReLU(inplace=True))
+        self.mid = nn.Sequential(nn.Conv2d(base * 2, base * 2, 3, 1, 1), nn.ReLU(inplace=True))
+        self.up1 = nn.ConvTranspose2d(base * 2, base, 2, 2)
+        self.up2 = nn.ConvTranspose2d(base, num_keypoints, 2, 2)
+
+    def forward(self, x):
+        h1 = self.down1(x)
+        h2 = self.down2(h1)
+        h3 = self.mid(h2)
+        u1 = self.up1(h3)
+        return self.up2(u1)</code></pre>
+      </div>
+    <p>Input <code>(N, 3, H, W)</code>, output <code>(N, K, H, W)</code>. Loss is per-pixel MSE against Gaussian targets.</p>
+<h3 id="step-3-inference-extract-keypoint-coordinates"><a class="anchor" href="#step-3-inference-extract-keypoint-coordinates">#</a> Step 3: Inference — extract keypoint coordinates</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def heatmap_to_coords(heatmaps):
+    &quot;&quot;&quot;
+    heatmaps: (N, K, H, W)
+    returns:  (N, K, 2) float coordinates in image pixels
+    &quot;&quot;&quot;
+    N, K, H, W = heatmaps.shape
+    hm = heatmaps.reshape(N, K, -1)
+    idx = hm.argmax(dim=-1)
+    ys = (idx // W).float()
+    xs = (idx % W).float()
+    return torch.stack([xs, ys], dim=-1)
+
+coords = heatmap_to_coords(torch.randn(2, 4, 32, 32))
+print(f&quot;coords: {coords.shape}&quot;)  # (2, 4, 2)</code></pre>
+      </div>
+    <p>One line at inference. For sub-pixel refinement, interpolate around the argmax.</p>
+<h3 id="step-4-synthetic-keypoint-dataset"><a class="anchor" href="#step-4-synthetic-keypoint-dataset">#</a> Step 4: Synthetic keypoint dataset</h3>
+<p>Simple: draw four points on a white canvas and learn to predict them.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def make_synthetic_sample(size=64):
+    img = np.ones((3, size, size), dtype=np.float32)
+    rng = np.random.default_rng()
+    kps = rng.integers(8, size - 8, size=(4, 2))
+    for cx, cy in kps:
+        img[:, cy - 2:cy + 2, cx - 2:cx + 2] = 0.0
+    hms = np.stack([gaussian_heatmap(size, cx, cy) for cx, cy in kps])
+    return img, hms, kps</code></pre>
+      </div>
+    <p>Easy enough for a tiny model to learn in a minute.</p>
+<h3 id="step-5-training"><a class="anchor" href="#step-5-training">#</a> Step 5: Training</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">model = TinyKeypointNet(num_keypoints=4)
+opt = torch.optim.Adam(model.parameters(), lr=3e-3)
+
+for step in range(200):
+    batch = [make_synthetic_sample() for _ in range(16)]
+    imgs = torch.from_numpy(np.stack([b[0] for b in batch]))
+    hms = torch.from_numpy(np.stack([b[1] for b in batch]))
+    pred = model(imgs)
+    # Upsample pred to full resolution
+    pred = F.interpolate(pred, size=hms.shape[-2:], mode=&quot;bilinear&quot;, align_corners=False)
+    loss = F.mse_loss(pred, hms)
+    opt.zero_grad(); loss.backward(); opt.step()</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li><strong>MediaPipe Pose</strong> — Google&#39;s production pose estimator; ships WebGL + mobile runtimes with sub-10ms latency.</li>
+<li><strong>MMPose</strong> (OpenMMLab) — comprehensive research codebase; every SOTA architecture with pretrained weights.</li>
+<li><strong>YOLOv8-pose</strong> — fastest real-time multi-person pose with a single forward pass.</li>
+<li><strong>transformers HumanDPT / PoseAnything</strong> — newer vision-language approaches for open-vocabulary pose (any object, any keypoint set).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-pose-stack-picker.md</code> — a prompt that picks MediaPipe / YOLOv8-pose / HRNet / ViTPose given latency, crowd size, and 2D vs 3D need.</li>
+<li><code>outputs/skill-heatmap-to-coords.md</code> — a skill that writes the sub-pixel heatmap-to-coordinate routine used by every production pose model.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Train the tiny keypoint model on the synthetic 4-point dataset. Report mean L2 error between predicted and true keypoints after 200 steps.</li>
+<li><strong>(Medium)</strong> Add sub-pixel refinement: given the argmax position, fit a 1D parabola along x and y from the neighbouring pixels. Report the accuracy gain vs integer argmax.</li>
+<li><strong>(Hard)</strong> Build a 2-person synthetic dataset where each image shows two instances of the 4-keypoint pattern. Train a bottom-up pipeline with PAFs that predict which keypoint belongs to which instance, and evaluate OKS.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Keypoint</td>
+<td>&quot;A landmark&quot;</td>
+<td>A specific ordered point on an object (joint, corner, feature)</td>
+</tr>
+<tr>
+<td>Pose</td>
+<td>&quot;The skeleton&quot;</td>
+<td>An ordered set of keypoints belonging to one instance</td>
+</tr>
+<tr>
+<td>Top-down</td>
+<td>&quot;Detect then pose&quot;</td>
+<td>Two-stage pipeline: person detector + per-crop keypoint model; highest accuracy</td>
+</tr>
+<tr>
+<td>Bottom-up</td>
+<td>&quot;Pose first, group later&quot;</td>
+<td>Single-pass all-keypoint prediction + grouping; constant time in crowd size</td>
+</tr>
+<tr>
+<td>Heatmap</td>
+<td>&quot;Gaussian target&quot;</td>
+<td>H x W tensor per keypoint with peak at the true location; the preferred regression target</td>
+</tr>
+<tr>
+<td>PAF</td>
+<td>&quot;Part Affinity Field&quot;</td>
+<td>2-channel unit vector field encoding limb directions; used to group keypoints into instances</td>
+</tr>
+<tr>
+<td>OKS</td>
+<td>&quot;Keypoint IoU&quot;</td>
+<td>Object Keypoint Similarity; the COCO metric for pose</td>
+</tr>
+<tr>
+<td>HRNet</td>
+<td>&quot;High-Resolution Net&quot;</td>
+<td>The dominant top-down keypoint architecture; preserves high-res features throughout</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1812.08008">OpenPose (Cao et al., 2017)</a> — bottom-up with PAFs; still the best writeup of the approach</li>
+<li><a href="https://arxiv.org/abs/1902.09212">HRNet (Sun et al., 2019)</a> — the top-down reference architecture</li>
+<li><a href="https://arxiv.org/abs/2204.12484">ViTPose (Xu et al., 2022)</a> — plain ViT as a pose backbone; current SOTA on many benchmarks</li>
+<li><a href="https://developers.google.com/mediapipe/solutions/vision/pose_landmarker">MediaPipe Pose</a> — production real-time pose; the fastest deployed stack in 2026</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./20-image-retrieval-metric.html"><span>← Previous</span><b>image retrieval metric</b></a>
+      <a class="next" href="./22-3d-gaussian-splatting.html"><span>Next →</span><b>3d gaussian splatting</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

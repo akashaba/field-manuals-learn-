@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Speculative Decoding — Draft, Verify, Repeat — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/16-speculative-decoding/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">Speculative Decoding — Draft, Verify, Repeat</h1>
+    <p class="lesson-sub">Autoregressive decoding is serial. Each token waits for the previous one. Speculative decoding breaks the chain: a cheap model drafts N tokens, the expensive model verifies all N in one forward pass. When the draft is right you paid one big forward for N generations.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 07 (GPT Causal LM), Phase 7 · 12 (KV Cache &amp; Flash Attention)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="18.2" y="122.1" width="27.2" height="27.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(148 31.8 135.7)"/>
+        <rect x="13.5" y="117.8" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.4 130.7)"/>
+        <circle cx="21.0" cy="125.8" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Speculative Decoding</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Draft, Verify…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A 70B LLM sampling one token takes ~30 ms on an H100. A 3B draft model takes ~3 ms. If we let the 3B draft 5 tokens ahead, then run the 70B <em>once</em> to verify all 5, the total is <code>5×3 + 30 = 45 ms</code> for up to 5 accepted tokens — versus <code>5×30 = 150 ms</code> for straight-line generation. That is the full speculative-decoding pitch: trade a small amount of extra GPU memory (draft model) for 2–4× lower decode latency.</p>
+<p>The trick has to preserve the distribution. Speculative sampling, introduced by Leviathan et al. (2023) and by Chen et al. concurrently, guarantees that the output sequence is <strong>identically distributed</strong> to what the big model would have produced on its own. No quality tradeoff. Just faster.</p>
+<p>Four families of draft-verifier pairs dominate 2026 inference:</p>
+<ol>
+<li><strong>Vanilla speculative (Leviathan 2023).</strong> Separate draft model (e.g., Llama 3 1B) + verifier (e.g., Llama 3 70B).</li>
+<li><strong>Medusa (Cai 2024).</strong> Multiple decoding heads on the verifier predict positions <code>t+1..t+k</code> in parallel. No separate draft model.</li>
+<li><strong>EAGLE family (Li 2024, 2025).</strong> Lightweight draft that reuses the verifier&#39;s hidden states; closer acceptance rate than vanilla; 3–4× typical.</li>
+<li><strong>Lookahead decoding (Fu 2024).</strong> Jacobi iteration; no draft model required at all. Self-speculation. Niche but dependency-free.</li>
+</ol>
+<p>Every production inference stack in 2026 ships speculative decoding by default. vLLM, TensorRT-LLM, SGLang, and llama.cpp all support at least vanilla + EAGLE-2.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-core-algorithm"><a class="anchor" href="#the-core-algorithm">#</a> The core algorithm</h3>
+<p>Given a verifier <code>M_q</code> and a cheaper draft <code>M_p</code>:</p>
+<ol>
+<li>Let <code>x_1..x_k</code> be the prefix already decoded.</li>
+<li><strong>Draft</strong>: use <code>M_p</code> to autoregressively propose <code>d_{k+1}, d_{k+2}, ..., d_{k+N}</code> with draft probabilities <code>p_1..p_N</code>.</li>
+<li><strong>Verify in parallel</strong>: run <code>M_q</code> once on <code>x_1..x_k, d_{k+1}, ..., d_{k+N}</code>, getting verifier probabilities <code>q_1..q_{N+1}</code> for positions <code>k+1..k+N+1</code>.</li>
+<li><strong>Accept/reject each draft token left to right</strong>: for each <code>i</code>, accept with probability <code>min(1, q_i(d_i) / p_i(d_i))</code>.</li>
+<li>On first rejection at position <code>j</code>: sample <code>t_j</code> from the &quot;residual&quot; distribution <code>(q_j - p_j)_+</code> normalized. All drafts after <code>j</code> are discarded.</li>
+<li>On accepting all <code>N</code>: sample one extra token <code>t_{N+1}</code> from <code>q_{N+1}</code> (the free bonus token).</li>
+</ol>
+<p>The residual distribution trick is the mathematical insight that keeps the output distributed exactly as if <code>M_q</code> had sampled from scratch.</p>
+<h3 id="what-determines-speedup"><a class="anchor" href="#what-determines-speedup">#</a> What determines speedup</h3>
+<p>Let <code>α</code> = expected acceptance rate per draft token. Let <code>c</code> = draft-to-verifier cost ratio. Per step:</p>
+<ul>
+<li>Naive generation makes 1 big-model call per token.</li>
+<li>Speculative makes 1 big-model call per <code>(1 - α^{N+1}) / (1 - α) ≈ 1/(1-α)</code> tokens when <code>α</code> is high.</li>
+</ul>
+<p>Typical rule of thumb at <code>α = 0.75</code> and <code>N = 5</code>: 3× fewer big-model calls. Draft cost is 5× cheap. Total wall-clock drops ~2.5×.</p>
+<p><strong>α depends on:</strong></p>
+<ul>
+<li>How well the draft approximates the verifier. Same family / same training data boosts α significantly.</li>
+<li>Decoding strategy. Greedy draft against greedy verifier: high α. Temperature sampling: harder to match; acceptance drops.</li>
+<li>Task type. Code and structured output accept more (predictable); free-form creative writing accepts less.</li>
+</ul>
+<h3 id="medusa-drafts-without-a-draft-model"><a class="anchor" href="#medusa-drafts-without-a-draft-model">#</a> Medusa — drafts without a draft model</h3>
+<p>Medusa replaces the draft model with extra output heads on the verifier. At position <code>t</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">shared trunk → hidden h_t
+    ├── head_0: predict token at t+1  (standard LM head)
+    ├── head_1: predict token at t+2
+    ├── head_2: predict token at t+3
+    ├── head_3: predict token at t+4</code></pre>
+      </div>
+    <p>Each head outputs its own logits. At inference you sample from each head to get a candidate sequence, then verify with one forward pass using a tree-attention scheme that considers all candidate continuations at once.</p>
+<p>Pros: no second model. Cons: adds trainable parameters; needs a supervised fine-tuning stage (~1B tokens); acceptance rate is a bit lower than vanilla speculative with a good draft.</p>
+<h3 id="eagle-better-draft-by-reusing-hidden-states"><a class="anchor" href="#eagle-better-draft-by-reusing-hidden-states">#</a> EAGLE — better draft by reusing hidden states</h3>
+<p>EAGLE-1/2/3 (Li et al., 2024–2025) makes the draft model a tiny transformer (typically 1 layer) that ingests the verifier&#39;s last-layer hidden states. Because the draft sees the verifier&#39;s feature representation, its predictions correlate strongly with the verifier&#39;s output distribution. Acceptance rates climb from ~0.6 (vanilla) to 0.85+.</p>
+<p>EAGLE-3 (2025) added tree search over candidate continuations. vLLM and SGLang ship EAGLE-2/3 as the default spec pathway for Llama 3/4 and Qwen 3.</p>
+<h3 id="the-kv-cache-dance"><a class="anchor" href="#the-kv-cache-dance">#</a> The KV cache dance</h3>
+<p>Verification feeds <code>N</code> draft tokens into the verifier in one forward pass. This extends the verifier&#39;s KV cache by <code>N</code> entries. If some drafts are rejected, you must roll the cache back to the accepted prefix length.</p>
+<p>Production implementations (vLLM&#39;s <code>--speculative-model</code>, TensorRT-LLM&#39;s LookaheadDecoder) handle this with scratch KV buffers. Write first, commit on acceptance. It&#39;s not conceptually hard, but it is fiddly.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">draft-verify-tokens</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>See <code>code/main.py</code>. We implement the core speculative-sampling algorithm (rejection step + residual distribution) with:</p>
+<ul>
+<li>A &quot;big model&quot; that is a deterministic-softmax over a hand-coded distribution (so we can verify acceptance math analytically).</li>
+<li>A &quot;draft model&quot; that is a perturbation of the big model.</li>
+<li>An acceptance / rejection loop that produces the same marginal distribution as direct sampling.</li>
+</ul>
+<h3 id="step-1-the-rejection-step"><a class="anchor" href="#step-1-the-rejection-step">#</a> Step 1: the rejection step</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def accept_or_reject(q_prob, p_prob, draft_token, u):
+    ratio = q_prob / p_prob if p_prob &gt; 0 else float(&quot;inf&quot;)
+    return u &lt; min(1.0, ratio)</code></pre>
+      </div>
+    <p><code>u</code> is a uniform random number. <code>q_prob</code> is the verifier&#39;s probability for the drafted token. <code>p_prob</code> is the draft model&#39;s probability. The Leviathan theorem is that this Bernoulli decision, followed by sampling from the residual on rejection, preserves the verifier&#39;s distribution exactly.</p>
+<h3 id="step-2-residual-distribution"><a class="anchor" href="#step-2-residual-distribution">#</a> Step 2: residual distribution</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def residual_dist(q, p):
+    raw = [max(0.0, qi - pi) for qi, pi in zip(q, p)]
+    s = sum(raw)
+    return [r / s for r in raw]</code></pre>
+      </div>
+    <p>Subtract <code>p</code> from <code>q</code> element-wise, clamp negative values to zero, renormalize. Sample from this on any rejection.</p>
+<h3 id="step-3-one-speculative-step"><a class="anchor" href="#step-3-one-speculative-step">#</a> Step 3: one speculative step</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def spec_step(prefix, q_model, p_model, N, rng):
+    drafts = []
+    p_probs = []
+    ctx = list(prefix)
+    for _ in range(N):
+        p_dist = p_model(ctx)
+        d = sample(p_dist, rng)
+        drafts.append(d)
+        p_probs.append(p_dist[d])
+        ctx.append(d)
+
+    q_dists = [q_model(prefix + drafts[:i]) for i in range(N + 1)]
+
+    for i, d in enumerate(drafts):
+        u = rng.random()
+        q_prob = q_dists[i][d]
+        p_prob = p_probs[i]
+        if u &lt; min(1.0, q_prob / p_prob if p_prob &gt; 0 else float(&quot;inf&quot;)):
+            prefix = prefix + [d]
+        else:
+            res = residual_dist(q_dists[i], p_model(prefix))
+            prefix = prefix + [sample(res, rng)]
+            return prefix
+    prefix = prefix + [sample(q_dists[N], rng)]
+    return prefix</code></pre>
+      </div>
+    <p>Five accepted → one bonus → six tokens produced in one verifier pass.</p>
+<h3 id="step-4-measure-acceptance-rate"><a class="anchor" href="#step-4-measure-acceptance-rate">#</a> Step 4: measure acceptance rate</h3>
+<p>Run 10,000 speculative steps at varying draft-quality levels. Plot acceptance rate vs. KL divergence between draft and verifier distributions. You should see a clean monotone relationship.</p>
+<h3 id="step-5-verify-distribution-equivalence"><a class="anchor" href="#step-5-verify-distribution-equivalence">#</a> Step 5: verify distribution equivalence</h3>
+<p>Empirically: the histogram of tokens produced by the speculative loop should match the histogram produced by sampling directly from the verifier. This is the Leviathan theorem in practice. A chi-square test confirms within sampling error.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># vLLM with EAGLE
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+    --speculative-model /models/llama-3.1-eagle-70b \
+    --speculative-draft-tensor-parallel-size 1 \
+    --num-speculative-tokens 5
+
+# vLLM with vanilla draft model
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+    --speculative-model meta-llama/Llama-3.2-1B-Instruct \
+    --num-speculative-tokens 5</code></pre>
+      </div>
+    <p>TensorRT-LLM has the fastest Medusa path as of mid-2026. <code>faster-whisper</code> wraps speculative decoding for Whisper-large with a small draft.</p>
+<p><strong>Picking a draft:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>When to pick</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Vanilla draft (1B/3B Llama family)</td>
+<td>Fast prototype, no training</td>
+<td>1.8–2.3×</td>
+</tr>
+<tr>
+<td>Medusa heads</td>
+<td>You can fine-tune the verifier</td>
+<td>2–3×</td>
+</tr>
+<tr>
+<td>EAGLE-2 / 3</td>
+<td>Production, max speed</td>
+<td>3–4×</td>
+</tr>
+<tr>
+<td>Lookahead</td>
+<td>No draft, no training, no extra params</td>
+<td>1.3–1.6×</td>
+</tr>
+</tbody></table>
+<p><strong>When NOT to spec-decode:</strong></p>
+<ul>
+<li>Single-sequence generation of 1–5 tokens. Overhead dominates.</li>
+<li>Wildly creative / high-temperature sampling (α drops).</li>
+<li>Memory-constrained deployments (draft model adds VRAM).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-spec-decode-picker.md</code>. The skill picks a speculative decoding strategy (vanilla / Medusa / EAGLE / lookahead) and tuning parameters (N, draft temperature) for a new inference workload.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Confirm the speculative token distribution matches the verifier&#39;s direct-sample distribution on 50,000 tokens within chi-square p &gt; 0.05.</li>
+<li><strong>Medium.</strong> Plot speedup (tokens per big-model forward) as a function of <code>N</code> for <code>α = 0.5, 0.7, 0.85</code>. Identify the optimal <code>N</code> for each α. (Hint: expected tokens per verify call = <code>(1 - α^{N+1}) / (1 - α)</code>.)</li>
+<li><strong>Hard.</strong> Implement a tiny Medusa: take the capstone GPT from Lesson 14, add 3 extra LM heads that predict positions t+2, t+3, t+4. Train on tinyshakespeare with a joint multi-head loss. Compare acceptance rates vs a vanilla draft made by truncating the same model.</li>
+<li><strong>Hard.</strong> Implement rollback: start with a 10-token prefix KV cache, feed 5 draft tokens, simulate a rejection at position 3. Verify your cache reads correctly match &quot;prefix + first 2 accepted drafts&quot; at the next iteration.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Draft model</td>
+<td>&quot;The cheap one&quot;</td>
+<td>A smaller model that proposes candidate tokens; usually 10–50× cheaper than the verifier.</td>
+</tr>
+<tr>
+<td>Verifier</td>
+<td>&quot;The big one&quot;</td>
+<td>The target model whose distribution we preserve; runs once per speculative step.</td>
+</tr>
+<tr>
+<td>Acceptance rate (α)</td>
+<td>&quot;How often the draft is right&quot;</td>
+<td>Per-token probability that the verifier accepts the draft. 0.7–0.9 typical.</td>
+</tr>
+<tr>
+<td>Residual distribution</td>
+<td>&quot;The rejection fallback&quot;</td>
+<td><code>(q - p)_+</code> normalized; sampling from this on rejection preserves the verifier&#39;s distribution.</td>
+</tr>
+<tr>
+<td>Bonus token</td>
+<td>&quot;The free one&quot;</td>
+<td>When all N drafts accepted, sample one more from the verifier&#39;s next-step distribution.</td>
+</tr>
+<tr>
+<td>Medusa</td>
+<td>&quot;Draft-less speculative&quot;</td>
+<td>Multiple LM heads on the verifier predict positions t+1..t+k in parallel.</td>
+</tr>
+<tr>
+<td>EAGLE</td>
+<td>&quot;Hidden-state draft&quot;</td>
+<td>Tiny transformer draft conditioned on the verifier&#39;s last-layer hidden states.</td>
+</tr>
+<tr>
+<td>Lookahead decoding</td>
+<td>&quot;Jacobi iteration&quot;</td>
+<td>Self-speculation using a fixed-point iteration; no draft model.</td>
+</tr>
+<tr>
+<td>Tree attention</td>
+<td>&quot;Verify many candidates at once&quot;</td>
+<td>Branching verification that considers several draft continuations simultaneously.</td>
+</tr>
+<tr>
+<td>KV rollback</td>
+<td>&quot;Undo rejected drafts&quot;</td>
+<td>Scratch KV buffer; commit on acceptance, discard on reject.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2211.17192">Leviathan, Kalman, Matias (2023). Fast Inference from Transformers via Speculative Decoding</a> — the core algorithm and the equivalence theorem.</li>
+<li><a href="https://arxiv.org/abs/2302.01318">Chen et al. (2023). Accelerating Large Language Model Decoding with Speculative Sampling</a> — concurrent introduction; clean Bernoulli-rejection proof.</li>
+<li><a href="https://arxiv.org/abs/2401.10774">Cai et al. (2024). Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</a> — Medusa paper; tree-attention verification.</li>
+<li><a href="https://arxiv.org/abs/2401.15077">Li et al. (2024). EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty</a> — EAGLE-1; hidden-state-conditioned draft.</li>
+<li><a href="https://arxiv.org/abs/2406.16858">Li et al. (2024). EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees</a> — EAGLE-2; dynamic tree depth.</li>
+<li><a href="https://arxiv.org/abs/2503.01840">Li et al. (2025). EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test</a> — EAGLE-3.</li>
+<li><a href="https://arxiv.org/abs/2402.02057">Fu et al. (2024). Break the Sequential Dependency of LLM Inference Using Lookahead Decoding</a> — lookahead, no-draft approach.</li>
+<li><a href="https://docs.vllm.ai/en/latest/features/spec_decode.html">vLLM docs — Speculative Decoding</a> — canonical production reference with all four strategies wired up.</li>
+<li><a href="https://github.com/SafeAILab/EAGLE">SafeAILab / EAGLE reference implementation</a> — the reference code for EAGLE-1/2/3.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-attention-variants.html"><span>← Previous</span><b>attention variants</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>09.04 — Distillation (Compressing a Teacher into a Cheaper Student) — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/09.%20Adaptation/09-04-distillation.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Adaptation</div>
+    <ol class="toc"><li><a href="#1-why-distil-and-the-four-regimes">1. Why Distil, and the Four Regimes</a></li><li><a href="#2-the-losses">2. The Losses</a></li><li><a href="#3-on-policy-distillation">3. On-Policy Distillation</a></li><li><a href="#4-sequence-level-black-box-distillation-done-right">4. Sequence-Level (Black-Box) Distillation Done Right</a></li><li><a href="#5-evaluating-a-student-and-deciding-to-ship-it">5. Evaluating a Student, and Deciding to Ship It</a></li><li><a href="#6-production-challenges-and-solutions">6. Production Challenges and Solutions</a></li><li><a href="#7-governance-terms-licences-provenance">7. Governance: Terms, Licences, Provenance</a></li><li><a href="#8-hands-on-projects">8. Hands-On Projects</a></li><li><a href="#9-foundational-papers-exact-titles">9. Foundational Papers (exact titles)</a></li><li><a href="#10-essential-tooling">10. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Adaptation</div>
+    <h1 class="lesson-title">09.04 — Distillation (Compressing a Teacher into a Cheaper Student)</h1>
+    <p class="lesson-sub">**Module 9: Adaptation** · Subtopic 4 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Adaptation 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="24.3" y="127.5" width="28.8" height="28.8" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(171 38.7 141.9)"/>
+        <rect x="19.5" y="123.2" width="27.5" height="27.5" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(153 33.3 137.0)"/>
+        <rect x="14.8" y="118.9" width="26.2" height="26.2" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.9 132.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#4c1d95" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#4c1d95" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#4c1d95" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="80" lengthAdjust="spacingAndGlyphs">ADAPTATION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">09.04 — Distillation</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(Compressing a…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 09.01 (SFT, DPO, GRPO), 09.03 (LoRA/QLoRA), 08.01 (cascades and TCO), 08.04 (quantization as the <em>other</em> compression lever), 06.01 (evals).
+<strong>Outcome:</strong> you can pick the right distillation regime (logit, sequence-level, on-policy, rationale, or reasoning-trace) for the access you have to the teacher. You can implement and reason about the losses (temperature-scaled KL, forward vs reverse KL, generalised JSD), build verified synthetic datasets, run on-policy distillation with TRL, and prove with evals and cost math that the student is good enough to replace or front the teacher.</p>
+</blockquote>
+<blockquote>
+<p><strong>Status check (September 2026).</strong></p>
+<ul>
+<li><p><strong>TRL 1.13</strong> ships a stable <strong><code>DistillationTrainer</code></strong>. It trains <strong>on-policy</strong>: the student generates its own completions and is trained toward the teacher&#39;s token distributions under a <strong>generalised JSD</strong> with <code>beta</code>:</p>
+<ul>
+<li><code>beta=0</code> is forward KL, <code>beta=1</code> is reverse KL, and the default is 1.0;</li>
+<li>there is no reference-model KL penalty.</li>
+</ul>
+<p>Experimental variants (GKD, MiniLLM, GOLD, server-/async-distillation) live under <code>trl.experimental</code>.</p>
+</li>
+<li><p><strong>Terms matter as much as losses.</strong> Many API providers&#39; terms restrict using outputs to develop competing models, and open-weights licences can impose naming, attribution, or use conditions on derivatives. Check the teacher&#39;s current terms and licence <strong>before</strong> generating data (§7).</p>
+</li>
+</ul>
+</blockquote>
+<hr>
+<h2 id="1-why-distil-and-the-four-regimes"><a class="anchor" href="#1-why-distil-and-the-four-regimes">#</a> 1. Why Distil, and the Four Regimes</h2>
+<p>A frontier model (or your own 70B fine-tune) solves the task but is too slow or too expensive. <strong>Distillation</strong> transfers its behaviour on <em>your task distribution</em> into a smaller student. That can cut cost and latency by 10–100× (08.01 §2 TCO). Distillation complements quantization (08.04), and the two stack: distil 70B → 8B, then FP8 the 8B.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> Teacher access ─────────────────────────────► Regime ─────────────────────────────────► Needs
+ Only text outputs (API)                      SEQUENCE-LEVEL KD: SFT on teacher outputs      prompts + verifier/judge (§4)
+                                              (+ rationale / reasoning-trace distillation)
+ Full logits, same tokenizer (open weights)   TOKEN-LEVEL (logit) KD: match p_teacher per     teacher forward passes;
+                                              token on fixed data (Hinton KD)                 same vocab (or alignment)
+ Logits + can run teacher online              ON-POLICY KD (GKD / MiniLLM): student samples,  teacher inference in the loop
+                                              teacher scores every token of the student&#39;s
+                                              own outputs → fixes exposure bias
+ Hidden states, compatible architecture       FEATURE KD (DistilBERT, MiniLM, TinyBERT)      architecture coupling; mostly
+                                                                                               for encoders/embedders</code></pre>
+      </div>
+    <p><strong>Rule of thumb:</strong></p>
+<ul>
+<li>Start with <strong>sequence-level KD</strong>. It is cheap, works with any teacher, and is usually 80% of the win.</li>
+<li>Add <strong>on-policy KD</strong> when the student must generate long outputs. Errors compound once the student leaves the teacher&#39;s distribution (exposure bias), and on-policy training corrects the states the student actually visits.</li>
+</ul>
+<hr>
+<h2 id="2-the-losses"><a class="anchor" href="#2-the-losses">#</a> 2. The Losses</h2>
+<h3 id="21-temperature-scaled-kd-hinton-et-al-2015"><a class="anchor" href="#21-temperature-scaled-kd-hinton-et-al-2015">#</a> 2.1 Temperature-scaled KD (Hinton et al., 2015)</h3>
+<p>With logits $z_s$ and $z_t$, temperature $T$, and softened distributions $p^{T} = \mathrm{softmax}(z/T)$:</p>
+<p>$$
+\mathcal{L}_{\text{KD}} = (1-\lambda),\mathrm{CE}\big(y,\ p_s^{1}\big) ;+; \lambda,T^{2},\mathrm{KL}\big(p_t^{T},\Vert,p_s^{T}\big).
+$$</p>
+<p>Two ingredients make this work:</p>
+<ul>
+<li><strong>Higher $T$</strong> exposes the teacher&#39;s &quot;dark knowledge&quot;: the relative probabilities of wrong-but-plausible tokens.</li>
+<li><strong>The $T^2$ factor.</strong> For large $T$, $\partial,\mathrm{KL}/\partial z_s \approx \frac{1}{NT^2}(z_s - z_t)$, so without the factor the soft-target gradient vanishes as $T^{-2}$ and $\lambda$ would have to be re-tuned for every $T$.</li>
+</ul>
+<h3 id="22-forward-vs-reverse-kl-which-mistakes-the-student-makes"><a class="anchor" href="#22-forward-vs-reverse-kl-which-mistakes-the-student-makes">#</a> 2.2 Forward vs reverse KL: which mistakes the student makes</h3>
+<ul>
+<li><strong>Forward KL</strong> $\mathrm{KL}(p_t \Vert p_s)$, used in standard KD and in SFT on teacher samples, is <strong>mode-covering</strong>. The student must put mass wherever the teacher does. A student too small to represent every mode spreads mass <em>between</em> them, onto outputs the teacher would never produce: hallucination-like blends.</li>
+<li><strong>Reverse KL</strong> $\mathrm{KL}(p_s \Vert p_t)$ is <strong>mode-seeking</strong>. The student commits to modes it can represent and avoids regions the teacher considers impossible. It gives up diversity in exchange for precision. MiniLLM (Gu et al.) argues this is the right default for generative students.</li>
+<li><strong>Generalised JSD</strong> interpolates between the two (GKD; TRL&#39;s <code>beta</code>):</li>
+</ul>
+<p>$$
+\mathrm{JSD}_\beta(p_t, p_s) = \beta,\mathrm{KL}(p_t \Vert m) + (1-\beta),\mathrm{KL}(p_s \Vert m),\qquad m = \beta p_t + (1-\beta) p_s .
+$$</p>
+<p>TRL special-cases $\beta = 0$ as forward KL and $\beta = 1$ as reverse KL.</p>
+<p>The experiment below fits a capacity-limited student (a single discretised Gaussian) to a bimodal teacher:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+torch.set_num_threads(1)
+V = 60
+x = torch.arange(V, dtype=torch.float32)
+
+def disc_gauss(mu, log_sigma):
+    return torch.log_softmax(-(x - mu) ** 2 / (2 * torch.exp(log_sigma) ** 2), dim=0)
+
+teacher = torch.logsumexp(torch.stack([disc_gauss(torch.tensor(15.), torch.tensor(3.).log()),
+                                       disc_gauss(torch.tensor(45.), torch.tensor(3.).log())]), 0) - torch.log(torch.tensor(2.))
+
+def fit(divergence, steps=4000):
+    mu = torch.tensor(20.0, requires_grad=True); ls = torch.tensor(0.7, requires_grad=True)
+    opt = torch.optim.Adam([mu, ls], lr=0.1)
+    for _ in range(steps):
+        s = disc_gauss(mu, ls)
+        loss = (teacher.exp() * (teacher - s)).sum() if divergence == &quot;forward&quot; else (s.exp() * (s - teacher)).sum()
+        opt.zero_grad(); loss.backward(); opt.step()
+    s = disc_gauss(mu, ls).detach().exp()
+    low = teacher.exp() &lt; 1e-3                                   # outputs the teacher considers ~impossible
+    return dict(mu=round(float(mu.detach()), 1), sigma=round(float(ls.detach().exp()), 1),
+                mass_on_teacher_impossible=round(float(s[low].sum()), 3),
+                teacher_mass_covered=round(float(teacher.exp()[s &gt; 1e-3].sum()), 3))
+
+fwd, rev = fit(&quot;forward&quot;), fit(&quot;reverse&quot;)
+print(&quot;forward KL:&quot;, fwd); print(&quot;reverse KL:&quot;, rev)
+assert fwd[&quot;mass_on_teacher_impossible&quot;] &gt; 0.2 and rev[&quot;mass_on_teacher_impossible&quot;] &lt; 0.02
+assert fwd[&quot;teacher_mass_covered&quot;] &gt; 0.95 and rev[&quot;teacher_mass_covered&quot;] &lt; 0.6</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Objective</th>
+<th>Student fit</th>
+<th>Mass on outputs the teacher deems impossible</th>
+<th>Teacher modes covered</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Forward KL</td>
+<td>μ≈30.6, σ≈22: straddles both modes</td>
+<td><strong>41.7%</strong></td>
+<td>100%</td>
+</tr>
+<tr>
+<td>Reverse KL</td>
+<td>μ=15.0, σ=3.0: one mode, exactly</td>
+<td><strong>0.4%</strong></td>
+<td>50%</td>
+</tr>
+</tbody></table>
+<p><strong>For extraction, citation, and drafting tasks, where precision beats diversity, prefer reverse-leaning objectives</strong> (<code>beta</code> near 1) or on-policy training. For creative or broad assistants, forward or mid JSD keeps coverage. Validate the choice with evals rather than theory.</p>
+<h3 id="23-implementations-kd-loss-sparse-top-k-teacher-logits-generalised-jsd"><a class="anchor" href="#23-implementations-kd-loss-sparse-top-k-teacher-logits-generalised-jsd">#</a> 2.3 Implementations: KD loss, sparse top-k teacher logits, generalised JSD</h3>
+<p>Storing full teacher distributions is infeasible at LLM vocabulary sizes (128k–256k). <strong>Sparse KD</strong> keeps the teacher&#39;s top-$k$ log-probs per position and renormalises over them.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch, torch.nn.functional as F
+
+torch.set_num_threads(1); torch.manual_seed(0)
+
+def kd_loss(student_logits, teacher_logits, labels=None, T=2.0, lam=0.5, ignore_index=-100):
+    &quot;&quot;&quot;Hinton KD: (1-lam)*CE(labels) + lam*T^2*KL(p_t^T || p_s^T), over unmasked positions.&quot;&quot;&quot;
+    mask = torch.ones(student_logits.shape[:-1], dtype=torch.bool) if labels is None else labels != ignore_index
+    s_T = F.log_softmax(student_logits[mask] / T, -1)
+    t_T = F.log_softmax(teacher_logits[mask] / T, -1)
+    kd = (t_T.exp() * (t_T - s_T)).sum(-1).mean() * T ** 2
+    if labels is None or lam == 1.0:
+        return kd
+    return (1 - lam) * F.cross_entropy(student_logits[mask], labels[mask]) + lam * kd
+
+def topk_kd(student_logits, teacher_topk_logp, teacher_topk_idx):
+    &quot;&quot;&quot;Sparse forward KL using stored teacher top-k log-probs, renormalised over the k tokens.&quot;&quot;&quot;
+    p = torch.softmax(teacher_topk_logp, -1)
+    s = F.log_softmax(student_logits, -1).gather(-1, teacher_topk_idx)
+    return (p * (p.clamp_min(1e-12).log() - s)).sum(-1).mean()
+
+V, N = 32_000, 64
+ranks = torch.arange(1, V + 1, dtype=torch.float32)
+zipf = -1.3 * ranks.log()                                                   # Zipf-like next-token distributions
+teacher = torch.stack([zipf[torch.randperm(V)] for _ in range(N)]) + 0.3 * torch.randn(N, V)
+student = (teacher + torch.randn(N, V) * 2.0).requires_grad_(True)
+
+for T in (1.0, 2.0, 4.0, 8.0):                                               # why the T^2 factor
+    g = {}
+    for scaled in (False, True):
+        s = student.detach().clone().requires_grad_(True)
+        (kd_loss(s, teacher, T=T, lam=1.0) / (1 if scaled else T ** 2)).backward()
+        g[scaled] = float(s.grad.norm())
+    print(f&quot;T={T}: |grad| with T^2 = {g[True]:.4f}   without = {g[False]:.5f}&quot;)
+
+g_full, = torch.autograd.grad(kd_loss(student, teacher, T=1.0, lam=1.0), student)
+tlp = F.log_softmax(teacher, -1)
+cos = {}
+for k in (1, 8, 64, 512):
+    v, idx = tlp.topk(k, -1)
+    g_k, = torch.autograd.grad(topk_kd(student, v, idx), student)
+    cos[k] = float(F.cosine_similarity(g_k.flatten(), g_full.flatten(), dim=0))
+    print(f&quot;top-{k:&lt;4d} teacher mass kept={float(v.exp().sum(-1).mean()):.3f}  grad cosine vs full KL={cos[k]:.3f}&quot;)
+assert cos[512] &gt; cos[64] &gt; cos[8] &gt; cos[1]
+tokens = 200e6
+print(f&quot;storage, {tokens/1e6:.0f}M tokens: full bf16 logits {tokens * V * 2 / 1e12:.1f} TB | &quot;
+      f&quot;top-64 (fp16 logp + int32 id) {tokens * 64 * 6 / 1e9:.0f} GB&quot;)</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Top-k stored</th>
+<th>Teacher mass kept</th>
+<th>Gradient cosine vs full KL</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1 (= hard label)</td>
+<td>0.27</td>
+<td>0.62</td>
+</tr>
+<tr>
+<td>8</td>
+<td>0.58</td>
+<td>0.91</td>
+</tr>
+<tr>
+<td><strong>64</strong></td>
+<td>0.79</td>
+<td><strong>0.98</strong></td>
+</tr>
+<tr>
+<td>512</td>
+<td>0.91</td>
+<td>0.997</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Top-64 recovers 98% of the full-KL gradient direction.</strong> For 200M training tokens it needs <strong>77 GB instead of 12.8 TB</strong> of full BF16 logits at a 32k vocabulary. Real LLM distributions are usually more peaked than this Zipf toy, so small $k$ does even better.</li>
+<li><strong>The $T^2$ factor</strong> keeps the soft-target gradient roughly constant for $T \ge 4$ (0.0017 → 0.0014). Without it the gradient falls as $T^{-2}$ (0.00011 → 0.00002).</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch, torch.nn.functional as F
+
+def generalized_jsd(student_logits, teacher_logits, beta=0.5, T=1.0):
+    &quot;&quot;&quot;GKD divergence per position, TRL convention: beta=0 -&gt; KL(t||s) forward; beta=1 -&gt; KL(s||t) reverse;
+    otherwise beta*KL(t||m) + (1-beta)*KL(s||m) with m = beta*t + (1-beta)*s.&quot;&quot;&quot;
+    s = F.log_softmax(student_logits / T, -1); t = F.log_softmax(teacher_logits / T, -1)
+    kl = lambda p, q: (p.exp() * (p - q)).sum(-1)
+    if beta == 0.0: return kl(t, s)
+    if beta == 1.0: return kl(s, t)
+    b = torch.tensor(beta)
+    m = torch.logsumexp(torch.stack([s + torch.log1p(-b), t + torch.log(b)]), 0)
+    return b * kl(t, m) + (1 - b) * kl(s, m)
+
+torch.manual_seed(0)
+sl, tl = torch.randn(8, 100), torch.randn(8, 100) * 2
+ref_fwd = F.kl_div(F.log_softmax(sl, -1), F.log_softmax(tl, -1), reduction=&quot;none&quot;, log_target=True).sum(-1)
+assert torch.allclose(generalized_jsd(sl, tl, 0.0), ref_fwd, atol=1e-6)            # matches PyTorch/TRL forward KL
+j = generalized_jsd(sl, tl, 0.5)
+assert torch.all(j &gt;= 0) and torch.all(j &lt;= torch.log(torch.tensor(2.0)) + 1e-6)   # symmetric JSD is bounded by ln 2
+print(f&quot;forward {ref_fwd.mean():.3f}  reverse {generalized_jsd(sl, tl, 1.0).mean():.3f}  JSD(0.5) {j.mean():.3f}&quot;)</code></pre>
+      </div>
+    <p><strong>Tokenizer mismatch.</strong> Logit KD requires the teacher and student to share a vocabulary: same family (Llama 70B → 8B, Qwen 32B → 4B) or the same tokenizer. Across families, use sequence-level KD, or cross-tokenizer methods (e.g. ULD, <em>Universal Logit Distillation</em>, which matches sorted probability vectors), and validate carefully.</p>
+<hr>
+<h2 id="3-on-policy-distillation"><a class="anchor" href="#3-on-policy-distillation">#</a> 3. On-Policy Distillation</h2>
+<p><strong>Off-policy KD</strong>, meaning training on teacher-generated or ground-truth prefixes, teaches the student what to do <em>in states the teacher visits</em>. At inference time the student conditions on <strong>its own</strong> earlier tokens. One early deviation puts it in states it never trained on, and errors compound. This is <strong>exposure bias</strong>, and it grows with output length.</p>
+<p><strong>On-policy KD</strong> (GKD, Agarwal et al.; MiniLLM) makes three changes:</p>
+<ol>
+<li>The student samples $y \sim \pi_s(\cdot|x)$.</li>
+<li>The teacher computes $p_t(\cdot \mid x, y_{&lt;t})$ <strong>for every token of the student&#39;s own sample</strong>.</li>
+<li>The loss is $\sum_t D\big(p_t(\cdot|x,y_{&lt;t}),\ p_s(\cdot|x,y_{&lt;t})\big)$.</li>
+</ol>
+<p>This gives <strong>dense, per-token supervision on the student&#39;s own distribution</strong>. That combination is what makes on-policy KD dramatically more sample-efficient than RL with a sparse reward (09.01 §5.2) while fixing exposure bias.</p>
+<p>Costs and requirements:</p>
+<ul>
+<li>teacher forward passes over the student&#39;s samples;</li>
+<li>student generation in the loop, where vLLM-backed generation matters;</li>
+<li>a shared vocabulary.</li>
+</ul>
+<p>The TRL loop below is tested on tiny local models that share a tokenizer:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from datasets import Dataset
+from trl import DistillationConfig, DistillationTrainer
+
+STUDENT_ID = &quot;Qwen/Qwen3-1.7B&quot;                    # start from an SFT&#39;d student (sequence-level KD first)
+TEACHER_ID = &quot;Qwen/Qwen3-32B&quot;                     # same tokenizer family
+prompts = Dataset.from_list([{&quot;prompt&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;Summarize the bill in two sentences. {k}&quot;}]}
+                             for k in range(32)])
+cfg = DistillationConfig(output_dir=&quot;out/distill-bill&quot;, beta=0.5, temperature=1.0, max_completion_length=64,
+                         learning_rate=1e-5, per_device_train_batch_size=4, gradient_accumulation_steps=4,
+                         bf16=True, logging_steps=1, report_to=&quot;none&quot;)   # use_vllm=True for fast student rollouts
+trainer = DistillationTrainer(model=STUDENT_ID, teacher_model=TEACHER_ID, args=cfg, train_dataset=prompts)
+trainer.train()</code></pre>
+      </div>
+    <p><strong>The recipe that works in practice</strong> (e.g. the Qwen3 small models, and Thinking Machines&#39; <em>On-Policy Distillation</em> write-up):</p>
+<ol>
+<li><strong>Sequence-level SFT</strong> on teacher outputs to get the student into the right region.</li>
+<li><strong>On-policy KD</strong> with reverse-leaning divergence to polish, especially for long reasoning or structured outputs.</li>
+<li><strong>Optionally RL</strong> (GRPO) with verifiable rewards for the last mile.</li>
+</ol>
+<hr>
+<h2 id="4-sequence-level-black-box-distillation-done-right"><a class="anchor" href="#4-sequence-level-black-box-distillation-done-right">#</a> 4. Sequence-Level (Black-Box) Distillation Done Right</h2>
+<p>This is <strong>SFT on teacher outputs</strong>. Its quality ceiling is the <strong>quality of the filtered data</strong>, not the teacher&#39;s average quality. The pipeline:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> real prompts (production logs, PII-scrubbed)     ┌─ teacher @ T&gt;0, n samples/prompt (+ rationale / reasoning trace)
+ + synthetic prompt expansion for rare slices ───►│
+                                                  └─ VERIFY: programmatic checks (schema, citations exist in source,
+                                                     numbers match fiscal tables) · judge rubric (06.01 §4) ·
+                                                     self-consistency across samples · dedupe · decontaminate vs eval
+                                                  ─► keep best verified (shortest/cleanest) ─► SFT dataset (09.01)</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import hashlib, json, re
+from collections import Counter
+
+def build_distillation_set(prompts, teacher_generate, verify, n=4, min_agree=2, dedupe=True):
+    &quot;&quot;&quot;Sample n teacher outputs per prompt, keep verified ones, require self-consistency on the extracted
+    answer, and keep the shortest verified output. teacher_generate(prompt, n) -&gt; list[str];
+    verify(prompt, out) -&gt; (ok, answer_key). Returns (rows, stats).&quot;&quot;&quot;
+    rows, stats, seen = [], Counter(), set()
+    for p in prompts:
+        outs = teacher_generate(p, n)
+        good = [(o, k) for o, ok, k in ((o, *verify(p, o)) for o in outs) if ok]
+        stats[&quot;sampled&quot;] += len(outs); stats[&quot;verified&quot;] += len(good)
+        if not good:
+            stats[&quot;prompt_no_verified&quot;] += 1; continue
+        key, votes = Counter(k for _, k in good).most_common(1)[0]
+        if votes &lt; min_agree:
+            stats[&quot;prompt_low_agreement&quot;] += 1; continue
+        best = min((o for o, k in good if k == key), key=len)
+        h = hashlib.sha256(best.encode()).hexdigest()
+        if dedupe and h in seen:
+            stats[&quot;duplicate&quot;] += 1; continue
+        seen.add(h)
+        rows.append({&quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: p}, {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: best}]})
+    stats[&quot;kept&quot;] = len(rows)
+    return rows, dict(stats)
+
+MCA = re.compile(r&quot;\b\d{1,2}-\d{1,2}-\d{3,4}\b&quot;)
+
+def verify_sections(prompt, out):
+    &quot;&quot;&quot;Valid iff JSON {&quot;sections&quot;: [...]}, non-empty, well-formed MCA cites, and every cite appears in the source.&quot;&quot;&quot;
+    try:
+        secs = json.loads(out)[&quot;sections&quot;]
+    except Exception:
+        return False, None
+    ok = bool(secs) and all(MCA.fullmatch(s) and s in prompt for s in secs)
+    return ok, tuple(sorted(secs))
+
+canned = {  # stand-in for teacher API calls at temperature &gt; 0
+    &quot;Bill A amends 7-6-4005 and 7-6-4006.&quot;: [&#39;{&quot;sections&quot;: [&quot;7-6-4005&quot;, &quot;7-6-4006&quot;]}&#39;, &#39;{&quot;sections&quot;: [&quot;7-6-4006&quot;, &quot;7-6-4005&quot;]}&#39;,
+                                           &#39;{&quot;sections&quot;: [&quot;7-6-4005&quot;]}&#39;, &#39;Sections: 7-6-4005, 7-6-4006&#39;],
+    &quot;Bill B amends 15-30-2101.&quot;: [&#39;{&quot;sections&quot;: [&quot;15-30-2101&quot;]}&#39;, &#39;{&quot;sections&quot;: [&quot;15-30-2101&quot;]}&#39;,
+                                  &#39;{&quot;sections&quot;: [&quot;15-30-2102&quot;]}&#39;, &#39;{&quot;sections&quot;: [&quot;15-30-2101&quot;]}&#39;],
+    &quot;Bill C amends 2-2-102.&quot;: [&#39;{&quot;sections&quot;: [&quot;2-2-102&quot;]}&#39;, &#39;{&quot;sections&quot;: [&quot;2-2-104&quot;]}&#39;, &#39;n/a&#39;, &#39;{&quot;sections&quot;: []}&#39;],
+}
+rows, stats = build_distillation_set(list(canned), lambda p, n: canned[p][:n], verify_sections)
+print(stats)
+print([r[&quot;messages&quot;][1][&quot;content&quot;] for r in rows])
+assert stats == {&quot;sampled&quot;: 12, &quot;verified&quot;: 7, &quot;prompt_low_agreement&quot;: 1, &quot;kept&quot;: 2}</code></pre>
+      </div>
+    <p>How each filter behaves:</p>
+<ul>
+<li>The teacher&#39;s <strong>hallucinated section</strong> (15-30-2102, absent from the bill) fails verification.</li>
+<li><strong>Bill C</strong> has only one verified answer, below the agreement threshold, so it is <em>dropped</em>, not trained on. Low teacher agreement signals a hard or ambiguous item, and a student imitating one noisy sample learns noise. Route these to human labelling instead.</li>
+<li>The <strong>free-text answer</strong> fails the schema check even though it is correct. The student learns the format you serve.</li>
+</ul>
+<p><strong>Rationale and reasoning-trace distillation.</strong> Train the student on the teacher&#39;s <em>explanation plus answer</em> (Distilling Step-by-Step, Hsieh et al.), or on full reasoning traces (DeepSeek-R1 distilled into Qwen and Llama students via SFT on ~800k curated samples). This transfers reasoning far better than answer-only data. The costs are longer training sequences and longer student outputs at inference (TTFT/ITL, 08.02). Measure accuracy <strong>per output token</strong>, not just accuracy.</p>
+<p><strong>Capacity gap.</strong> A much larger teacher does not always produce a better student. Very large gaps can hurt (Mirzadeh et al., <em>teacher assistants</em>). Try an intermediate teacher, or on-policy KD, when a 70B → 1B jump underperforms 70B → 8B → 1B.</p>
+<hr>
+<h2 id="5-evaluating-a-student-and-deciding-to-ship-it"><a class="anchor" href="#5-evaluating-a-student-and-deciding-to-ship-it">#</a> 5. Evaluating a Student, and Deciding to Ship It</h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Measurement</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Is it good enough?</td>
+<td>Task eval vs the <strong>teacher</strong> and vs the <strong>prompted student base</strong>, paired, per slice with CIs (06.01); non-inferiority margin agreed with owners</td>
+</tr>
+<tr>
+<td>Where does it fail?</td>
+<td>Slice report: long inputs, rare bill types, numbers-heavy, multi-hop. Distilled students lose the <strong>long tail</strong> first</td>
+</tr>
+<tr>
+<td>Does it know when it doesn&#39;t know?</td>
+<td>Calibration (ECE), abstention rate on unanswerable items; students are often over-confident</td>
+</tr>
+<tr>
+<td>Is it faithful to the teacher?</td>
+<td>Agreement rate on held-out prompts; on disagreements, which is right (judge + human spot-check)</td>
+</tr>
+<tr>
+<td>Is it worth it?</td>
+<td>Cost per successful task and p95 latency vs teacher (08.02 <code>cost_per_success</code>); break-even volume (08.01 §2)</td>
+</tr>
+<tr>
+<td>Safety intact?</td>
+<td>07.x suites. Distillation data rarely includes refusals, so add them explicitly</td>
+</tr>
+</tbody></table>
+<p><strong>Deployment patterns:</strong></p>
+<ul>
+<li><strong>Replace</strong> the teacher when the student passes all slices.</li>
+<li><strong>Cascade</strong> (08.01 §3.2): the student answers, and a confidence or verifier check escalates hard items to the teacher. This often captures 70–90% of the savings with <strong>no</strong> quality loss, and the escalation rate becomes a monitored SLI.</li>
+<li><strong>Keep improving:</strong> escalated items plus teacher answers become the next distillation round.</li>
+</ul>
+<hr>
+<h2 id="6-production-challenges-and-solutions"><a class="anchor" href="#6-production-challenges-and-solutions">#</a> 6. Production Challenges and Solutions</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Solution</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Imitating teacher errors</strong></td>
+<td>Student repeats teacher hallucinations confidently</td>
+<td>Verification filters, self-consistency, drop low-agreement items (§4)</td>
+</tr>
+<tr>
+<td><strong>Exposure bias</strong></td>
+<td>Good on short outputs, derails on long ones</td>
+<td>On-policy KD (§3); reverse-leaning <code>beta</code></td>
+</tr>
+<tr>
+<td><strong>Mode-averaging</strong></td>
+<td>Bland or blended outputs that match no valid answer</td>
+<td>Reverse KL / JSD, or sequence-level data with one canonical answer per prompt</td>
+</tr>
+<tr>
+<td><strong>Tokenizer mismatch</strong></td>
+<td>Can&#39;t do logit KD across families</td>
+<td>Sequence-level KD; same-family teacher; cross-tokenizer KD with care</td>
+</tr>
+<tr>
+<td><strong>Logit storage blow-up</strong></td>
+<td>TBs of teacher logits</td>
+<td>Top-k sparse logits (§2.3), or compute teacher logits online</td>
+</tr>
+<tr>
+<td><strong>Long-tail collapse</strong></td>
+<td>Rare slices far below teacher</td>
+<td>Oversample rare slices in prompts; cascade to teacher; per-slice gates</td>
+</tr>
+<tr>
+<td><strong>Distribution shift over time</strong></td>
+<td>Student degrades as bills and styles change</td>
+<td>Periodic re-distillation from escalations and new prompts; drift canary (08.05 §5)</td>
+</tr>
+<tr>
+<td><strong>Terms/licence violation</strong></td>
+<td>Legal exposure, forced takedown</td>
+<td>Check teacher terms/licence first; record provenance in the data manifest (§7)</td>
+</tr>
+<tr>
+<td><strong>Reasoning-length blowup</strong></td>
+<td>Distilled reasoning student is slow</td>
+<td>Budget reasoning tokens; train on the shortest correct traces; measure accuracy per token</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="7-governance-terms-licences-provenance"><a class="anchor" href="#7-governance-terms-licences-provenance">#</a> 7. Governance: Terms, Licences, Provenance</h2>
+<ul>
+<li><p><strong>API teachers.</strong> Many providers&#39; terms restrict using outputs to develop models that compete with the provider. Some enterprise agreements allow internal-use distillation. Read the <strong>current</strong> terms and your contract, get legal sign-off, and keep a record.</p>
+</li>
+<li><p><strong>Open-weights teachers.</strong> Licences (e.g. community licences for Llama-family models) can impose naming, attribution, acceptable-use, or scale-based conditions on derivatives and on models trained with their outputs. Record the licence in the AI-BOM (07.02 §2) and the model card (08.05 §9).</p>
+</li>
+<li><p><strong>Data provenance manifest:</strong></p>
+<ul>
+<li>teacher model and version;</li>
+<li>prompt sources, including any PII scrubbing;</li>
+<li>generation parameters;</li>
+<li>verification rules and pass rates;</li>
+<li>dedupe and decontamination reports;</li>
+<li>dataset hash.</li>
+</ul>
+<p>This makes the student reproducible and auditable.</p>
+</li>
+<li><p><strong>Public-sector context.</strong> Student outputs that inform decisions about people fall under the same human-review and disclosure controls as the teacher&#39;s (08.05 §9, HB 178).</p>
+</li>
+</ul>
+<hr>
+<h2 id="8-hands-on-projects"><a class="anchor" href="#8-hands-on-projects">#</a> 8. Hands-On Projects</h2>
+<h3 id="project-1-distil-a-frontier-models-bill-summary-behaviour-into-an-8b-student"><a class="anchor" href="#project-1-distil-a-frontier-models-bill-summary-behaviour-into-an-8b-student">#</a> Project 1 — Distil a Frontier Model&#39;s Bill-Summary Behaviour into an 8B Student</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the platform owner</em>, I want an 8B self-hosted student to replace (or front) a frontier API for bill summaries at ≥ 10× lower cost, with no measurable quality loss on any slice.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Teacher terms and licences are reviewed and recorded. Prompts come from ≥ 5,000 real bill versions across sessions, with rare slices oversampled.</li>
+<li><code>build_distillation_set</code> with verifiers (schema; fiscal numbers match the fiscal-note table; cited sections exist; judge rubric ≥ 4/5) and self-consistency. The pass-rate report is broken down by slice.</li>
+<li>The student (LoRA or full SFT, 09.01/09.03) is non-inferior to the teacher (−2 pt margin, 95% CI) on every slice. Calibration and refusal suites pass.</li>
+<li>The cost and latency report shows $/1k summaries and p95 latency (08.02) plus the break-even volume (08.01).</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Assemble prompts and write the verifiers, unit-testing each verifier on known good and bad outputs.</li>
+<li>Generate with n=4 at T=0.7 through the provider&#39;s batch API (08.02 §4.2), then filter and deduplicate.</li>
+<li>Train the student and track learning curves by data fraction.</li>
+<li>Evaluate against the teacher per slice, and analyse the disagreements.</li>
+<li>Ship behind a cascade first (§5), then replace the teacher once the escalation rate is low and stable.</li>
+</ol>
+<h3 id="project-2-logit-and-on-policy-distillation-measured-against-sft-only"><a class="anchor" href="#project-2-logit-and-on-policy-distillation-measured-against-sft-only">#</a> Project 2 — Logit and On-Policy Distillation, Measured Against SFT-Only</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML engineer</em>, I want to know whether white-box and on-policy distillation beat plain SFT on teacher outputs for our long-form tasks.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Teacher and student are from the same family (e.g. Qwen3-32B → Qwen3-1.7B). The task is committee-hearing minutes summarisation, with long outputs.</li>
+<li>Four students trained on equal token budgets:<ul>
+<li>(a) sequence-level SFT;</li>
+<li>(b) (a) + offline top-64 logit KD with $T$ ∈ {1, 2};</li>
+<li>(c) (a) + on-policy <code>DistillationTrainer</code> with <code>beta</code> ∈ {0, 0.5, 1};</li>
+<li>(d) (a) + GRPO with a judge reward.</li>
+</ul>
+</li>
+<li>Report quality by <strong>output length bucket</strong> (to show exposure bias), diversity (distinct-n), faithfulness (claim-level groundedness, 07.01), and compute cost per variant.</li>
+<li>The written conclusion names a default recipe for future tasks.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Generate the SFT data (Project 1 pipeline) and train (a).</li>
+<li>Dump the teacher&#39;s top-64 log-probs on the SFT data (§2.3 storage math) and train (b) with <code>topk_kd</code> + CE.</li>
+<li>Run on-policy KD with vLLM rollouts for each <code>beta</code>.</li>
+<li>Run the GRPO variant, then evaluate everything by length bucket.</li>
+<li>Write up, including the forward/reverse KL behaviour you observe.</li>
+</ol>
+<h3 id="project-3-distil-an-embedding-model-or-reranker-for-the-rag-stack"><a class="anchor" href="#project-3-distil-an-embedding-model-or-reranker-for-the-rag-stack">#</a> Project 3 — Distil an Embedding Model or Reranker for the RAG Stack</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the search owner</em>, I want a small, fast reranker (and optionally an embedding model) that matches the large cross-encoder&#39;s ranking quality on legislative search, so reranking fits the latency budget (04.03, 08.02).</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Teacher: a large cross-encoder or LLM reranker scoring (query, passage) pairs from real query logs (≥ 50k pairs, including hard negatives from hybrid search, 04.02).</li>
+<li>Student: a small cross-encoder trained with <strong>margin-MSE</strong> or listwise KL on teacher scores. Optionally, a bi-encoder embedder distilled with the same scores (03.01 contrastive + KD).</li>
+<li>nDCG@10 is within 1 point of the teacher on the held-out query set. Reranking p95 latency is ≤ 30% of the teacher&#39;s at the production candidate count.</li>
+<li>Deployment through the release pipeline (08.05), with an index rebuild if the embedder changes (the <code>plan_release</code> rule).</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Mine queries and candidates from logs, then score them with the teacher (batch).</li>
+<li>Train the student with margin-MSE: $\big((s^+ - s^-) - (t^+ - t^-)\big)^2$. Tune it against a listwise KL variant.</li>
+<li>Evaluate nDCG/MRR per query type (bill number, topic, statute), and measure latency on the target hardware.</li>
+<li>Roll out through canary with online metrics (06.03: click-through, reformulation rate).</li>
+<li>Document the results and schedule periodic re-distillation.</li>
+</ol>
+<hr>
+<h2 id="9-foundational-papers-exact-titles"><a class="anchor" href="#9-foundational-papers-exact-titles">#</a> 9. Foundational Papers (exact titles)</h2>
+<ul>
+<li>Hinton, Vinyals &amp; Dean, 2015 — <em>Distilling the Knowledge in a Neural Network</em></li>
+<li>Kim &amp; Rush, 2016 — <em>Sequence-Level Knowledge Distillation</em></li>
+<li>Sanh et al., 2019 — <em>DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter</em></li>
+<li>Jiao et al., 2019 — <em>TinyBERT: Distilling BERT for Natural Language Understanding</em></li>
+<li>Wang et al., 2020 — <em>MiniLM: Deep Self-Attention Distillation for Task-Agnostic Compression of Pre-Trained Transformers</em></li>
+<li>Mirzadeh et al., 2019 — <em>Improved Knowledge Distillation via Teacher Assistant</em></li>
+<li>Hofstätter et al., 2020 — <em>Improving Efficient Neural Ranking Models with Cross-Architecture Knowledge Distillation</em> (margin-MSE)</li>
+<li>Agarwal et al., 2023 — <em>On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes</em> (GKD)</li>
+<li>Gu et al., 2023 — <em>MiniLLM: Knowledge Distillation of Large Language Models</em></li>
+<li>Hsieh et al., 2023 — <em>Distilling Step-by-Step! Outperforming Larger Language Models with Less Training Data and Smaller Model Sizes</em></li>
+<li>Taori et al., 2023 — <em>Alpaca: A Strong, Replicable Instruction-Following Model</em> (self-instruct-style distillation; technical report)</li>
+<li>Mukherjee et al., 2023 — <em>Orca: Progressive Learning from Complex Explanation Traces of GPT-4</em></li>
+<li>Boizard et al., 2024 — <em>Towards Cross-Tokenizer Distillation: the Universal Logit Distillation Loss for LLMs</em></li>
+<li>DeepSeek-AI, 2025 — <em>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</em></li>
+<li>Xu et al., 2024 — <em>A Survey on Knowledge Distillation of Large Language Models</em></li>
+</ul>
+<h2 id="10-essential-tooling"><a class="anchor" href="#10-essential-tooling">#</a> 10. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>TRL 1.13 <code>DistillationTrainer</code></strong> (+ <code>trl.experimental</code> GKD, MiniLLM, GOLD)</td>
+<td>On-policy KD with generalised JSD, vLLM rollouts</td>
+</tr>
+<tr>
+<td><strong>vLLM</strong> (08.03), provider <strong>Batch APIs</strong></td>
+<td>Cheap bulk teacher generation; top-k log-prob dumps (<code>logprobs=k</code>)</td>
+</tr>
+<tr>
+<td><strong>distilabel, Argilla</strong></td>
+<td>Synthetic data pipelines with judges and human review</td>
+</tr>
+<tr>
+<td><strong>sentence-transformers</strong></td>
+<td>Embedding and cross-encoder distillation (margin-MSE, listwise)</td>
+</tr>
+<tr>
+<td><strong>DistillKit, torchtune KD recipes</strong></td>
+<td>Offline logit KD recipes</td>
+</tr>
+<tr>
+<td><strong>Your 06.01 harness + 08.05 release pipeline</strong></td>
+<td>Student vs teacher gates; cascade rollout</td>
+</tr>
+</tbody></table>
+<p><strong>Image prompt (distillation regimes):</strong> <em>&quot;Four-lane diagram. Lane 1 &#39;Sequence-level&#39;: large teacher model emits text samples → filter funnel (verify, vote, dedupe) → small student trained by SFT. Lane 2 &#39;Logit KD&#39;: teacher and student side by side over the same token sequence, teacher&#39;s probability bars (top-k highlighted) as soft targets. Lane 3 &#39;On-policy KD&#39;: student generates text, teacher scores each student token, arrows back to student. Lane 4 &#39;Deploy&#39;: student in front with a cascade arrow escalating hard cases to the teacher. Clean flat infographic, teacher in navy, student in teal.&quot;</em></p>
+<p><strong>Image prompt (forward vs reverse KL):</strong> <em>&quot;Two panels with the same bimodal teacher distribution (grey). Left &#39;Forward KL (mode-covering)&#39;: a wide teal student curve spanning both peaks, shaded area between the peaks labelled &#39;mass where teacher ≈ 0&#39;. Right &#39;Reverse KL (mode-seeking)&#39;: a narrow teal curve sitting exactly on one peak, other peak labelled &#39;dropped mode&#39;. Minimal technical plot style.&quot;</em></p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-03-lora-qlora.html"><span>← Previous</span><b>03 lora qlora</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Optimization — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/01-math-foundations/08-optimization/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Math Foundations</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Math Foundations</div>
+    <h1 class="lesson-title">Optimization</h1>
+    <p class="lesson-sub">Training a neural network is nothing more than finding the bottom of a valley.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 1, Lessons 04-05 (Derivatives, Gradients)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Math Foundations 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="28.8" y="31.5" width="30.0" height="30.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(187 43.8 46.5)"/>
+        <rect x="24.0" y="127.2" width="28.7" height="28.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(170 38.3 141.6)"/>
+        <rect x="19.2" y="122.9" width="27.4" height="27.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(152 32.9 136.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MATH FOUNDATIONS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Optimization</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement vanilla gradient descent, SGD with momentum, and Adam from scratch</li>
+<li>Compare optimizer convergence on the Rosenbrock function and explain why Adam adapts per-weight learning rates</li>
+<li>Distinguish convex from non-convex loss landscapes and explain the role of saddle points in high dimensions</li>
+<li>Configure learning rate schedules (step decay, cosine annealing, warmup) for training stability</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have a loss function. It tells you how wrong your model is. You have gradients. They tell you which direction makes the loss worse. Now you need a strategy for walking downhill.</p>
+<p>The naive approach is simple: move opposite the gradient. Scale the step by some number called the learning rate. Repeat. This is gradient descent, and it works. But &quot;works&quot; has caveats. Too large a learning rate and you overshoot the valley entirely, bouncing between walls. Too small and you crawl toward the answer over thousands of unnecessary steps. Hit a saddle point and you stop moving even though you have not found a minimum.</p>
+<p>Every optimizer in deep learning is an answer to the same question: how do you get to the bottom of the valley faster and more reliably?</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-optimization-means"><a class="anchor" href="#what-optimization-means">#</a> What optimization means</h3>
+<p>Optimization is finding the input values that minimize (or maximize) a function. In machine learning, the function is the loss. The inputs are the model&#39;s weights. Training is optimization.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">minimize L(w) where:
+  L = loss function
+  w = model weights (could be millions of parameters)</code></pre>
+      </div>
+    <h3 id="gradient-descent-vanilla"><a class="anchor" href="#gradient-descent-vanilla">#</a> Gradient descent (vanilla)</h3>
+<p>The simplest optimizer. Compute the gradient of the loss with respect to every weight. Move each weight in the opposite direction of its gradient. Scale the step by the learning rate.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">w = w - lr * gradient</code></pre>
+      </div>
+    <p>That is the entire algorithm. One line.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    A[&quot;* Starting point (high loss)&quot;] --&gt; B[&quot;Moving downhill along gradient&quot;]
+    B --&gt; C[&quot;Approaching minimum&quot;]
+    C --&gt; D[&quot;o Minimum (low loss)&quot;]</pre></div><h3 id="learning-rate-the-most-important-hyperparameter"><a class="anchor" href="#learning-rate-the-most-important-hyperparameter">#</a> Learning rate: the most important hyperparameter</h3>
+<p>The learning rate controls step size. It determines everything about convergence.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph TooLarge[&quot;Too Large (lr = 1.0)&quot;]
+        A1[&quot;Step 1&quot;] --&gt;|overshoot| A2[&quot;Step 2&quot;]
+        A2 --&gt;|overshoot| A3[&quot;Step 3&quot;]
+        A3 --&gt;|diverging| A4[&quot;...&quot;]
+    end
+    subgraph TooSmall[&quot;Too Small (lr = 0.0001)&quot;]
+        B1[&quot;Step 1&quot;] --&gt;|tiny step| B2[&quot;Step 2&quot;]
+        B2 --&gt;|tiny step| B3[&quot;Step 3&quot;]
+        B3 --&gt;|10,000 steps later| B4[&quot;Minimum&quot;]
+    end
+    subgraph JustRight[&quot;Just Right (lr = 0.01)&quot;]
+        C1[&quot;Start&quot;] --&gt; C2[&quot;...&quot;] --&gt; C3[&quot;Converged in ~100 steps&quot;]
+    end</pre></div><p>There is no formula for the right learning rate. You find it by experiment. Common starting points: 0.001 for Adam, 0.01 for SGD with momentum.</p>
+<h3 id="sgd-vs-batch-vs-mini-batch"><a class="anchor" href="#sgd-vs-batch-vs-mini-batch">#</a> SGD vs batch vs mini-batch</h3>
+<p>Vanilla gradient descent computes the gradient over the entire dataset before taking one step. This is called batch gradient descent. It is stable but slow.</p>
+<p>Stochastic gradient descent (SGD) computes the gradient on a single random sample and steps immediately. It is noisy but fast.</p>
+<p>Mini-batch gradient descent splits the difference. Compute the gradient over a small batch (32, 64, 128, 256 samples), then step. This is what everyone actually uses.</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Batch size</th>
+<th>Gradient quality</th>
+<th>Speed per step</th>
+<th>Noise</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Batch GD</td>
+<td>Entire dataset</td>
+<td>Exact</td>
+<td>Slow</td>
+<td>None</td>
+</tr>
+<tr>
+<td>SGD</td>
+<td>1 sample</td>
+<td>Very noisy</td>
+<td>Fast</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Mini-batch</td>
+<td>32-256</td>
+<td>Good estimate</td>
+<td>Balanced</td>
+<td>Moderate</td>
+</tr>
+</tbody></table>
+<p>The noise in SGD and mini-batch is not a bug. It helps escape shallow local minima and saddle points.</p>
+<h3 id="momentum-the-ball-rolling-downhill"><a class="anchor" href="#momentum-the-ball-rolling-downhill">#</a> Momentum: the ball rolling downhill</h3>
+<p>Vanilla gradient descent only looks at the current gradient. If the gradient zigzags (common in narrow valleys), progress is slow. Momentum fixes this by accumulating past gradients into a velocity term.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">v = beta * v + gradient
+w = w - lr * v</code></pre>
+      </div>
+    <p>The analogy: a ball rolling downhill. It does not stop and restart at every bump. It builds speed in consistent directions and dampens oscillations.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph Without[&quot;Without Momentum (zigzag, slow)&quot;]
+        W1[&quot;Start&quot;] --&gt;|left| W2[&quot; &quot;]
+        W2 --&gt;|right| W3[&quot; &quot;]
+        W3 --&gt;|left| W4[&quot; &quot;]
+        W4 --&gt;|right| W5[&quot; &quot;]
+        W5 --&gt;|left| W6[&quot; &quot;]
+        W6 --&gt; W7[&quot;Minimum&quot;]
+    end
+    subgraph With[&quot;With Momentum (smooth, fast)&quot;]
+        M1[&quot;Start&quot;] --&gt; M2[&quot; &quot;] --&gt; M3[&quot; &quot;] --&gt; M4[&quot;Minimum&quot;]
+    end</pre></div><p><code>beta</code> (typically 0.9) controls how much history to keep. Higher beta means more momentum, smoother paths, but slower response to direction changes.</p>
+<h3 id="adam-adaptive-learning-rates"><a class="anchor" href="#adam-adaptive-learning-rates">#</a> Adam: adaptive learning rates</h3>
+<p>Different weights need different learning rates. A weight that rarely gets large gradients should take bigger steps when it finally does. A weight that gets huge gradients constantly should take smaller steps.</p>
+<p>Adam (Adaptive Moment Estimation) tracks two things per weight:</p>
+<ol>
+<li>First moment (m): running average of gradients (like momentum)</li>
+<li>Second moment (v): running average of squared gradients (gradient magnitude)</li>
+</ol>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">m = beta1 * m + (1 - beta1) * gradient
+v = beta2 * v + (1 - beta2) * gradient^2
+
+m_hat = m / (1 - beta1^t)    bias correction
+v_hat = v / (1 - beta2^t)    bias correction
+
+w = w - lr * m_hat / (sqrt(v_hat) + epsilon)</code></pre>
+      </div>
+    <p>The division by <code>sqrt(v_hat)</code> is the key insight. Weights with large gradients get divided by a large number (small effective step). Weights with small gradients get divided by a small number (large effective step). Each weight gets its own adaptive learning rate.</p>
+<p>Default hyperparameters: <code>lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8</code>. These defaults work well for most problems.</p>
+<h3 id="learning-rate-schedules"><a class="anchor" href="#learning-rate-schedules">#</a> Learning rate schedules</h3>
+<p>A fixed learning rate is a compromise. Early in training, you want large steps to make fast progress. Late in training, you want small steps to fine-tune near the minimum.</p>
+<p>Common schedules:</p>
+<table>
+<thead>
+<tr>
+<th>Schedule</th>
+<th>Formula</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Step decay</td>
+<td>lr = lr * factor every N epochs</td>
+<td>Simple, manual control</td>
+</tr>
+<tr>
+<td>Exponential decay</td>
+<td>lr = lr_0 * decay^t</td>
+<td>Smooth reduction</td>
+</tr>
+<tr>
+<td>Cosine annealing</td>
+<td>lr = lr_min + 0.5 * (lr_max - lr_min) * (1 + cos(pi * t / T))</td>
+<td>Transformers, modern training</td>
+</tr>
+<tr>
+<td>Warmup + decay</td>
+<td>Linear ramp up, then decay</td>
+<td>Large models, prevents early instability</td>
+</tr>
+</tbody></table>
+<h3 id="convex-vs-non-convex"><a class="anchor" href="#convex-vs-non-convex">#</a> Convex vs non-convex</h3>
+<p>A convex function has one minimum. Gradient descent always finds it. A quadratic like <code>f(x) = x^2</code> is convex.</p>
+<p>Neural network loss functions are non-convex. They have many local minima, saddle points, and flat regions.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph Convex[&quot;Convex: One valley, one answer&quot;]
+        direction TB
+        CV1[&quot;High loss&quot;] --&gt; CV2[&quot;Global minimum&quot;]
+    end
+    subgraph NonConvex[&quot;Non-convex: Multiple valleys, saddle points&quot;]
+        direction TB
+        NC1[&quot;Start&quot;] --&gt; NC2[&quot;Local minimum&quot;]
+        NC1 --&gt; NC3[&quot;Saddle point&quot;]
+        NC1 --&gt; NC4[&quot;Global minimum&quot;]
+    end</pre></div><p>In practice, local minima in high-dimensional neural networks are rarely a problem. Most local minima have loss values close to the global minimum. Saddle points (flat in some directions, curved in others) are the real obstacle. Momentum and noise from mini-batches help escape them.</p>
+<h3 id="loss-landscape-visualization"><a class="anchor" href="#loss-landscape-visualization">#</a> Loss landscape visualization</h3>
+<p>The loss is a function of all weights. For a model with 1 million weights, the loss landscape lives in 1,000,001-dimensional space. We visualize it by picking two random directions in weight space and plotting the loss along those directions, producing a 2D surface.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    HL[&quot;High loss region&quot;] --&gt; SP[&quot;Saddle point&quot;]
+    HL --&gt; LM[&quot;Local minimum&quot;]
+    SP --&gt; LM
+    SP --&gt; GM[&quot;Global minimum&quot;]
+    LM -.-&gt;|&quot;shallow barrier&quot;| GM
+    style HL fill:#ff6666,color:#000
+    style SP fill:#ffcc66,color:#000
+    style LM fill:#66ccff,color:#000
+    style GM fill:#66ff66,color:#000</pre></div><p>Sharp minima generalize poorly. Flat minima generalize well. This is one reason SGD with momentum often outperforms Adam on final test accuracy: its noise prevents settling into sharp minima.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gradient-descent</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-define-a-test-function"><a class="anchor" href="#step-1-define-a-test-function">#</a> Step 1: Define a test function</h3>
+<p>The Rosenbrock function is a classic optimization benchmark. Its minimum is at (1, 1) inside a narrow curved valley that is easy to find but hard to follow.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">f(x, y) = (1 - x)^2 + 100 * (y - x^2)^2</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rosenbrock(params):
+    x, y = params
+    return (1 - x) ** 2 + 100 * (y - x ** 2) ** 2
+
+def rosenbrock_gradient(params):
+    x, y = params
+    df_dx = -2 * (1 - x) + 200 * (y - x ** 2) * (-2 * x)
+    df_dy = 200 * (y - x ** 2)
+    return [df_dx, df_dy]</code></pre>
+      </div>
+    <h3 id="step-2-vanilla-gradient-descent"><a class="anchor" href="#step-2-vanilla-gradient-descent">#</a> Step 2: Vanilla gradient descent</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class GradientDescent:
+    def __init__(self, lr=0.001):
+        self.lr = lr
+
+    def step(self, params, grads):
+        return [p - self.lr * g for p, g in zip(params, grads)]</code></pre>
+      </div>
+    <h3 id="step-3-sgd-with-momentum"><a class="anchor" href="#step-3-sgd-with-momentum">#</a> Step 3: SGD with momentum</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SGDMomentum:
+    def __init__(self, lr=0.001, momentum=0.9):
+        self.lr = lr
+        self.momentum = momentum
+        self.velocity = None
+
+    def step(self, params, grads):
+        if self.velocity is None:
+            self.velocity = [0.0] * len(params)
+        self.velocity = [
+            self.momentum * v + g
+            for v, g in zip(self.velocity, grads)
+        ]
+        return [p - self.lr * v for p, v in zip(params, self.velocity)]</code></pre>
+      </div>
+    <h3 id="step-4-adam"><a class="anchor" href="#step-4-adam">#</a> Step 4: Adam</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Adam:
+    def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        self.lr = lr
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def step(self, params, grads):
+        if self.m is None:
+            self.m = [0.0] * len(params)
+            self.v = [0.0] * len(params)
+
+        self.t += 1
+
+        self.m = [
+            self.beta1 * m + (1 - self.beta1) * g
+            for m, g in zip(self.m, grads)
+        ]
+        self.v = [
+            self.beta2 * v + (1 - self.beta2) * g ** 2
+            for v, g in zip(self.v, grads)
+        ]
+
+        m_hat = [m / (1 - self.beta1 ** self.t) for m in self.m]
+        v_hat = [v / (1 - self.beta2 ** self.t) for v in self.v]
+
+        return [
+            p - self.lr * mh / (vh ** 0.5 + self.epsilon)
+            for p, mh, vh in zip(params, m_hat, v_hat)
+        ]</code></pre>
+      </div>
+    <h3 id="step-5-run-and-compare"><a class="anchor" href="#step-5-run-and-compare">#</a> Step 5: Run and compare</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def optimize(optimizer, func, grad_func, start, steps=5000):
+    params = list(start)
+    history = [params[:]]
+    for _ in range(steps):
+        grads = grad_func(params)
+        params = optimizer.step(params, grads)
+        history.append(params[:])
+    return history
+
+start = [-1.0, 1.0]
+
+gd_history = optimize(GradientDescent(lr=0.0005), rosenbrock, rosenbrock_gradient, start)
+sgd_history = optimize(SGDMomentum(lr=0.0001, momentum=0.9), rosenbrock, rosenbrock_gradient, start)
+adam_history = optimize(Adam(lr=0.01), rosenbrock, rosenbrock_gradient, start)
+
+for name, history in [(&quot;GD&quot;, gd_history), (&quot;SGD+M&quot;, sgd_history), (&quot;Adam&quot;, adam_history)]:
+    final = history[-1]
+    loss = rosenbrock(final)
+    print(f&quot;{name:6s} -&gt; x={final[0]:.6f}, y={final[1]:.6f}, loss={loss:.8f}&quot;)</code></pre>
+      </div>
+    <p>Expected output: Adam converges fastest. SGD with momentum follows a smoother path. Vanilla GD makes slow progress along the narrow valley.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In practice, use PyTorch or JAX optimizers. They handle parameter groups, weight decay, gradient clipping, and GPU acceleration.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+model = torch.nn.Linear(784, 10)
+
+sgd = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+adam = torch.optim.Adam(model.parameters(), lr=0.001)
+adamw = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
+
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(adam, T_max=100)</code></pre>
+      </div>
+    <p>Rules of thumb:</p>
+<ul>
+<li>Start with Adam (lr=0.001). It works for most problems without tuning.</li>
+<li>Switch to SGD with momentum (lr=0.01, momentum=0.9) when you need the best final accuracy and can afford more tuning.</li>
+<li>Use AdamW (Adam with decoupled weight decay) for transformers.</li>
+<li>Always use a learning rate schedule for training runs longer than a few epochs.</li>
+<li>If training is unstable, reduce the learning rate. If training is too slow, increase it.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces a prompt for choosing the right optimizer. See <code>outputs/prompt-optimizer-guide.md</code>.</p>
+<p>The optimizer classes built here reappear in Phase 3 when we train a neural network from scratch.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p><strong>Learning rate sweep.</strong> Run vanilla gradient descent on the Rosenbrock function with learning rates [0.0001, 0.0005, 0.001, 0.005, 0.01]. Plot or print the final loss after 5000 steps for each. Find the largest learning rate that still converges.</p>
+</li>
+<li><p><strong>Momentum comparison.</strong> Run SGD with momentum values [0.0, 0.5, 0.9, 0.99] on the Rosenbrock function. Track the loss at every step. Which momentum value converges fastest? Which overshoots?</p>
+</li>
+<li><p><strong>Saddle point escape.</strong> Define the function <code>f(x, y) = x^2 - y^2</code> (a saddle point at the origin). Start at (0.01, 0.01). Compare how vanilla GD, SGD with momentum, and Adam behave. Which escapes the saddle point?</p>
+</li>
+<li><p><strong>Implement learning rate decay.</strong> Add an exponential decay schedule to the GradientDescent class: <code>lr = lr_0 * 0.999^step</code>. Compare convergence with and without decay on the Rosenbrock function.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Gradient descent</td>
+<td>&quot;Go downhill&quot;</td>
+<td>Update weights by subtracting the gradient scaled by the learning rate. The most basic optimizer.</td>
+</tr>
+<tr>
+<td>Learning rate</td>
+<td>&quot;Step size&quot;</td>
+<td>A scalar that controls how far each update moves the weights. Too large causes divergence. Too small wastes compute.</td>
+</tr>
+<tr>
+<td>Momentum</td>
+<td>&quot;Keep rolling&quot;</td>
+<td>Accumulate past gradients into a velocity vector. Dampens oscillations and accelerates movement through consistent directions.</td>
+</tr>
+<tr>
+<td>SGD</td>
+<td>&quot;Random sampling&quot;</td>
+<td>Stochastic gradient descent. Compute gradient on a random subset instead of the full dataset. Almost always means mini-batch SGD in practice.</td>
+</tr>
+<tr>
+<td>Mini-batch</td>
+<td>&quot;A chunk of data&quot;</td>
+<td>A small subset of training data (32-256 samples) used to estimate the gradient. Balances speed and gradient accuracy.</td>
+</tr>
+<tr>
+<td>Adam</td>
+<td>&quot;The default optimizer&quot;</td>
+<td>Adaptive Moment Estimation. Tracks per-weight running averages of gradients and squared gradients to give each weight its own learning rate.</td>
+</tr>
+<tr>
+<td>Bias correction</td>
+<td>&quot;Fix the cold start&quot;</td>
+<td>Adam&#39;s first and second moments are initialized to zero. Bias correction divides by (1 - beta^t) to compensate during early steps.</td>
+</tr>
+<tr>
+<td>Learning rate schedule</td>
+<td>&quot;Change lr over time&quot;</td>
+<td>A function that adjusts the learning rate during training. Large steps early, small steps late.</td>
+</tr>
+<tr>
+<td>Convex function</td>
+<td>&quot;One valley&quot;</td>
+<td>A function where any local minimum is the global minimum. Gradient descent always finds it. Neural network losses are not convex.</td>
+</tr>
+<tr>
+<td>Saddle point</td>
+<td>&quot;Flat but not a minimum&quot;</td>
+<td>A point where the gradient is zero but it is a minimum in some directions and a maximum in others. Common in high dimensions.</td>
+</tr>
+<tr>
+<td>Loss landscape</td>
+<td>&quot;The terrain&quot;</td>
+<td>The loss function plotted over weight space. Visualized by slicing along two random directions.</td>
+</tr>
+<tr>
+<td>Convergence</td>
+<td>&quot;Getting there&quot;</td>
+<td>The optimizer has reached a point where further steps do not meaningfully reduce the loss.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://ruder.io/optimizing-gradient-descent/">Sebastian Ruder: An overview of gradient descent optimization algorithms</a> - comprehensive survey of all major optimizers</li>
+<li><a href="https://distill.pub/2017/momentum/">Why Momentum Really Works (Distill)</a> - interactive visualization of momentum dynamics</li>
+<li><a href="https://arxiv.org/abs/1412.6980">Adam: A Method for Stochastic Optimization (Kingma &amp; Ba, 2014)</a> - the original Adam paper, readable and short</li>
+<li><a href="https://arxiv.org/abs/1712.09913">Visualizing the Loss Landscape of Neural Nets (Li et al., 2018)</a> - the paper that showed sharp vs flat minima</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-bayes-theorem.html"><span>← Previous</span><b>bayes theorem</b></a>
+      <a class="next" href="./09-information-theory.html"><span>Next →</span><b>information theory</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

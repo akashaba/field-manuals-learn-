@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Lesson 41: Full Evaluation Pipeline — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/41-eval-pipeline/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#perplexity-properly-counted">Perplexity, properly counted</a></li><li><a href="#exact-match-with-normalisation">Exact-match, with normalisation</a></li><li><a href="#token-f1-the-right-way">Token F1, the right way</a></li><li><a href="#local-mock-llm-as-judge">Local Mock LLM-as-Judge</a></li><li><a href="#aggregation">Aggregation</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#what-you-will-build">What you will build</a></li><li><a href="#reading-the-report">Reading the report</a></li><li><a href="#stretch-goals">Stretch goals</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone Lesson 41: Full Evaluation Pipeline</h1>
+    <p class="lesson-sub">Training is the part you can monitor with loss curves. Evaluation is the part you have to design. This lesson builds a unified eval pipeline that takes any trained language model, runs four heterogeneous evals on it, aggregates the results into a per-task report, and ships a local mock LLM-as-judge so the loop runs without a network. The four evals cover the dimensions every shipping model needs: language modelling (perplexity), short-form correctness (exact-match), open-form similarity (token F1), and qualitative scoring (judge).</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (torch, numpy)</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (NLP LLM track: tokenizer, embedding table, attention block, transformer body, pre-training loop, checkpointing, generation, perplexity)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 41">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="13.3" y="117.7" width="25.8" height="25.8" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(130 26.2 130.6)"/>
+        <circle cx="20.8" cy="125.7" r="12.3" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.4" cy="120.7" r="11.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.0" cy="115.8" r="11.0" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="114.6" cy="110.9" r="10.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">41</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Lesson 41:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Full Evaluation…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compute held-out perplexity with masked-token accounting on a tiny transformer.</li>
+<li>Run an exact-match eval on short-form factual prompts.</li>
+<li>Compute token-level F1 between predicted and reference strings with normalisation.</li>
+<li>Build a local mock LLM-as-judge that scores model outputs on a 1-5 scale.</li>
+<li>Aggregate the four evals into a single weighted report with per-task breakdown.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A single metric never describes a language model. Perplexity says how well the model fits the language distribution but says nothing about whether it answers questions. Exact-match says whether the model produces the gold string but punishes correct paraphrases. Token F1 forgives paraphrase but is fooled by lexical overlap with wrong content. LLM-as-judge captures qualitative dimensions but is expensive and stochastic.</p>
+<p>The pipeline you actually want has all four. Each eval covers a dimension the others miss. Each runs on a different subset of held-out data shaped for that metric. The final report shows the per-task numbers side by side and an aggregate, so a reviewer can see at a glance which trade-offs the model is making.</p>
+<p>This lesson builds that pipeline, end to end, in one file.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Model[trained model] --&gt; PPL[perplexity eval&lt;br/&gt;held-out LM]
+  Model --&gt; EM[exact-match eval&lt;br/&gt;factual short-form]
+  Model --&gt; F1[token F1 eval&lt;br/&gt;open-ended]
+  Model --&gt; J[mock judge&lt;br/&gt;1-5 scoring]
+  PPL --&gt; R[Report]
+  EM --&gt; R
+  F1 --&gt; R
+  J --&gt; R
+  R --&gt; A[(aggregate score)]</pre></div><p>Each eval is a function from <code>(model, dataset) -&gt; EvalResult</code>. The result carries the metric value, per-example details for inspection, and a name for the aggregate. The pipeline composes them with a config that says which evals to run and how to weight them.</p>
+<h2 id="perplexity-properly-counted"><a class="anchor" href="#perplexity-properly-counted">#</a> Perplexity, properly counted</h2>
+<p>Perplexity is <code>exp(mean negative log-likelihood per token)</code>. The implementation has two traps:</p>
+<ul>
+<li>The mean must be over actual token positions, not over batch * sequence. Padding tokens have to be excluded from the denominator or perplexity will look better than it is.</li>
+<li>The model predicts the next token, so logits at position <code>i</code> predict the token at position <code>i+1</code>. Off-by-one mistakes here are silent: the loss still trains, but the metric becomes meaningless.</li>
+</ul>
+<p>The eval computes per-batch sums of <code>-log p(token)</code> over non-pad positions and a per-batch token count, then divides at the end. This is numerically safer than averaging per-batch perplexities (which under-weights short sequences) and matches the textbook definition.</p>
+<h2 id="exact-match-with-normalisation"><a class="anchor" href="#exact-match-with-normalisation">#</a> Exact-match, with normalisation</h2>
+<p>The harness normalises both the prediction and the reference before comparing:</p>
+<ul>
+<li>Lowercase.</li>
+<li>Strip surrounding whitespace.</li>
+<li>Collapse internal whitespace runs to a single space.</li>
+<li>Drop trailing terminal punctuation (<code>.</code>, <code>!</code>, <code>?</code>) if both sides differ only by punctuation.</li>
+</ul>
+<p>Normalisation makes exact-match useful in practice. A model that says <code>&quot;Paris&quot;</code> is right; one that says <code>&quot;Paris.&quot;</code> is also right; one that says <code>&quot;  paris  &quot;</code> is also right. The metric still requires the answer to be the same string after normalisation.</p>
+<h2 id="token-f1-the-right-way"><a class="anchor" href="#token-f1-the-right-way">#</a> Token F1, the right way</h2>
+<p>Token F1 is the harmonic mean of precision and recall computed over the bag-of-tokens. Steps:</p>
+<ol>
+<li>Normalise prediction and reference (same rules as exact-match).</li>
+<li>Split each into a list of tokens (whitespace tokenisation).</li>
+<li>Count the multiset intersection.</li>
+<li>Precision = <code>intersection_count / len(pred_tokens)</code>. Recall = <code>intersection_count / len(ref_tokens)</code>. F1 = harmonic mean.</li>
+</ol>
+<p>If both prediction and reference are empty, F1 is 1 (vacuous match). If only one is empty, F1 is 0. This pattern matches the SQuAD evaluation reference and produces stable numbers across paraphrases.</p>
+<h2 id="local-mock-llm-as-judge"><a class="anchor" href="#local-mock-llm-as-judge">#</a> Local Mock LLM-as-Judge</h2>
+<p>A real judge is a frontier model behind an API. For this lesson the judge has to run offline. The mock judge is a deterministic scorer that takes an instruction, the model&#39;s prediction, and the reference, and returns a score in <code>{1, 2, 3, 4, 5}</code> plus a one-line rationale. The scoring rules are explicit:</p>
+<ul>
+<li>5 if normalised prediction equals normalised reference.</li>
+<li>4 if token F1 between prediction and reference is at least 0.8.</li>
+<li>3 if token F1 is in <code>[0.5, 0.8)</code>.</li>
+<li>2 if token F1 is in <code>[0.2, 0.5)</code>.</li>
+<li>1 otherwise.</li>
+</ul>
+<p>This is not a real judge, but it has the right interface. Swap in a real model later by changing one function. The pipeline does not care.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Inst[instruction] --&gt; Judge[mock judge]
+  Pred[prediction] --&gt; Judge
+  Ref[reference] --&gt; Judge
+  Judge --&gt; Score[1-5 score]
+  Judge --&gt; Why[rationale]</pre></div><h2 id="aggregation"><a class="anchor" href="#aggregation">#</a> Aggregation</h2>
+<p>The aggregate is a weighted mean of normalised eval scores. Each eval reports its own number in <code>[0, 1]</code>:</p>
+<ul>
+<li>Perplexity: normalise as <code>1 / (1 + log(perplexity))</code>. A perplexity of 1 maps to 1, infinity maps to 0.</li>
+<li>Exact-match: already in <code>[0, 1]</code>.</li>
+<li>Token F1: already in <code>[0, 1]</code>.</li>
+<li>Judge: divide by 5.</li>
+</ul>
+<p>Weights are configurable. The default mix is 0.2 perplexity, 0.3 exact-match, 0.3 token F1, 0.2 judge. The choice of weights is a product decision; the lesson exposes the knob so you can experiment.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-eval-quadrant</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Data[(held-out fixtures&lt;br/&gt;LM / EM / F1 / Judge)] --&gt; Suite[EvalSuite]
+  Model[trained model] --&gt; Suite
+  Suite --&gt; PE[perplexity_eval]
+  Suite --&gt; EE[exact_match_eval]
+  Suite --&gt; FE[token_f1_eval]
+  Suite --&gt; JE[judge_eval]
+  PE --&gt; Agg[Aggregator]
+  EE --&gt; Agg
+  FE --&gt; Agg
+  JE --&gt; Agg
+  Agg --&gt; R[FinalReport&lt;br/&gt;per-task + aggregate]
+  R --&gt; JSON[(report.json)]
+  R --&gt; Pretty[stdout table]</pre></div><p>The <code>EvalSuite</code> is a thin orchestrator. Each individual eval is a free function that takes <code>(model, tokenizer, dataset, config)</code> and returns an <code>EvalResult</code>. The <code>Aggregator</code> collects results and produces the final report. The demo prints the table and writes a JSON copy that downstream CI can ingest.</p>
+<h2 id="what-you-will-build"><a class="anchor" href="#what-you-will-build">#</a> What you will build</h2>
+<p>The implementation is one <code>main.py</code> plus tests.</p>
+<ol>
+<li><code>TinyGPT</code>: the same decoder-only architecture used in lessons 38-40, included so the lesson stands alone.</li>
+<li><code>InstructionTokenizer</code>: byte tokeniser with INST / RESP / PAD specials.</li>
+<li>Four fixtures: an LM corpus, an EM set, an F1 set, and a judge set. Twenty examples each, deterministic.</li>
+<li><code>perplexity_eval</code>: returns <code>EvalResult</code> with the perplexity value and per-token loss histogram.</li>
+<li><code>exact_match_eval</code>: returns mean EM and per-example records.</li>
+<li><code>token_f1_eval</code>: returns mean token F1 and per-example records.</li>
+<li><code>mock_judge</code> and <code>judge_eval</code>: per-example score and rationale, mean score across the set.</li>
+<li><code>Aggregator.normalise</code>: per-eval normalisation rule.</li>
+<li><code>Aggregator.aggregate</code>: weighted mean and the assembled report.</li>
+<li><code>run_demo</code>: trains a tiny model briefly, runs all four evals, prints the report table and writes the JSON, exits zero on success.</li>
+</ol>
+<h2 id="reading-the-report"><a class="anchor" href="#reading-the-report">#</a> Reading the report</h2>
+<p>The report has three layers. The top is the aggregate score. Below it are the four per-eval numbers. Below those are the per-example breakdowns for diagnostics. A failing CI run typically wants the aggregate, but a reviewer chasing a regression wants the per-example breakdown to see which inputs the model got wrong.</p>
+<p>The JSON dump uses stable keys so a CI dashboard can plot trend lines across versions. The pretty-printed table is for humans staring at the terminal after a training run.</p>
+<h2 id="stretch-goals"><a class="anchor" href="#stretch-goals">#</a> Stretch goals</h2>
+<ul>
+<li>Add a calibration eval: do the model&#39;s softmax probabilities match its accuracy? Bucket predictions by confidence and report the empirical accuracy per bucket.</li>
+<li>Add a robustness eval: tag each example with a perturbation (typo, paraphrase, distractor) and report metric drop per perturbation.</li>
+<li>Replace the mock judge with a real model behind an HTTP call. The function signature does not change.</li>
+<li>Add per-task weight learning: instead of fixed weights, fit weights to a target preference order over models.</li>
+</ul>
+<p>The implementation gives you the four evals, the aggregator, and the report. Real evaluation pipelines layer many more dimensions on top; the pattern stays the same: one function per eval, one aggregator, one report.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./40-dpo-from-scratch.html"><span>← Previous</span><b>dpo from scratch</b></a>
+      <a class="next" href="./42-large-corpus-downloader.html"><span>Next →</span><b>large corpus downloader</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

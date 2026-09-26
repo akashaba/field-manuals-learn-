@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Language Model Evaluation Harness — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/49-lm-eval-harness/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Language Model Evaluation Harness</h1>
+    <p class="lesson-sub">A model that does well on a task you cannot define is a model that does well by accident. The harness is the task definition, the metric, the runner, and the leaderboard, in one short, swappable shape.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 42 to 45</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 49">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M81.9,92.3 L89.3,81.2 L96.6,92.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.2" y="117.6" width="25.8" height="25.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(130 26.1 130.5)"/>
+        <circle cx="20.7" cy="125.6" r="12.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.3" cy="120.6" r="11.6" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="119.9" cy="115.7" r="11.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">49</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Language Model</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Evaluation Harness</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Define a task as a JSONL file with <code>prompt</code>, <code>targets</code>, <code>metric</code>, and optional <code>extras</code> per example.</li>
+<li>Implement five metrics: exact match, rouge-l F1, executable check, multiple choice, and substring contains.</li>
+<li>Build a runner that batches examples per task and dispatches to a swappable model adapter.</li>
+<li>Emit a leaderboard JSON with per-task scores, latency, and an overall average that is reproducible.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A new language model lands every week. The marketing claim is that it does well. The honest question is: well at what? The honest answer is the leaderboard you wrote yourself, because the vendor&#39;s leaderboard is the one they tuned to.</p>
+<p>Without a harness in your repo you compare two models by vibes. With a harness you compare them by score on a fixed task set with a fixed metric, on a JSON output you can diff. The harness is the contract between yesterday&#39;s run and today&#39;s run. Without it, regressions ship.</p>
+<p>The trap is over-fitting the harness to a single model. The fix is the same trap in reverse: the harness is small enough to read in fifteen minutes, the tasks are small enough to ship in the repo, the metrics are written from scratch so a colleague can audit them, and the adapter is the only place model-specific code lives. Swap the adapter, the leaderboard moves; swap the tasks, the leaderboard moves. Nothing else should move.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  tasks[task JSONLs: prompt, targets, metric, extras] --&gt; loader[load_all_tasks]
+  loader --&gt; runner[run_leaderboard]
+  runner --&gt; adapter[ModelAdapter.generate batch]
+  adapter --&gt; metrics[METRIC_FNS dispatch by name]
+  metrics --&gt; scores[per example score]
+  scores --&gt; board[Leaderboard: per task + overall]
+  board --&gt; out[leaderboard.json]</pre></div><h3 id="task-spec"><a class="anchor" href="#task-spec">#</a> Task spec</h3>
+<p>Every example is one JSONL line:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{&quot;id&quot;: &quot;arith-00&quot;, &quot;prompt&quot;: &quot;compute: 2 + 2&quot;, &quot;targets&quot;: [&quot;4&quot;], &quot;metric&quot;: &quot;exact_match&quot;}</code></pre>
+      </div>
+    <p>For metrics that need scoring helpers, <code>extras</code> carries the side payload:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;id&quot;: &quot;code-00&quot;,
+  &quot;prompt&quot;: &quot;python: write a function f that doubles its input&quot;,
+  &quot;targets&quot;: [&quot;ok&quot;],
+  &quot;metric&quot;: &quot;code_exec&quot;,
+  &quot;extras&quot;: {&quot;io_pairs&quot;: [[1, 2], [3, 6]]}
+}</code></pre>
+      </div>
+    <p>A task is a <code>.jsonl</code> file under <code>outputs/tasks/</code>. The file name is the task name. All examples in a file share a metric.</p>
+<h3 id="the-five-fixture-tasks"><a class="anchor" href="#the-five-fixture-tasks">#</a> The five fixture tasks</h3>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Metric</th>
+<th>What it tests</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>arithmetic</td>
+<td>exact_match</td>
+<td>Token-level correctness on a deterministic answer</td>
+</tr>
+<tr>
+<td>summary</td>
+<td>rouge_l</td>
+<td>Longest common subsequence F1 against a one-line reference summary</td>
+</tr>
+<tr>
+<td>code-exec</td>
+<td>code_exec</td>
+<td>Executable test: the predicted function must satisfy a list of input-output pairs</td>
+</tr>
+<tr>
+<td>multiple-choice</td>
+<td>multiple_choice</td>
+<td>First letter of the prediction must match an allowed letter</td>
+</tr>
+<tr>
+<td>generation</td>
+<td>substring_contains</td>
+<td>Free-form text must contain at least one target substring</td>
+</tr>
+</tbody></table>
+<h3 id="the-metric-contract"><a class="anchor" href="#the-metric-contract">#</a> The metric contract</h3>
+<p>Every metric is a function from <code>(prediction, targets, extras) -&gt; float in [0.0, 1.0]</code>. The harness averages the per-example scores to get a task score, then averages task scores to get the overall. The metric functions are tiny:</p>
+<ul>
+<li><code>exact_match</code>: lowercase, collapse whitespace, equality.</li>
+<li><code>substring_contains</code>: same normalization, substring test.</li>
+<li><code>multiple_choice</code>: first character uppercased.</li>
+<li><code>rouge_l</code>: LCS length divided by lengths of prediction and reference, F1 of precision and recall.</li>
+<li><code>code_exec</code>: execute the prediction in a restricted namespace, call <code>f(x)</code> on every input-output pair, count matches.</li>
+</ul>
+<p>The code_exec metric runs the prediction in a stripped builtins namespace. The lesson&#39;s test asserts that <code>import os</code> blows up because <code>os</code> is not in the namespace; you cannot reach the filesystem from a code prediction.</p>
+<h3 id="the-model-adapter"><a class="anchor" href="#the-model-adapter">#</a> The model adapter</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ModelAdapter(Protocol):
+    def generate(self, prompts: Sequence[str]) -&gt; List[str]: ...
+    @property
+    def name(self) -&gt; str: ...</code></pre>
+      </div>
+    <p>The adapter is the seam. The lesson ships <code>ToyAdapter</code>, a deterministic pattern matcher that returns the right answer for every prompt in the five fixture tasks. A real adapter calls the model and returns its output. The harness does not care which.</p>
+<h3 id="the-runner"><a class="anchor" href="#the-runner">#</a> The runner</h3>
+<p><code>run_task</code> batches <code>batch_size</code> prompts at a time and dispatches to the metric function. <code>run_leaderboard</code> walks every task and averages. <code>write_leaderboard</code> emits JSON with a schema string so future format changes do not silently break dashboards.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+  examples[N examples] --&gt; batches[B-sized batches]
+  batches --&gt; adapter[adapter.generate]
+  adapter --&gt; per[per example score 0..1]
+  per --&gt; avg[task score]
+  avg --&gt; over[overall = mean of task scores]</pre></div>
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">eval-harness-matrix</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> is the runnable artifact.</p>
+<h3 id="step-1-seed-fixture-tasks"><a class="anchor" href="#step-1-seed-fixture-tasks">#</a> Step 1: seed fixture tasks</h3>
+<p><code>seed_fixture_tasks(target_dir)</code> writes the five <code>.jsonl</code> files. The first run of <code>main.py</code> seeds them when the directory is empty.</p>
+<h3 id="step-2-load-tasks"><a class="anchor" href="#step-2-load-tasks">#</a> Step 2: load tasks</h3>
+<p><code>load_all_tasks(task_dir)</code> reads every <code>.jsonl</code> and returns a dict from task name to a list of <code>Example</code> records. Comment lines starting with <code>#</code> and blank lines are skipped so contributors can annotate the files.</p>
+<h3 id="step-3-implement-metrics"><a class="anchor" href="#step-3-implement-metrics">#</a> Step 3: implement metrics</h3>
+<p>Each metric is a small function with a unit test. The lesson&#39;s test suite includes 13 cases covering normalization, partial overlap, code execution, and unsafe code rejection.</p>
+<h3 id="step-4-write-the-runner"><a class="anchor" href="#step-4-write-the-runner">#</a> Step 4: write the runner</h3>
+<p><code>run_task</code> iterates batches and produces a <code>TaskResult</code> with score, correct count, total count, and latency. <code>run_leaderboard</code> walks all tasks and produces a <code>Leaderboard</code> with the overall average.</p>
+<h3 id="step-5-emit-json"><a class="anchor" href="#step-5-emit-json">#</a> Step 5: emit JSON</h3>
+<p><code>write_leaderboard</code> serializes the board. The <code>--include-per-example</code> flag dumps the per-example records so you can diff predictions against the previous run when scores move.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script seeds the fixtures on first run, scores them with the toy adapter (which gets every fixture right), and writes <code>outputs/leaderboard.json</code>. Overall score is 1.0 with the toy adapter; the stub adapter test in <code>test_main.py</code> shows the same harness produces 0.0 when the adapter cannot answer.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>To plug a real model in, write an adapter. The shape:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class HttpAdapter:
+    name = &quot;vendor.v1&quot;
+
+    def __init__(self, endpoint, api_key):
+        self.endpoint = endpoint
+        self.api_key = api_key
+
+    def generate(self, prompts):
+        out = []
+        for prompt in prompts:
+            response = http_post(self.endpoint, prompt, self.api_key)
+            out.append(response[&quot;text&quot;])
+        return out</code></pre>
+      </div>
+    <p>Swap <code>ToyAdapter</code> for <code>HttpAdapter</code> at the top of <code>main()</code>. The harness, the tasks, the metrics, and the leaderboard stay the same.</p>
+<p>Three patterns to enforce when shipping the harness in a real project:</p>
+<ul>
+<li><strong>Pin the task files.</strong> The leaderboard.json carries hash-pinned task content or it carries the JSONLs alongside; otherwise the score moves when the task file does, and you cannot tell which.</li>
+<li><strong>Diff predictions, not just scores.</strong> The <code>--include-per-example</code> flag lets you see what the model said the day the score dropped.</li>
+<li><strong>Cap the batch size.</strong> Real adapters have rate limits. A small batch size keeps the harness compatible across vendors.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-lm-eval-harness.md</code> carries the recipe: JSONL task spec, five metrics, swappable adapter, batched runner, leaderboard JSON with schema string. The task files in <code>outputs/tasks/</code> are the fixtures; copy them into a real project as starters.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a sixth task with a custom metric you write from scratch (BLEU-like overlap, BLEURT-like reference scoring, anything with a clear contract).</li>
+<li>Extend <code>code_exec</code> to capture stdout and accept a list of expected stdouts as targets.</li>
+<li>Add a leaderboard diff command: given two <code>leaderboard.json</code> files, print which tasks moved and by how much.</li>
+<li>Cap latency per example. Wrap the adapter call in a timeout; surface a separate <code>timeouts</code> column in the leaderboard.</li>
+<li>Pin task content with a sha256 in the leaderboard so a future reader can verify they scored the same tasks.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Task spec</td>
+<td>&quot;The eval format&quot;</td>
+<td>JSONL file with prompt, targets, metric, optional extras per example</td>
+</tr>
+<tr>
+<td>Metric</td>
+<td>&quot;How you score&quot;</td>
+<td>Function from (prediction, targets, extras) to a float in [0, 1]</td>
+</tr>
+<tr>
+<td>Adapter</td>
+<td>&quot;The model client&quot;</td>
+<td>Object with a generate(prompts) -&gt; list[str] method; the only model-specific code</td>
+</tr>
+<tr>
+<td>Leaderboard</td>
+<td>&quot;The scoreboard&quot;</td>
+<td>JSON with per-task scores, total counts, latency, and an overall average</td>
+</tr>
+<tr>
+<td>Code exec metric</td>
+<td>&quot;Run it and check&quot;</td>
+<td>Execute the prediction in a restricted namespace, compare against input-output pairs</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>The original lm-evaluation-harness for the production reference, much larger but the same shape.</li>
+<li>HuggingFace&#39;s lighteval for an alternative implementation of the same contract.</li>
+<li>Phase 19 lesson 46 covers the gradient accumulation patterns used in the training stack the harness scores.</li>
+<li>Phase 19 lesson 47 covers the checkpoint format you score against; pin the checkpoint hash in the leaderboard.</li>
+<li>Phase 19 lesson 48 covers the distributed training stack that produced the model under test.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./48-distributed-fsdp-ddp.html"><span>← Previous</span><b>distributed fsdp ddp</b></a>
+      <a class="next" href="./50-hypothesis-generator.html"><span>Next →</span><b>hypothesis generator</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multi-Region LLM Serving and KV Cache Locality — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/11-multi-region-kv-locality/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Multi-Region LLM Serving and KV Cache Locality</h1>
+    <p class="lesson-sub">Round-robin load balancing is actively harmful for cached LLM inference. A request that does not land on the node holding its prefix pays full prefill cost — roughly 800 ms at P50 on a long prompt versus ~80 ms with a cache hit. In 2026 the production pattern is a cache-aware router (vLLM Router in Rust, llm-d router) that consumes KV-cache events and routes on prefix-hash match. Recent research (GORGO) makes cross-region network latency an explicit term in the routing objective. Commercial &quot;cross-region inference&quot; offerings (Bedrock cross-region inference, GKE multi-cluster gateways) treat inference as opaque — they handle availability, not TTFT. JPMorgan and Mayo Clinic ran us-east-1 failover in Nov 2024 at ~22 minutes. The DR reality: 32% of LLM DR failures are because teams backed up weights but forgot tokenizer files or quantization configs.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy prefix-cache-aware router simulator)</b></div><div><span>Prerequisites</span><b>Phase 17 · 04 (vLLM Serving), Phase 17 · 06 (SGLang RadixAttention)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="121.2" cy="116.9" r="11.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="115.8" cy="112.0" r="10.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="110.3" cy="107.0" r="9.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.9" cy="102.1" r="9.2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="99.5" cy="97.2" r="8.6" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.1,97.0 L94.1,85.1 L102.0,97.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multi-Region LLM</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Serving and KV Cache…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why round-robin load balancing breaks cached inference and quantify the TTFT penalty.</li>
+<li>Diagram a cache-aware router: inputs (KV-cache events), algorithm (prefix-hash match), tie-breaker (GPU utilization).</li>
+<li>Name the 32% DR failure driver for LLMs (missing tokenizer files / quantization configs) and state a three-file DR checklist.</li>
+<li>Distinguish commercial cross-region offerings (Bedrock CRI, GKE Multi-Cluster Gateway) from KV-aware routing.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your service runs in us-east-1, us-west-2, and eu-west-1. You put an ALB in front with round-robin. Prefix cache hit rate in production drops to 8%. TTFT P50 triples. Your vLLM logs show every request is paying full prefill cost.</p>
+<p>Round-robin is optimal for stateless services. LLM inference is stateful by design — the KV cache encodes everything the model has seen. Routing blind is routing into the wrong cache.</p>
+<p>Separately, your team has a DR plan. You back up model weights to S3 cross-region. A regional outage hits; you attempt failover; the replica refuses to start. You forgot tokenizer.json, the quantization config, and the RoPE scaling config were in a separate bucket you didn&#39;t sync.</p>
+<p>Multi-region LLM serving is a cache problem, a routing problem, and a DR-hygiene problem — not a load-balancer problem.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="cache-aware-routing"><a class="anchor" href="#cache-aware-routing">#</a> Cache-aware routing</h3>
+<p>Request arrives with a prompt. Router hashes the prefix (say, first 512 tokens); it asks each replica &quot;do you have this prefix cached?&quot;. Replicas publish KV-cache events on a pub/sub channel as they allocate and evict blocks. Router picks the replica with the match, falls through to GPU-util-based tie-breaker if no one does.</p>
+<p><strong>vLLM Router</strong> (Rust, 2026 production-stack): subscribes to <code>kv.cache.block_added</code> events, maintains a prefix-hash → replica index, routes with O(1) lookup. Falls through to least-queue-depth when no match.</p>
+<p><strong>llm-d router</strong>: same pattern, Kubernetes-native. Publishes events via the ControlPlane API.</p>
+<p><strong>SGLang RadixAttention</strong> (Phase 17 · 06) is the intra-replica equivalent. Cross-replica routing is strictly upstream.</p>
+<h3 id="numbers"><a class="anchor" href="#numbers">#</a> Numbers</h3>
+<p>TTFT P50 on a 2K-token prompt, Llama 3.3 70B FP8, H100:</p>
+<ul>
+<li>Cache hit (same replica, prefix resident): ~80 ms.</li>
+<li>Cache miss (cold prefill): ~800 ms.</li>
+</ul>
+<p>10x gap. If your router hits 60-80% of prefix cache across replicas, you approximate single-replica performance at N-replica capacity. If it hits 10%, you approximate naive scaling.</p>
+<h3 id="cross-region-has-a-new-constraint-network-latency"><a class="anchor" href="#cross-region-has-a-new-constraint-network-latency">#</a> Cross-region has a new constraint — network latency</h3>
+<p>Inter-region RTT:</p>
+<ul>
+<li>us-east-1 ↔ us-west-2: ~65 ms.</li>
+<li>us-east-1 ↔ eu-west-1: ~75 ms.</li>
+<li>us-east-1 ↔ ap-southeast-1: ~220 ms.</li>
+</ul>
+<p>If routing takes a request from us-east-1 to a hot prefix in ap-southeast-1, the saved prefill (800 → 80 ms) is dwarfed by 440 ms round-trip. GORGO (2026 research) makes this explicit — minimize <code>prefill_time + network_latency</code> jointly, not prefill alone. Often the answer is to keep routing regional except on massive multi-MB prefixes where prefill dominates.</p>
+<h3 id="commercial-cross-region-inference-does-not-help-here"><a class="anchor" href="#commercial-cross-region-inference-does-not-help-here">#</a> Commercial &quot;cross-region inference&quot; does not help here</h3>
+<p>AWS Bedrock cross-region inference automatically routes requests to other regions during capacity pressure. It optimizes availability, not TTFT, and treats inference as opaque. GKE Multi-Cluster Gateway is the same — service-level failover, no awareness of KV cache.</p>
+<p>You still need an app-layer cache-aware router even when using these. They handle the &quot;us-east-1 is on fire&quot; case. Cache-aware routing handles the TTFT case.</p>
+<h3 id="dr-hygiene-the-32-missing-files-problem"><a class="anchor" href="#dr-hygiene-the-32-missing-files-problem">#</a> DR hygiene — the 32% missing-files problem</h3>
+<p>Widely cited 2026 stat: 32% of LLM DR failures happen because teams backed up weights but forgot:</p>
+<ul>
+<li><code>tokenizer.json</code> or <code>tokenizer.model</code></li>
+<li>Quantization configs (<code>quantize_config.json</code>, AWQ scales, GPTQ zero-points)</li>
+<li>Model-specific configs (RoPE scaling, attention masks, chat templates)</li>
+<li>Engine config (<code>vllm_config.yaml</code>, sampling defaults, LoRA adapter manifests)</li>
+</ul>
+<p>The fix is a three-file minimum DR manifest:</p>
+<ol>
+<li>All files under the HF model repo (weights + configs + tokenizer).</li>
+<li>Engine-specific serving config.</li>
+<li>Deployment manifest (K8s YAML, Dockerfile, dependency lock).</li>
+</ol>
+<p>Plus: run a DR drill quarterly. The JPMorgan us-east-1 drill hit 22 minutes recovery in Nov 2024 only because the playbook was rehearsed.</p>
+<h3 id="data-residency-is-orthogonal"><a class="anchor" href="#data-residency-is-orthogonal">#</a> Data residency is orthogonal</h3>
+<p>EU customer PHI cannot leave EU. If your cache-aware router sends a Paris-originated request to us-east-1 for a prefix match, you have violated GDPR regardless of TTFT gain. Partition routers by residency boundary before optimizing for cache.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>Cache hit vs miss TTFT gap: ~10x (80 ms vs 800 ms on 2K prompt).</li>
+<li>Inter-region RTT US-EU: ~75 ms.</li>
+<li>DR failure: 32% miss tokenizer/quant configs.</li>
+<li>JPMorgan us-east-1 failover Nov 2024: 22 minutes (30-min SLA).</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cache-aware-router</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates three routing strategies (round-robin, cache-aware regional, cache-aware global) on a multi-region workload. Reports cache hit rate, TTFT P50/P99, and cross-region bill.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-multi-region-router.md</code>. Given regions, residency constraints, and SLA, designs a routing plan.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. At what prompt length does cross-region routing beat local-only routing, given 75 ms RTT?</li>
+<li>Your cache hit rate drops from 70% to 12%. Diagnose three possible causes and the observables that would confirm each.</li>
+<li>Design a DR manifest for a 70B AWQ-quantized model served in vLLM with 5 LoRA adapters. List every file and config.</li>
+<li>Argue whether Bedrock cross-region inference is &quot;enough&quot; for a fintech with strict TTFT SLOs. Cite specific behaviors.</li>
+<li>A Paris-origin request matches a prefix in us-east-1. Do you route it? Write the policy.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cache-aware routing</td>
+<td>&quot;smart LB&quot;</td>
+<td>Route on prefix-hash match to KV-cache-holding replica</td>
+</tr>
+<tr>
+<td>KV-cache events</td>
+<td>&quot;cache pub-sub&quot;</td>
+<td>Replicas publish block add/evict; router indexes</td>
+</tr>
+<tr>
+<td>Prefix hash</td>
+<td>&quot;cache key&quot;</td>
+<td>Hash of first N tokens used as router lookup</td>
+</tr>
+<tr>
+<td>GORGO</td>
+<td>&quot;cross-region routing research&quot;</td>
+<td>arXiv 2602.11688; network latency as explicit term</td>
+</tr>
+<tr>
+<td>Cross-region inference</td>
+<td>&quot;Bedrock CRI&quot;</td>
+<td>AWS product; availability failover, not TTFT awareness</td>
+</tr>
+<tr>
+<td>DR manifest</td>
+<td>&quot;the backup list&quot;</td>
+<td>Every file needed to restore — not just weights</td>
+</tr>
+<tr>
+<td>Data residency</td>
+<td>&quot;GDPR boundary&quot;</td>
+<td>Legal constraint on which region sees user data</td>
+</tr>
+<tr>
+<td>RTT</td>
+<td>&quot;round-trip time&quot;</td>
+<td>Network latency; 75 ms US-EU, 220 ms US-APAC</td>
+</tr>
+<tr>
+<td>LLM-aware LB</td>
+<td>&quot;cache-hit LB&quot;</td>
+<td>Cache-aware router as a product category</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://bentoml.com/llm/infrastructure-and-operations/multi-cloud-and-cross-region-inference">BentoML — Multi-cloud and cross-region inference</a></li>
+<li><a href="https://arxiv.org/html/2602.11688v1">arXiv — GORGO (2602.11688)</a> — cross-region KV-cache reuse with network latency term.</li>
+<li><a href="https://tianpan.co/blog/2026-04-17-multi-region-llm-serving-data-residency-routing">TianPan — Multi-Region LLM Serving Cache Locality</a></li>
+<li><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html">AWS Bedrock Cross-Region Inference</a> — availability failover documentation.</li>
+<li><a href="https://github.com/vllm-project/production-stack">vLLM Production Stack Router</a> — cache-aware router source.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-cold-start-mitigation.html"><span>← Previous</span><b>cold start mitigation</b></a>
+      <a class="next" href="./12-edge-inference.html"><span>Next →</span><b>edge inference</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

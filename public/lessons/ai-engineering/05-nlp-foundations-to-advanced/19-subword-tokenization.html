@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Subword Tokenization — BPE, WordPiece, Unigram, SentencePiece — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/05-nlp-foundations-to-advanced/19-subword-tokenization/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">NLP Foundations to Advanced</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls-that-still-ship-in-2026">Pitfalls that still ship in 2026</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · NLP Foundations to Advanced</div>
+    <h1 class="lesson-title">Subword Tokenization — BPE, WordPiece, Unigram, SentencePiece</h1>
+    <p class="lesson-sub">Word tokenizers choke on unseen words. Character tokenizers blow up sequence length. Subword tokenizers split the difference. Every modern LLM ships on one.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 5 · 01 (Text Processing), Phase 5 · 04 (GloVe / FastText / Subword)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — NLP Foundations to Advanced 19">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M74.9,84.5 L81.3,74.8 L87.7,84.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.1,79.2 L75.9,70.5 L81.7,79.2 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.3,73.9 L70.5,66.1 L75.6,73.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.5,76.3 L65.0,50.1 L82.5,76.3 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.7" y="44.0" width="33.7" height="33.7" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(239 59.6 60.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">19</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">NLP FOUNDATIONS TO ADVANCED</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Subword Tokenization</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— BPE, WordPiece…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your vocabulary has 50,000 words. A user types &quot;untokenizable&quot;. Your tokenizer returns <code>[UNK]</code>. The model now has no signal about the word. Worse: the 90th-percentile document in your corpus has 40 rare words, which means 40 bits of dropped information per document.</p>
+<p>Subword tokenization solves this. Common words stay single tokens. Rare words decompose into meaningful pieces: <code>untokenizable</code> → <code>un</code>, <code>token</code>, <code>izable</code>. Training data covers everything because any string is ultimately a sequence of bytes.</p>
+<p>Every frontier LLM in 2026 ships on one of three algorithms (BPE, Unigram, WordPiece), wrapped in one of three libraries (tiktoken, SentencePiece, HF Tokenizers). You cannot ship a language model without picking one.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/05-nlp-foundations-to-advanced/19-subword-tokenization/assets/subword-tokenization.svg" alt="BPE vs Unigram vs WordPiece, character-by-character" loading="lazy" /></figure></p>
+<p><strong>BPE (Byte-Pair Encoding).</strong> Start with a character-level vocabulary. Count every adjacent pair. Merge the most frequent pair into a new token. Repeat until you hit the target vocabulary size. Dominant algorithm: GPT-2/3/4, Llama, Gemma, Qwen2, Mistral.</p>
+<p><strong>Byte-level BPE.</strong> Same algorithm but over raw bytes (256 base tokens) instead of Unicode characters. Guarantees zero <code>[UNK]</code> tokens — any byte sequence encodes. GPT-2 uses 50,257 tokens (256 bytes + 50,000 merges + 1 special).</p>
+<p><strong>Unigram.</strong> Start with a huge vocabulary. Assign each token a unigram probability. Iteratively prune tokens whose removal least increases the corpus log-likelihood. Probabilistic at inference: can sample tokenizations (useful for data augmentation via subword regularization). Used by T5, mBART, ALBERT, XLNet, Gemma.</p>
+<p><strong>WordPiece.</strong> Merge pairs that maximize likelihood of the training corpus rather than raw frequency. Used by BERT, DistilBERT, ELECTRA.</p>
+<p><strong>SentencePiece vs tiktoken.</strong> SentencePiece is the library that <em>trains</em> vocabularies (BPE or Unigram) directly on raw Unicode text, encoding whitespace as <code>▁</code>. tiktoken is OpenAI&#39;s fast <em>encoder</em> against pre-built vocabularies; it does not train.</p>
+<p>Rule of thumb:</p>
+<ul>
+<li><strong>Training a new vocabulary:</strong> SentencePiece (multilingual, no pre-tokenization) or HF Tokenizers.</li>
+<li><strong>Fast inference against GPT vocab:</strong> tiktoken (cl100k_base, o200k_base).</li>
+<li><strong>Both:</strong> HF Tokenizers — one library, training + serving.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">bpe-merge</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-bpe-from-scratch"><a class="anchor" href="#step-1-bpe-from-scratch">#</a> Step 1: BPE from scratch</h3>
+<p>See <code>code/main.py</code>. The loop:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def train_bpe(corpus, num_merges):
+    vocab = {tuple(word) + (&quot;&lt;/w&gt;&quot;,): count for word, count in corpus.items()}
+    merges = []
+    for _ in range(num_merges):
+        pairs = Counter()
+        for symbols, freq in vocab.items():
+            for a, b in zip(symbols, symbols[1:]):
+                pairs[(a, b)] += freq
+        if not pairs:
+            break
+        best = pairs.most_common(1)[0][0]
+        merges.append(best)
+        vocab = apply_merge(vocab, best)
+    return merges</code></pre>
+      </div>
+    <p>Three facts the algorithm encodes. <code>&lt;/w&gt;</code> marks word end so &quot;low&quot; (suffix) and &quot;lower&quot; (prefix) stay distinct. Frequency weighting makes high-frequency pairs win early. The merge list is ordered — inference applies merges in training order.</p>
+<h3 id="step-2-encode-with-the-learned-merges"><a class="anchor" href="#step-2-encode-with-the-learned-merges">#</a> Step 2: encode with the learned merges</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def encode_bpe(word, merges):
+    symbols = list(word) + [&quot;&lt;/w&gt;&quot;]
+    for a, b in merges:
+        i = 0
+        while i &lt; len(symbols) - 1:
+            if symbols[i] == a and symbols[i + 1] == b:
+                symbols = symbols[:i] + [a + b] + symbols[i + 2:]
+            else:
+                i += 1
+    return symbols</code></pre>
+      </div>
+    <p>Naive O(n·|merges|). Production implementations (tiktoken, HF Tokenizers) use merge-rank lookup with priority queues and run in near-linear time.</p>
+<h3 id="step-3-sentencepiece-in-practice"><a class="anchor" href="#step-3-sentencepiece-in-practice">#</a> Step 3: SentencePiece in practice</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import sentencepiece as spm
+
+spm.SentencePieceTrainer.train(
+    input=&quot;corpus.txt&quot;,
+    model_prefix=&quot;my_tokenizer&quot;,
+    vocab_size=8000,
+    model_type=&quot;bpe&quot;,          # or &quot;unigram&quot;
+    character_coverage=0.9995, # lower for CJK (e.g. 0.9995 for English, 0.995 for Japanese)
+    normalization_rule_name=&quot;nmt_nfkc&quot;,
+)
+
+sp = spm.SentencePieceProcessor(model_file=&quot;my_tokenizer.model&quot;)
+print(sp.encode(&quot;untokenizable&quot;, out_type=str))
+# [&#39;▁un&#39;, &#39;token&#39;, &#39;izable&#39;]</code></pre>
+      </div>
+    <p>Notice: no pre-tokenization required, space encoded as <code>▁</code>, <code>character_coverage</code> controls how aggressively rare characters are preserved vs mapped to <code>&lt;unk&gt;</code>.</p>
+<h3 id="step-4-tiktoken-for-openai-compatible-vocabs"><a class="anchor" href="#step-4-tiktoken-for-openai-compatible-vocabs">#</a> Step 4: tiktoken for OpenAI-compatible vocabs</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import tiktoken
+enc = tiktoken.get_encoding(&quot;o200k_base&quot;)
+print(enc.encode(&quot;untokenizable&quot;))        # [127340, 101028]
+print(len(enc.encode(&quot;Hello, world!&quot;)))   # 4</code></pre>
+      </div>
+    <p>Encoding-only. Fast (Rust backend). Exact match with GPT-4/5 tokenization for byte-counting, cost estimation, context-window budgeting.</p>
+<h2 id="pitfalls-that-still-ship-in-2026"><a class="anchor" href="#pitfalls-that-still-ship-in-2026">#</a> Pitfalls that still ship in 2026</h2>
+<ul>
+<li><strong>Tokenizer drift.</strong> Training on vocab A, deploying against vocab B. Token IDs differ; model outputs garbage. Check <code>tokenizer.json</code> hash in CI.</li>
+<li><strong>Whitespace ambiguity.</strong> BPE &quot;hello&quot; vs &quot; hello&quot; produce different tokens. Always specify <code>add_special_tokens</code> and <code>add_prefix_space</code> explicitly.</li>
+<li><strong>Multilingual undertraining.</strong> English-heavy corpora produce vocabularies that split non-Latin scripts into 5-10x more tokens. Same prompt costs 5-10x more in Japanese/Arabic on GPT-3.5. o200k_base partially fixed this.</li>
+<li><strong>Emoji splits.</strong> A single emoji can take 5 tokens. Checkpoint emoji handling when budgeting context.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Training a monolingual model from scratch</td>
+<td>HF Tokenizers (BPE)</td>
+</tr>
+<tr>
+<td>Training a multilingual model</td>
+<td>SentencePiece (Unigram, <code>character_coverage=0.9995</code>)</td>
+</tr>
+<tr>
+<td>Serving an OpenAI-compatible API</td>
+<td>tiktoken (<code>o200k_base</code> for GPT-4+)</td>
+</tr>
+<tr>
+<td>Domain-specific vocab (code, math, protein)</td>
+<td>Train custom BPE on domain corpus, merge with base vocab</td>
+</tr>
+<tr>
+<td>Edge inference, small model</td>
+<td>Unigram (smaller vocabularies work better)</td>
+</tr>
+</tbody></table>
+<p>Vocabulary size is a scaling decision, not a constant. Rough heuristic: 32k for &lt;1B params, 50-100k for 1-10B, 200k+ for multilingual/frontier.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-bpe-vs-wordpiece.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: tokenizer-picker
+description: Pick tokenizer algorithm, vocab size, library for a given corpus and deployment target.
+version: 1.0.0
+phase: 5
+lesson: 19
+tags: [nlp, tokenization]
+---
+
+Given a corpus (size, languages, domain) and deployment target (training from scratch / fine-tuning / API-compatible inference), output:
+
+1. Algorithm. BPE, Unigram, or WordPiece. One-sentence reason.
+2. Library. SentencePiece, HF Tokenizers, or tiktoken. Reason.
+3. Vocab size. Rounded to nearest 1k. Reason tied to model size and language coverage.
+4. Coverage settings. `character_coverage`, `byte_fallback`, special-token list.
+5. Validation plan. Average tokens-per-word on held-out set, OOV rate, compression ratio, round-trip decode equality.
+
+Refuse to train a character-coverage &lt;0.995 tokenizer on corpora with rare-script content. Refuse to ship a vocab without a frozen `tokenizer.json` hash check in CI. Flag any monolingual tokenizer under 16k vocab as likely under-spec.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Train a 500-merge BPE on <code>code/main.py</code>&#39;s tiny corpus. Encode three held-out words. How many produced exactly 1 token vs &gt;1 token?</li>
+<li><strong>Medium.</strong> Compare token counts on 100 English Wikipedia sentences between <code>cl100k_base</code>, <code>o200k_base</code>, and a SentencePiece BPE you train with vocab=32k. Report the compression ratio of each.</li>
+<li><strong>Hard.</strong> Train the same corpus with BPE, Unigram, and WordPiece. Measure downstream accuracy when using each on a small sentiment classifier. Does the choice move the needle by more than 1 point F1?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BPE</td>
+<td>Byte-Pair Encoding</td>
+<td>Greedy merge of most-frequent character pairs until target vocab size hit.</td>
+</tr>
+<tr>
+<td>Byte-level BPE</td>
+<td>No unknown tokens ever</td>
+<td>BPE over raw 256 bytes; GPT-2 / Llama use this.</td>
+</tr>
+<tr>
+<td>Unigram</td>
+<td>Probabilistic tokenizer</td>
+<td>Prunes from a large candidate set using log-likelihood; used by T5, Gemma.</td>
+</tr>
+<tr>
+<td>SentencePiece</td>
+<td>The whitespace one</td>
+<td>Library that trains BPE/Unigram on raw text; space encoded as <code>▁</code>.</td>
+</tr>
+<tr>
+<td>tiktoken</td>
+<td>The fast one</td>
+<td>OpenAI&#39;s Rust-backed BPE encoder for pre-built vocabs. No training.</td>
+</tr>
+<tr>
+<td>Merge list</td>
+<td>The magic numbers</td>
+<td>Ordered list of <code>(a, b) → ab</code> merges; inference applies in order.</td>
+</tr>
+<tr>
+<td>Character coverage</td>
+<td>How rare is too rare?</td>
+<td>Fraction of characters in training corpus the tokenizer must cover; ~0.9995 typical.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1508.07909">Sennrich, Haddow, Birch (2015). Neural Machine Translation of Rare Words with Subword Units</a> — the BPE paper.</li>
+<li><a href="https://arxiv.org/abs/1804.10959">Kudo (2018). Subword Regularization with Unigram Language Model</a> — the Unigram paper.</li>
+<li><a href="https://arxiv.org/abs/1808.06226">Kudo, Richardson (2018). SentencePiece: A simple and language independent subword tokenizer</a> — the library.</li>
+<li><a href="https://huggingface.co/docs/transformers/tokenizer_summary">Hugging Face — Summary of the tokenizers</a> — concise reference.</li>
+<li><a href="https://github.com/openai/tiktoken">OpenAI tiktoken repo</a> — cookbook + encoding list.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./18-multilingual-nlp.html"><span>← Previous</span><b>multilingual nlp</b></a>
+      <a class="next" href="./20-structured-outputs-constrained-decoding.html"><span>Next →</span><b>structured outputs constrained decoding</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

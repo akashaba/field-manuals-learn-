@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HDF5 Tokenized Corpus — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/43-hdf5-tokenized-corpus/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns">Production Patterns</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">HDF5 Tokenized Corpus</h1>
+    <p class="lesson-sub">The downloaded corpus has to land in a layout the trainer can stream from at line speed. JSONL on disk does not survive 16 dataloader workers. HDF5 with a resizable, chunked integer dataset does. This lesson builds streaming tokenization into a resizable HDF5 dataset, sharded write across multiple files, memory-mapped read at training time, and a sliding-window dataloader that produces fixed-length sequences with the right packing.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 43">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="124.4" cy="119.8" r="11.5" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="119.0" cy="114.9" r="10.9" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="113.6" cy="110.0" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.1" cy="105.0" r="9.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.7" cy="100.1" r="9.0" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.0,100.2 L97.3,87.7 L105.6,100.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">43</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">HDF5 Tokenized</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Corpus</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Stream documents into a resizable HDF5 integer dataset with deterministic chunking.</li>
+<li>Shard the write across multiple HDF5 files so failure is bounded and parallelism is possible.</li>
+<li>Read tokens back through HDF5&#39;s page-cache-backed chunked layout so the dataloader copies into batch buffers only at batch time.</li>
+<li>Implement a sliding-window dataloader that emits fixed-length training sequences with explicit packing rules.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A modern language-model training run reads tokens at hundreds of thousands of samples per second across dozens of workers. JSONL on disk dies at the first cold-cache page fault: the JSON parser is slow, the document boundaries are not addressable, and seeking to &quot;sample 4,217,884&quot; requires scanning the file. Even Parquet, which compresses well, is a poor fit because the trainer does not want columns; it wants a flat token stream with O(1) random access.</p>
+<p>HDF5 fits because it offers a chunked, resizable, integer-only dataset whose chunks are page-cache friendly at read time. The trainer asks for a slice of <code>tokens[3,200,000 : 3,200,8192]</code> and HDF5 copies the requested hyperslab from the page cache into a freshly allocated NumPy array. The cost is one open file handle and a chunk-sized page-cache footprint per worker, which is negligible compared to the cost of decoding JSONL.</p>
+<p>The build problem is making the write side honest. Resizable datasets are easy to misuse: write one document at a time and the HDF5 file is fragmented to the point of unusable. Write all documents in one resize and a process death loses the whole shard. The right discipline is buffer-then-extend, with a buffer size that matches the chunk size, and a sharded write that splits the workload across files so a crash loses at most one shard.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  JSONL[JSONL documents] --&gt; Tokenize[Tokenize incrementally]
+  Tokenize --&gt; Buffer[Append to in-memory buffer]
+  Buffer --&gt; Flush{buffer &gt;= chunk?}
+  Flush -- no --&gt; Tokenize
+  Flush -- yes --&gt; Resize[Resize HDF5 dataset]
+  Resize --&gt; Write[Write buffer to new range]
+  Write --&gt; Buffer
+  Buffer --&gt; Close[Final flush + close]
+  Close --&gt; ShardDone[Shard file finalized]
+  ShardDone --&gt; MMapRead[Memory-mapped read]
+  MMapRead --&gt; Window[Sliding-window dataloader]
+  Window --&gt; Train[Train batch]</pre></div><h3 id="resizable-hdf5-done-right"><a class="anchor" href="#resizable-hdf5-done-right">#</a> Resizable HDF5 done right</h3>
+<p>The token dataset is created with <code>maxshape=(None,)</code> and a fixed <code>chunks=(chunk_size,)</code>. Writing proceeds by buffering tokens in a NumPy array of length <code>chunk_size</code>. When the buffer fills, the dataset is resized by exactly <code>chunk_size</code> and the buffer is written into the new range. At end-of-shard the residual buffer is written into a final partial range. Every write is contiguous and chunk-aligned except the last one, which the reader is told to truncate at the recorded <code>token_count</code> in the shard&#39;s HDF5 attributes.</p>
+<h3 id="sharded-write"><a class="anchor" href="#sharded-write">#</a> Sharded write</h3>
+<p>A single HDF5 file is a single point of failure. The pipeline writes shards in parallel: each input shard from Phase 19 lesson 42 produces one HDF5 output shard. A <code>shards.json</code> index records, per shard, the file path, the token count, the document count, and a sha256 over the tokens. The trainer reads <code>shards.json</code> to compute global offsets and to validate the corpus.</p>
+<h3 id="memory-mapped-read"><a class="anchor" href="#memory-mapped-read">#</a> Memory-mapped read</h3>
+<p>At training time each worker opens its share of HDF5 files in <code>swmr=True</code> mode and asks for <code>tokens[start:stop]</code>. HDF5&#39;s chunk layout makes this a page-cache-backed read once the chunk is hot. The worker never materialises the whole file: the slice is copied into the dataloader&#39;s batch buffer, which the dataloader then copies into a pinned-memory training tensor at batch time. The hot path has one syscall per chunk transition; everything else is RAM access.</p>
+<h3 id="sliding-window-dataloader"><a class="anchor" href="#sliding-window-dataloader">#</a> Sliding-window dataloader</h3>
+<p>The dataloader is the only stage that knows about training-sequence length. It picks a random start index in the global token stream, reads <code>window_size + 1</code> tokens, and returns <code>(input, target) = (tokens[:-1], tokens[1:])</code>. Document boundaries are not enforced: a window may straddle two documents, with an explicit <code>boundary_token_id</code> between them so the model learns to use the separator. This is the standard packing rule; it is also the rule a beginner forgets, ending up with a corpus that is 8 percent training boundary tokens and 92 percent natural text.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cc-hdf5-corpus</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>Tokenizer</code> - a byte-level deterministic tokenizer good enough for the demo. The interface is <code>encode(text) -&gt; list[int]</code> and <code>vocab_size</code>.</li>
+<li><code>HDF5ShardWriter</code> - opens a resizable integer dataset, buffers tokens to chunk size, resizes and writes in fixed-size strides, records <code>token_count</code> and <code>sha256</code> as HDF5 attributes on close.</li>
+<li><code>ShardedTokenizationPipeline</code> - iterates input documents, routes them to a writer, and emits a <code>shards.json</code> index.</li>
+<li><code>MmapTokenStore</code> - opens shard files for memory-mapped reads, computes global offsets, exposes a single <code>get_slice(start, stop)</code> API.</li>
+<li><code>SlidingWindowDataloader</code> - picks random windows from the global stream and yields <code>(input_ids, target_ids)</code> NumPy arrays.</li>
+</ul>
+<p>A demo at the bottom of the file builds a tiny in-memory corpus, tokenizes into two shards, opens them via memory map, runs the dataloader for 10 batches, and prints the per-batch shape and a checksum.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script exits zero and prints batch checksums.</p>
+<h2 id="production-patterns"><a class="anchor" href="#production-patterns">#</a> Production Patterns</h2>
+<p>Four patterns scale this lesson to a real training run.</p>
+<p><strong>Chunk size equals the typical read.</strong> The trainer reads <code>window_size + 1</code> tokens per sample. Set the HDF5 chunk to a multiple of <code>window_size</code> and reads are page-cache aligned. Mismatched chunks halve the throughput because every sample touches two chunks.</p>
+<p><strong>Token count in attributes, not in the dataset.</strong> The trailing slice of the dataset may be partially full because the chunk size does not divide the document boundary. Store the real <code>token_count</code> as an HDF5 attribute on the dataset and have the reader truncate at that value. Without this the reader walks off the end into zero-padded tokens and the model learns to predict zero.</p>
+<p><strong>Sharded sha256 with parallel verification.</strong> Each shard has its own sha256 over the token bytes. The trainer can verify all shards in parallel before training starts. A wrong sha256 fails the run early, not on epoch three after sixteen hours.</p>
+<p><strong><code>swmr=True</code> on both sides, with <code>libver=&quot;latest&quot;</code> on the writer.</strong> Single-Writer-Multiple-Reader mode requires the writer to open with <code>libver=&quot;latest&quot;</code>, create every dataset up front, then set <code>file.swmr_mode = True</code>. After that the writer must call <code>dataset.flush()</code> after each resize so reader workers (opened with <code>swmr=True</code>) see consistent data. Skipping <code>libver=&quot;latest&quot;</code> or enabling SWMR after structural changes is a common source of &quot;file is locked&quot; failures.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>One HDF5 per source shard.</strong> The downloader (lesson 42) emits one shard per URL; tokenization (this lesson) emits one HDF5 per source shard. The 1:1 mapping makes resume and partial-failure recovery trivial.</li>
+<li><strong>Boundary token id.</strong> The boundary token is part of the tokenizer vocab and is the only token the dataloader injects. The training loss masks the boundary token if the model is supposed to ignore it; otherwise it learns to use it as a sequence separator.</li>
+<li><strong><code>shards.json</code> as the source of truth.</strong> Adding a new shard means writing the HDF5, computing its sha256, and appending an entry. The trainer reads the file once at startup and never touches the directory listing.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-hdf5-tokenized-corpus.md</code> would, on a real project, describe which tokenizer feeds the pipeline, what chunk size matches the trainer&#39;s window, where <code>shards.json</code> lives in version control, and how dataloader workers are sharded across files. This lesson ships the engine.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>--compression gzip</code> flag to the HDF5 writer and measure the throughput cost on the demo corpus. Defend the chosen default.</li>
+<li>Add a deterministic seed to the sliding-window dataloader and verify two runs with the same seed produce identical batches.</li>
+<li>Add a <code>--validate</code> mode that reads every shard, recomputes the sha256 over its tokens, and compares against <code>shards.json</code>. CI should run this before training starts.</li>
+<li>Compare the dataloader throughput at chunk sizes equal to, half of, and twice the window size. Report the page-cache effect.</li>
+<li>Add a <code>--max-document-tokens</code> flag that truncates very long documents at write time. Defend the trade-off against deciding at read time.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Resizable dataset</td>
+<td>&quot;Append-only&quot;</td>
+<td>An HDF5 dataset with <code>maxshape=(None,)</code> that grows via <code>resize</code> calls in chunk-sized strides</td>
+</tr>
+<tr>
+<td>Chunked layout</td>
+<td>&quot;How HDF5 stores it&quot;</td>
+<td>Fixed-size on-disk pages that the kernel can memory-map and the dataloader can read contiguously</td>
+</tr>
+<tr>
+<td><code>swmr</code> mode</td>
+<td>&quot;Read-while-write&quot;</td>
+<td>Single-Writer-Multiple-Reader mode that lets dataloader workers share the file safely</td>
+</tr>
+<tr>
+<td>Shard index</td>
+<td>&quot;shards.json&quot;</td>
+<td>The durable index of all token shards with offsets and content hashes</td>
+</tr>
+<tr>
+<td>Sliding window</td>
+<td>&quot;Training sample&quot;</td>
+<td>A fixed-length slice of the global token stream that the trainer pairs with its shift-by-one target</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://support.hdfgroup.org/documentation/hdf5/latest/hdf5_chunking.html">HDF5 chunking documentation</a> - the chunked, resizable dataset layout this lesson uses</li>
+<li><a href="https://docs.h5py.org/en/stable/">h5py user guide</a> - Python bindings for HDF5</li>
+<li><a href="https://numpy.org/doc/stable/reference/generated/numpy.memmap.html">NumPy memory mapping</a> - the read-side primitive HDF5 exposes through h5py</li>
+<li>Phase 19 · 42 - the downloader whose output this lesson tokenizes</li>
+<li>Phase 19 · 44 - the cosine schedule that consumes this dataloader</li>
+<li>Phase 19 · 45 - the AMP loop that wraps the training step</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./42-large-corpus-downloader.html"><span>← Previous</span><b>large corpus downloader</b></a>
+      <a class="next" href="./44-cosine-lr-warmup.html"><span>Next →</span><b>cosine lr warmup</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

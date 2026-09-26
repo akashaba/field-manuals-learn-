@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision Transformers and the Patch-Token Primitive — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/01-vision-transformer-patch-tokens/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Vision Transformers and the Patch-Token Primitive</h1>
+    <p class="lesson-sub">Before anything multimodal, an image has to become a sequence of tokens a transformer can eat. The 2020 ViT paper answered this with 16x16 pixel patches, a linear projection, and a position embedding. Five years later every 2026 frontier model (Claude Opus 4.7 at 2576px native, Gemini 3.1 Pro, Qwen3.5-Omni) still begins this way — the encoder changed from ViT to DINOv2 to SigLIP 2, register tokens were added, the positional scheme became 2D-RoPE, but the primitive held. This lesson reads the patch-token pipeline end to end and builds it in stdlib Python so the rest of Phase 12 has a concrete mental model for &quot;visual tokens.&quot;</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, patch tokenizer + geometry calculator)</b></div><div><span>Prerequisites</span><b>Phase 7 (Transformers), Phase 4 (Computer Vision)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 01">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="112.3" cy="108.8" r="10.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="106.9" cy="103.9" r="9.5" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="101.5" cy="99.0" r="8.8" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M87.9,98.9 L96.1,86.7 L104.2,98.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.1,93.6 L90.6,82.3 L98.2,93.6 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.4" y="118.7" width="26.1" height="26.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.5 131.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">01</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Vision Transformers</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">and the Patch-Token…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Convert an HxWx3 image into a sequence of patch tokens with correct positional encoding.</li>
+<li>Compute sequence length, parameter count, and FLOPs for a ViT of a given (patch size, resolution, hidden dim, depth).</li>
+<li>Name the three upgrades that took ViT from 2020 research to 2026 production: self-supervised pretraining (DINO / MAE), register tokens, and native-resolution packing.</li>
+<li>Pick between CLS pooling, mean pooling, and register tokens for a downstream task.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Transformers operate on sequences of vectors. Text is already a sequence (bytes or tokens). An image is a 2D grid of pixels with three color channels — not a sequence. If you flatten every pixel, a 224x224 RGB image becomes 150,528 tokens, and self-attention at that length is a non-starter (quadratic in sequence length).</p>
+<p>Pre-2020 approaches bolted a CNN feature extractor onto the front: ResNet produces a 7x7 feature map of 2048-dim vectors, feed those 49 tokens to a transformer. This works but inherits the CNN&#39;s biases (translation equivariance, local receptive fields) and loses the transformer&#39;s appetite for scale.</p>
+<p>Dosovitskiy et al. (2020) asked the blunt question: what if we skip the CNN? Split the image into fixed-size patches (say 16x16 pixels), linearly project each patch into a vector, add a positional embedding, and feed the sequence to a vanilla transformer. At the time this was heresy — vision without convolutions. With enough data (JFT-300M, then LAION) it beat ResNet on ImageNet and kept improving.</p>
+<p>By 2026 the ViT primitive is the unquestioned foundation. Every open-weights VLM&#39;s vision tower is some descendant (DINOv2, SigLIP 2, CLIP, EVA, InternViT). The question is no longer &quot;should we use patches?&quot; but &quot;what patch size, what resolution schedule, what pretraining objective, what positional encoding.&quot;</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="patches-as-tokens"><a class="anchor" href="#patches-as-tokens">#</a> Patches as tokens</h3>
+<p>Given an image <code>x</code> of shape <code>(H, W, 3)</code> and a patch size <code>P</code>, you carve the image into a grid of <code>(H/P) x (W/P)</code> non-overlapping patches. Each patch is a <code>P x P x 3</code> cube of pixels. Flatten each cube to a <code>3 P^2</code> vector. Apply a shared linear projection <code>W_E</code> of shape <code>(3 P^2, D)</code> to map each patch into the model&#39;s hidden dimension <code>D</code>.</p>
+<p>For the ViT-B/16 canonical config:</p>
+<ul>
+<li>Resolution 224, patch size 16 → grid 14x14 → 196 patch tokens.</li>
+<li>Each patch is <code>16 x 16 x 3 = 768</code> pixel values, projected to <code>D = 768</code>.</li>
+<li>Add a learnable <code>[CLS]</code> token → sequence length 197.</li>
+</ul>
+<p>The patch projection is mathematically identical to a 2D convolution with kernel size <code>P</code>, stride <code>P</code>, and <code>D</code> output channels. That is how production code actually implements it — <code>nn.Conv2d(3, D, kernel_size=P, stride=P)</code>. The &quot;linear projection&quot; framing is conceptual; the kernel framing is efficient.</p>
+<h3 id="positional-embeddings"><a class="anchor" href="#positional-embeddings">#</a> Positional embeddings</h3>
+<p>Patches have no inherent order — the transformer sees them as a bag. Early ViTs added a learnable 1D positional embedding (one 768-dim vector per position, 197 of them). Works, but ties the model to the training resolution: at inference you have to interpolate the position table if you change the grid.</p>
+<p>Modern vision backbones use 2D-RoPE (Qwen2-VL&#39;s M-RoPE, SigLIP 2&#39;s default) or factorized 2D positions. 2D-RoPE rotates the query and key vectors based on the patch&#39;s (row, column) index, so the model infers relative 2D position from the rotation angle. No position table. The model handles arbitrary grid sizes at inference.</p>
+<h3 id="cls-token-pooled-output-and-register-tokens"><a class="anchor" href="#cls-token-pooled-output-and-register-tokens">#</a> CLS token, pooled output, and register tokens</h3>
+<p>What is the image-level representation? Three choices coexist:</p>
+<ol>
+<li><code>[CLS]</code> token. Prepend a learnable vector to the patch sequence. After all transformer blocks, the CLS token&#39;s hidden state is the image representation. Inherited from BERT. Used by original ViT, CLIP.</li>
+<li>Mean pool. Average the patch tokens&#39; output hidden states. Used by SigLIP, DINOv2, most modern VLMs.</li>
+<li>Register tokens. Darcet et al. (2023) observed that ViTs trained without an explicit sink token develop high-norm &quot;artifact&quot; patches that hijack self-attention. Adding 4–16 learnable register tokens absorbs this load and improves dense-prediction quality (segmentation, depth). DINOv2 and SigLIP 2 both ship with registers.</li>
+</ol>
+<p>The choice matters for downstream tasks. CLS is fine for classification. For VLMs that feed patch tokens into an LLM, you skip pooling entirely — every patch becomes an LLM input token. Registers get discarded before handoff (they are scaffolding, not content).</p>
+<h3 id="pretraining-supervised-contrastive-masked-self-distilled"><a class="anchor" href="#pretraining-supervised-contrastive-masked-self-distilled">#</a> Pretraining: supervised, contrastive, masked, self-distilled</h3>
+<p>The 2020 ViT was pretrained with supervised classification on JFT-300M. Quickly supplanted by:</p>
+<ul>
+<li>CLIP (2021): contrastive image-text on 400M pairs. Lesson 12.02.</li>
+<li>MAE (2021, He et al.): mask 75% of patches, reconstruct pixels. Self-supervised, works on pure images.</li>
+<li>DINO (2021) / DINOv2 (2023): self-distillation with student-teacher, no labels, no captions. The 2023 DINOv2 ViT-g/14 is the strongest purely-visual backbone and the default for &quot;dense features&quot; use cases.</li>
+<li>SigLIP / SigLIP 2 (2023, 2025): CLIP with a sigmoid loss and NaFlex for native aspect ratio. The dominant vision tower in 2026 open VLMs (Qwen, Idefics2, LLaVA-OneVision).</li>
+</ul>
+<p>Your choice of pretraining determines what the backbone is good for: CLIP/SigLIP for semantic matching with text, DINOv2 for dense visual features, MAE as a starting point for downstream finetuning.</p>
+<h3 id="scaling-laws"><a class="anchor" href="#scaling-laws">#</a> Scaling laws</h3>
+<p>ViT scaling (Zhai et al. 2022) established that a ViT&#39;s quality obeys predictable laws in model size, data size, and compute. At fixed compute:</p>
+<ul>
+<li>Bigger model + more data → better quality.</li>
+<li>Patch size is a lever on sequence length vs fidelity. Patch 14 (typical for DINOv2/SigLIP SO400m) gives more tokens per image than patch 16; better for OCR and dense tasks, worse for speed.</li>
+<li>Resolution is the other big lever. Going from 224 to 384 to 512 almost always helps, at quadratic cost in FLOPs.</li>
+</ul>
+<p>ViT-g/14 (1B params, patch 14, resolution 224 → 256 tokens) and SigLIP SO400m/14 (400M params, patch 14) are the two workhorse encoders for 2026 open VLMs.</p>
+<h3 id="parameter-count-for-a-vit"><a class="anchor" href="#parameter-count-for-a-vit">#</a> Parameter count for a ViT</h3>
+<p>The full calculation lives in <code>code/main.py</code>. For ViT-B/16 at 224:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">patch_embed = 3 * 16 * 16 * 768 + 768  =  591k
+cls + pos    = 768 + 197 * 768          =  152k
+block        = 4 * 768^2 (QKVO) + 2 * 4 * 768^2 (MLP) + 2 * 2*768 (LN)
+             = 12 * 768^2 + 3k          =  7.1M
+12 blocks    = 85M
+final LN    = 1.5k
+total       ≈ 86M</code></pre>
+      </div>
+    <p>Ball-park every ViT this way before you load the checkpoint. The backbone size sets your VRAM floor in any downstream VLM.</p>
+<h3 id="2026-production-config"><a class="anchor" href="#2026-production-config">#</a> 2026 production config</h3>
+<p>The encoder most open VLMs ship with in 2026 is SigLIP 2 SO400m/14 at native resolution (NaFlex). It has:</p>
+<ul>
+<li>400M parameters.</li>
+<li>Patch size 14, default resolution 384 → 729 patch tokens per image.</li>
+<li>Mean pool for image-level tasks; all 729 patches flow into the LLM for VQA.</li>
+<li>4 register tokens, discarded before LLM handoff.</li>
+<li>2D-RoPE with image-level scaling for native aspect ratio.</li>
+</ul>
+<p>Every decision in that config traces back to a paper you can read.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">image-patch-tokens</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> is a patch tokenizer and geometry calculator. It takes (image H, W, patch P, hidden D, depth L) and reports:</p>
+<ul>
+<li>Grid shape and sequence length after patching.</li>
+<li>Token sequence for a synthetic 8x8 pixel toy image (walk through the flatten + project path).</li>
+<li>Parameter count broken down by patch embed, position embed, transformer blocks, and head.</li>
+<li>FLOPs per forward pass at the target resolution.</li>
+<li>A comparison table across ViT-B/16 @ 224, ViT-L/14 @ 336, DINOv2 ViT-g/14 @ 224, SigLIP SO400m/14 @ 384.</li>
+</ul>
+<p>Run it. Match the parameter counts to the published numbers. Play with patch size and resolution to feel the token-count cost.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-patch-geometry-reader.md</code>. Given a ViT config (patch size, resolution, hidden dim, depth), it produces a token-count, parameter-count, and VRAM estimate with justifications. Use this skill whenever you pick a vision backbone for a VLM — it prevents &quot;the tokens exploded and my LLM context filled up&quot; surprises.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Compute the patch-token sequence length for Qwen2.5-VL at native 1280x720 input with patch size 14. How does that compare to a CLS-only representation?</p>
+</li>
+<li><p>A 1080p frame (1920x1080) at patch 14 produces how many tokens? At 30 FPS over a 5-minute video, how many total visual tokens? Which cost saves you most: pooling, frame sampling, or token merging?</p>
+</li>
+<li><p>Implement mean pooling over patch tokens in pure Python. Verify that mean-pool over 196 tokens of a DINOv2 output matches what the model&#39;s <code>forward</code> returns when you ask for a pooled embedding.</p>
+</li>
+<li><p>Read Section 3 of &quot;Vision Transformers Need Registers&quot; (arXiv:2309.16588). Describe in two sentences what artifact the registers absorb and why it matters for downstream dense prediction.</p>
+</li>
+<li><p>Modify <code>code/main.py</code> to support patch-n&#39;-pack: given a list of images of different resolutions, produce a single packed sequence and the block-diagonal attention mask. Verify against Lesson 12.06 when you reach it.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Patch</td>
+<td>&quot;16x16 pixel square&quot;</td>
+<td>A fixed-size non-overlapping region of the input image; becomes one token</td>
+</tr>
+<tr>
+<td>Patch embedding</td>
+<td>&quot;Linear projection&quot;</td>
+<td>A shared learned matrix (or Conv2d with stride=P) mapping flattened patch pixels to D-dim vectors</td>
+</tr>
+<tr>
+<td>CLS token</td>
+<td>&quot;Class token&quot;</td>
+<td>Prepended learnable vector whose final hidden state represents the whole image; optional in 2026</td>
+</tr>
+<tr>
+<td>Register token</td>
+<td>&quot;Sink token&quot;</td>
+<td>Extra learnable tokens that absorb the high-norm attention artifacts ViTs develop during pretraining</td>
+</tr>
+<tr>
+<td>Position embedding</td>
+<td>&quot;Positional info&quot;</td>
+<td>Per-position vector or rotation making the sequence-order-aware; 2D-RoPE is the modern default</td>
+</tr>
+<tr>
+<td>Grid</td>
+<td>&quot;Patch grid&quot;</td>
+<td>The (H/P) x (W/P) 2D array of patches for a given resolution and patch size</td>
+</tr>
+<tr>
+<td>NaFlex</td>
+<td>&quot;Native flexible resolution&quot;</td>
+<td>SigLIP 2 feature: single model serves multiple aspect ratios and resolutions without retraining</td>
+</tr>
+<tr>
+<td>Backbone</td>
+<td>&quot;Vision tower&quot;</td>
+<td>The pretrained image encoder whose patch-token outputs feed the LLM in a VLM</td>
+</tr>
+<tr>
+<td>Pooling</td>
+<td>&quot;Image-level summary&quot;</td>
+<td>Strategy to turn patch tokens into one vector: CLS, mean, attention pool, or register-based</td>
+</tr>
+<tr>
+<td>Patch 14 vs 16</td>
+<td>&quot;Finer vs coarser grid&quot;</td>
+<td>Patch 14 produces more tokens per image, better fidelity for OCR, slower; patch 16 is the classic default</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2010.11929">Dosovitskiy et al. — An Image is Worth 16x16 Words (arXiv:2010.11929)</a> — original ViT.</li>
+<li><a href="https://arxiv.org/abs/2111.06377">He et al. — Masked Autoencoders Are Scalable Vision Learners (arXiv:2111.06377)</a> — MAE, self-supervised pretraining.</li>
+<li><a href="https://arxiv.org/abs/2304.07193">Oquab et al. — DINOv2 (arXiv:2304.07193)</a> — self-distillation at scale, no labels.</li>
+<li><a href="https://arxiv.org/abs/2309.16588">Darcet et al. — Vision Transformers Need Registers (arXiv:2309.16588)</a> — register tokens and artifact analysis.</li>
+<li><a href="https://arxiv.org/abs/2502.14786">Tschannen et al. — SigLIP 2 (arXiv:2502.14786)</a> — the 2026 default vision tower.</li>
+<li><a href="https://arxiv.org/abs/2106.04560">Zhai et al. — Scaling Vision Transformers (arXiv:2106.04560)</a> — empirical scaling laws.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <span></span>
+      <a class="next" href="./02-clip-contrastive-pretraining.html"><span>Next →</span><b>clip contrastive pretraining</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

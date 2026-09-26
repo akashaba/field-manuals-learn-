@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 19: Distributed Message Queue — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/19.%20Distributed%20Message%20Queue/README.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-understand-the-problem-and-establish-design-scope">Step 1: Understand the Problem and Establish Design Scope</a></li><li><a href="#step-2-propose-high-level-design-and-get-buy-in">Step 2: Propose High-Level Design and Get Buy-In</a></li><li><a href="#step-3-design-deep-dive">Step 3: Design Deep Dive</a></li><li><a href="#step-4-wrap-up">Step 4: Wrap Up</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 19: Distributed Message Queue</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 19">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.6,77.5 L66.2,51.0 L83.9,77.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.8" y="45.0" width="34.0" height="34.0" rx="2" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55" transform="rotate(243 60.8 62.0)"/>
+        <rect x="39.0" y="40.7" width="32.7" height="32.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(226 55.4 57.1)"/>
+        <rect x="34.2" y="36.4" width="31.4" height="31.4" rx="2" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55" transform="rotate(208 50.0 52.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">19</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 19:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Distributed Message…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>We&#39;ll be designing a <strong>distributed message queue</strong> in this chapter.</p>
+<p>Benefits of message queues:</p>
+<ul>
+<li><strong>Decoupling</strong>: Eliminates tight coupling between components. Let them update separately.</li>
+<li><strong>Improved scalability</strong>: Producers and consumers can be scaled independently based on traffic.</li>
+<li><strong>Increased availability</strong>: If one part of the system goes down, other parts continue interacting with the queue.</li>
+<li><strong>Better performance</strong>: Producers can produce messages without waiting for consumer confirmation.</li>
+</ul>
+<p>Some popular message queue implementations - Kafka, RabbitMQ, RocketMQ, Apache Pulsar, ActiveMQ, ZeroMQ.</p>
+<p>Strictly speaking, Kafka and Pulsar are not message queues. They are event streaming platforms.
+There is however a convergence of features which blurs the distinction between message queues and event streaming platforms.</p>
+<p>In this chapter, we&#39;ll be building a message queue with support for more advanced features such as long data retention, repeated message consumption, etc.</p>
+<hr>
+<h2 id="step-1-understand-the-problem-and-establish-design-scope"><a class="anchor" href="#step-1-understand-the-problem-and-establish-design-scope">#</a> Step 1: Understand the Problem and Establish Design Scope</h2>
+<p>Message queues ought to support few basic features - producers produce messages and consumers consume them.
+There are, however, different considerations with regards to performance, message delivery, data retention, etc.</p>
+<p>Here&#39;s a set of potential questions between Candidate and Interviewer:</p>
+<ul>
+<li>C: What&#39;s the format and average message size? Is it text only?</li>
+<li>I: Messages are text-only and usually a few KBs</li>
+<li>C: Can messages be repeatedly consumed?</li>
+<li>I: Yes, messages can be repeatedly consumed by different consumers. This is an added requirement, which traditional message queues don&#39;t support.</li>
+<li>C: Are messages consumed in the same order they were produced?</li>
+<li>I: Yes, order guarantee should be preserved. This is an added requirement, traditional message queues don&#39;t support this.</li>
+<li>C: What are the data retention requirements?</li>
+<li>I: Messages need to have a retention of two weeks. This is an added requirement.</li>
+<li>C: How many producers and consumers do we want to support?</li>
+<li>I: The more, the better.</li>
+<li>C: What data delivery semantic do we want to support? At-most-once, at-least-once, exactly-once?</li>
+<li>I: We definitely want to support at-least-once. Ideally, we can support all and make them configurable.</li>
+<li>C: What&#39;s the target throughput for end-to-end latency?</li>
+<li>I: It should support high throughput for use cases like log aggregation and low throughput for more traditional use cases.</li>
+</ul>
+<h3 id="functional-requirements"><a class="anchor" href="#functional-requirements">#</a> <strong>Functional requirements</strong></h3>
+<ul>
+<li>Producers send messages to a message queue</li>
+<li>Consumers consume messages from the queue</li>
+<li>Messages can be consumed once or repeatedly</li>
+<li>Historical data can be truncated</li>
+<li>Message size is in the KB range</li>
+<li>Order of messages needs to be preserved</li>
+<li>Data delivery semantics is configurable - at-most-once/at-least-once/exactly-once.</li>
+</ul>
+<h3 id="non-functional-requirements"><a class="anchor" href="#non-functional-requirements">#</a> <strong>Non-functional requirements</strong></h3>
+<ul>
+<li><strong>High throughput or low latency</strong>: Configurable based on use-case</li>
+<li><strong>Scalable</strong>: system should be distributed and support a sudden surge in message volume</li>
+<li><strong>Persistent and durable</strong>: data should be persisted on disk and replicated among nodes</li>
+</ul>
+<p>Traditional message queues typically don&#39;t support data retention and don&#39;t provide ordering guarantees. This greatly simplifies the design and we&#39;ll discuss it.</p>
+<hr>
+<h2 id="step-2-propose-high-level-design-and-get-buy-in"><a class="anchor" href="#step-2-propose-high-level-design-and-get-buy-in">#</a> Step 2: Propose High-Level Design and Get Buy-In</h2>
+<p>Key components of a message queue:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/message-queue-components.png" alt="message-queue-components" width="500" />
+</div>
+
+<ul>
+<li>Producer sends messages to a queue</li>
+<li>Consumer subscribes to a queue and consumes the subscribed messages</li>
+<li>Message queue is a service in the middle which decouples producers from consumers, letting them scale independently.</li>
+<li>Producer and consumer are both clients, while the message queue is the server.</li>
+</ul>
+<h3 id="messaging-models"><a class="anchor" href="#messaging-models">#</a> <strong>Messaging models</strong></h3>
+<p>The first type of messaging model is point-to-point and it&#39;s commonly found in traditional message queues:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/point-to-point-model.png" alt="point-to-point-model" width="500" />
+</div>
+
+<ul>
+<li>A message is sent to a queue and it&#39;s consumed by exactly one consumer.</li>
+<li>There can be multiple consumers, but a message is consumed only once.</li>
+<li>Once message is acknowledged as consumed, it is removed from the queue.</li>
+<li>There is no data retention in the point-to-point model, but there is such in our design.</li>
+</ul>
+<p>On the other hand, the publish-subscribe model is more common for event streaming platforms:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/publish-subscribe-model.png" alt="publish-subscribe-model" width="500" />
+</div>
+
+<ul>
+<li>In this model, messages are associated to a topic.</li>
+<li>Consumers are subscribed to a topic and they receive all messages sent to this topic.</li>
+</ul>
+<h3 id="topics-partitions-and-brokers"><a class="anchor" href="#topics-partitions-and-brokers">#</a> <strong>Topics, partitions and brokers</strong></h3>
+<p>What if the data volume for a topic is too large? One way to scale is by splitting a topic into partitions (aka sharding):</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/partitions.png" alt="partitions" width="500" />
+</div>
+
+<ul>
+<li>Messages sent to a topic are evenly distributed across partitions</li>
+<li>The servers that host partitions are called brokers</li>
+<li>Each topic operates like a queue using FIFO for message processing. Message order is preserved within a partition.</li>
+<li>The position of a message within the partition is called an <strong>offset</strong>.</li>
+<li>Each message produced is sent to a specific partition. A partition key specifies which partition a message should land in. <ul>
+<li>Eg a <code>user_id</code> can be used as a partition key to guarantee order of messages for the same user.</li>
+</ul>
+</li>
+<li>Each consumer subscribes to one or more partitions. When there are multiple consumers for the same messages, they form a consumer group.</li>
+</ul>
+<h3 id="consumer-groups"><a class="anchor" href="#consumer-groups">#</a> <strong>Consumer groups</strong></h3>
+<p>Consumer groups are a set of consumers working together to consume messages from a topic:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-groups.png" alt="consumer-groups" width="500" />
+</div>
+
+<ul>
+<li>Messages are replicated per consumer group (not per consumer).</li>
+<li>Each consumer group maintains its own offset.</li>
+<li>Reading messages in parallel by a consumer group improves throughput but hampers the ordering guarantee.</li>
+<li>This can be mitigated by only allowing one consumer from a group to be subscribed to a partition. </li>
+<li>This means that we can&#39;t have more consumers in a group than there are partitions.</li>
+</ul>
+<h3 id="high-level-architecture"><a class="anchor" href="#high-level-architecture">#</a> <strong>High-level architecture</strong></h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/high-level-architecture.png" alt="high-level-architecture" width="500" />
+</div>
+
+<ul>
+<li><strong>Clients</strong>: producer and consumer. Producer pushes messages to a designated topic. Consumer group subscribes to messages from a topic.</li>
+<li><strong>Brokers</strong>: hold multiple partitions. A partition holds a subset of messages for a topic.</li>
+<li><strong>Data storage</strong>: stores messages in partitions.</li>
+<li><strong>State storage</strong>: keeps the consumer states.</li>
+<li><strong>Metadata storage</strong>: stores configuration and topic properties</li>
+<li><strong>Coordination service</strong>: responsible for service discovery (which brokers are alive) and leader election (which broker is leader, responsible for assigning partitions).</li>
+</ul>
+<hr>
+<h2 id="step-3-design-deep-dive"><a class="anchor" href="#step-3-design-deep-dive">#</a> Step 3: Design Deep Dive</h2>
+<p>In order to achieve high throughput and preserve the high data retention requirement, we made some important design choices:</p>
+<ul>
+<li>We chose an on-disk data structure which takes advantage of the properties of modern HDD and disk caching strategies of modern OS-es.</li>
+<li>The message data structure is immutable to avoid extra copying, which we want to avoid in a high volume/high traffic system.</li>
+<li>We designed our writes around batching as small I/O is an enemy of high throughput.</li>
+</ul>
+<h3 id="data-storage"><a class="anchor" href="#data-storage">#</a> <strong>Data storage</strong></h3>
+<p>In order to find the best data store for messages, we must examine a message&#39;s properties:</p>
+<ul>
+<li>Write-heavy, read-heavy</li>
+<li>No update/delete operations. In traditional message queues, there is a &quot;delete&quot; operation as messages are not retained.</li>
+<li>Predominantly sequential read/write access pattern.</li>
+</ul>
+<p>What are our options:</p>
+<ul>
+<li><strong>Database</strong>: not ideal as typical databases don&#39;t support well both write and read heavy systems.</li>
+<li><strong>Write-ahead log (WAL)</strong>: a plain text file which only supports appending to it and is very HDD-friendly. <ul>
+<li>We split partitions into segments to avoid maintaining a very large file.</li>
+<li>Old segments are read-only. Writes are accepted by latest segment only.</li>
+</ul>
+</li>
+</ul>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/wal-example.png" alt="wal-example" width="500" />
+</div>
+
+<p>WAL files are extremely efficient when used with traditional HDDs. </p>
+<p>There is a misconception that HDD acces is slow, but that hugely depends on the access pattern.
+When the access pattern is sequential (as in our case), HDDs can achieve several MB/s write/read speed which is sufficient for our needs.
+We also piggyback on the fact that the OS caches disk data in memory aggressively.</p>
+<h3 id="message-data-structure"><a class="anchor" href="#message-data-structure">#</a> <strong>Message data structure</strong></h3>
+<p>It is important that the message schema is compliant between producer, queue and consumer to avoid extra copying. This allows much more efficient processing.</p>
+<p>Example message structure:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/message-structure.png" alt="message-structure" width="500" />
+</div>
+
+<p>The key of the message specifies which partition a message belongs to. An example mapping is <code>hash(key) % numPartitions</code>.
+For more flexibility, the producer can override default keys in order to control which partitions messages are distributed to.</p>
+<p>The message value is the payload of a message. It can be plaintext or a compressed binary block.</p>
+<p><strong>Note:</strong> Message keys, unlike traditional KV stores, need not be unique. It is acceptable to have duplicate keys and for it to even be missing.</p>
+<p>Other message files:</p>
+<ul>
+<li><strong>Topic</strong>: topic the message belongs to</li>
+<li><strong>Partition</strong>: The ID of the partition a message belongs to</li>
+<li><strong>Offset</strong>: The position of the message in a partition. A message can be located via <code>topic</code>, <code>partition</code>, <code>offset</code>.</li>
+<li><strong>Timestamp</strong>: When the message is stored</li>
+<li><strong>Size</strong>: the size of this message</li>
+<li><strong>CRC</strong>: checksum to ensure message integrity</li>
+</ul>
+<p>Additional features such as filtering can be supported by adding additional fields.</p>
+<h3 id="batching"><a class="anchor" href="#batching">#</a> <strong>Batching</strong></h3>
+<p>Batching is critical for the performance of our system. We apply it in the producer, consumer and message queue.</p>
+<p>It is critical because:</p>
+<ul>
+<li>It allows the operating system to group messages together, amortizing the cost of expensive network round trips</li>
+<li>Messages are written to the WAL in groups sequentially, which leads to a lot of sequential writes and disk caching.</li>
+</ul>
+<p>There is a trade-off between latency and throughput:</p>
+<ul>
+<li>High batching leads to high throughput and higher latency. </li>
+<li>Less batching leads to lower throughput and lower latency.</li>
+</ul>
+<p>If we need to support lower latency since the system is deployed as a traditional message queue, the system could be tuned to use a smaller batch size.</p>
+<p>If tuned for throughput, we might need more partitions per topic to compensate for the slower sequential disk write throughput.</p>
+<h3 id="producer-flow"><a class="anchor" href="#producer-flow">#</a> <strong>Producer flow</strong></h3>
+<p>If a producer wants to send a message to a partition, which broker should it connect to?</p>
+<p>One option is to introduce a routing layer, which route messages to the correct broker. If replication is enabled, the correct broker is the leader replica:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/routing-layer.png" alt="routing-layer" width="500" />
+</div>
+
+<ul>
+<li>Routing layer reads the replication plan from the metadata store and caches it locally.</li>
+<li>Producer sends a message to the routing layer.</li>
+<li>Message is forwarded to broker 1 who is the leader of the given partition</li>
+<li>Follower replicas pull the new message from the leader. Once enough confirmations are received, the leader commits the data and responds to the producer.</li>
+</ul>
+<p>The reason for having replicas is to enable fault tolerance.</p>
+<p>This approach works but has some drawbacks:</p>
+<ul>
+<li>Additional network hops due to the extra component</li>
+<li>The design doesn&#39;t enable batching messages</li>
+</ul>
+<p>To mitigate these issues, we can embed the routing layer into the producer:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/routing-layer-producer.png" alt="routing-layer-producer" width="500" />
+</div>
+
+<ul>
+<li>Fewer network hops lead to lower latency</li>
+<li>Producers can control which partition a message is routed to</li>
+<li>The buffer allows us to batch messages in-memory and send out larger batches in a single request, which increases throughput.</li>
+</ul>
+<p>The batch size choice is a classical trade-off between throughput and latency. </p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/batch-size-throughput-vs-latency.png" alt="batch-size-throughput-vs-latency" width="500" />
+</div>
+
+<ul>
+<li>Larger batch size leads to longer wait time before batch is committed. </li>
+<li>Smaller batch size leads to request being sent sooner and having lower latency but lower throughput.</li>
+</ul>
+<h3 id="consumer-flow"><a class="anchor" href="#consumer-flow">#</a> <strong>Consumer flow</strong></h3>
+<p>The consumer specifies its offset in a partition and receives a chunk of messages, beginning from that offset:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-example.png" alt="consumer-example" width="500" />
+</div>
+
+<p>One important consideration when designing the consumer is whether to use a push or a pull model:</p>
+<ul>
+<li><strong>Push model</strong>: leads to lower latency as broker pushes messages to consumer as it receives them.<ul>
+<li>However, if rate of consumption falls behind the rate of production, the consumer can be overwhelmed.</li>
+<li>It is challenging to deal with consumers with varying processing power as the broker controls the rate of consumption.</li>
+</ul>
+</li>
+<li><strong>Pull model</strong>: leads to the consumer controlling the consumption rate. <ul>
+<li>If rate of consumption is slow, consumer will not be overwhelmed and we can scale it to catch up.</li>
+<li>The pull model is more suitable for batch processing, because with the push model, the broker can&#39;t know how many messages a consumer can handle. </li>
+<li>With the pull model, on the other hand, consumers can aggressively fetch large message batches.</li>
+<li>The down side is the higher latency and extra network calls when there are no new messages. Latter issue can be mitigated using long polling.</li>
+</ul>
+</li>
+</ul>
+<p>Hence, most message queues (and us) choose the pull model.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-flow.png" alt="consumer-flow" width="500" />
+</div>
+
+<ul>
+<li>A new consumer subscribes to topic A and joins group 1.</li>
+<li>The correct broker node is found by hashing the group name. This way, all consumers in a group connect to the same broker.</li>
+<li>Note that this consumer group coordinator is different from the coordination service (ZooKeeper).</li>
+<li>Coordinator confirms that the consumer has joined the group and assigns partition 2 to that consumer.</li>
+<li>There are different partition assignment strategies - round-robin, range, etc.</li>
+<li>Consumer fetches latest messages from the last offset. The state storage keeps the consumer offsets.</li>
+<li>Consumer processes messages and commits the offset to the broker. The order of those operations affects the message delivery semantics.</li>
+</ul>
+<h3 id="consumer-rebalancing"><a class="anchor" href="#consumer-rebalancing">#</a> <strong>Consumer rebalancing</strong></h3>
+<p>Consumer rebalancing is responsible for deciding which consumers are responsible for which partition.</p>
+<p>This process occurs when a consumer joins/leaves or a partition is added/removed.</p>
+<p>The broker, acting as a coordinator plays a huge role in orchestrating the rebalancing workflow.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-rebalancing.png" alt="consumer-rebalancing" width="500" />
+</div>
+
+<ul>
+<li>All consumers from the same group are connected to the same coordinator. The coordinator is found by hashing the group name.</li>
+<li>When the consumer list changes, the coordinator chooses a new leader of the group.</li>
+<li>The leader of the group calculates a new partition dispatch plan and reports it back to the coordinator, which broadcasts it to the other consumers.</li>
+</ul>
+<p>When the coordinator stops receiving heartbeats from the consumers in a group, a rebalancing is triggered:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-rebalance-example.png" alt="consumer-rebalance-example" width="500" />
+</div>
+
+<p>Let&#39;s explore what happens when a consumer joins a group:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-join-group-usecase.png" alt="consumer-join-group-usecase" width="500" />
+</div>
+
+<ul>
+<li>Initially, only consumer A is in the group and it consumes all partitions.</li>
+<li>Consumer B sends a request to join the group.</li>
+<li>The coordinator notifies all group members that it&#39;s time to rebalance passively - as a response to the heartbeat.</li>
+<li>Once all consumers rejoin the group, the coordinator chooses a leader and notifies the rest about the election result.</li>
+<li>The leader generates the partition dispatch plan and sends it to the coordinator. Others wait for the dispatch plan.</li>
+<li>Consumers start consuming from the newly assigned partitions.</li>
+</ul>
+<p>Here&#39;s what happens when a consumer leaves the group:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-leaves-group-usecase.png" alt="consumer-leaves-group-usecase" width="500" />
+</div>
+
+<ul>
+<li>Consumer A and B are in the same group</li>
+<li>Consumer B asks to leave the group</li>
+<li>When coordinator receives A&#39;s heartbeat, it informs them that it&#39;s time to rebalance.</li>
+<li>The rest of the steps are the same.</li>
+</ul>
+<p>The process is similar when a consumer doesn&#39;t send a heartbeat for a long time:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/consumer-no-heartbeat-usecase.png" alt="consumer-no-heartbeat-usecase" width="500" />
+</div>
+
+<h3 id="state-storage"><a class="anchor" href="#state-storage">#</a> <strong>State storage</strong></h3>
+<p>The state storage stores mapping between partitions and consumers, as well as the last consumed offsets for a partition.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/state-storage.png" alt="state-storage" width="500" />
+</div>
+
+<p>Group 1&#39;s offset is at 6, meaning all previous messages are consumed. If a consumer crashes, the new consumer will continue from that message on wards.</p>
+<p>Data access patterns for consumer states:</p>
+<ul>
+<li>Frequent read/write operations, but low volume</li>
+<li>Data is updated frequently, but rarely deleted</li>
+<li>Random read/write</li>
+<li>Data consistency is important</li>
+</ul>
+<p>Given these requirements, a fast KV storage like Zookeeper is ideal.</p>
+<h3 id="metadata-storage"><a class="anchor" href="#metadata-storage">#</a> <strong>Metadata storage</strong></h3>
+<p>The metadata storage stores configuration and topic properties - partition number, retention period, replica distribution.</p>
+<p>Metadata doesn&#39;t change often and volume is small, but there is a high consistency requirement.
+Zookeeper is a good choice for this storage.</p>
+<h3 id="zookeeper"><a class="anchor" href="#zookeeper">#</a> <strong>ZooKeeper</strong></h3>
+<p>Zookeeper is essential for building distributed message queues.</p>
+<p>It is a hierarchical key-value store, commonly used for a distributed configuration, synchronization service and naming registry (ie service discovery).</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/zookeeper.png" alt="zookeeper" width="500" />
+</div>
+
+<p>With this change, the broker only needs to maintain data for the messages. Metadata and state storage is in Zookeeper.</p>
+<p>Zookeeper also helps with leader election of the broker replicas.</p>
+<h3 id="replication"><a class="anchor" href="#replication">#</a> <strong>Replication</strong></h3>
+<p>In distributed systems, hardware issues are inevitable. We can tackle this via replication to achieve high availability.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/replication-example.png" alt="replication-example" width="500" />
+</div>
+
+<ul>
+<li>Each partition is replicated across multiple brokers, but there is only one leader replica.</li>
+<li>Producers send messages to leader replicas</li>
+<li>Followers pull the replicated messages from the leader</li>
+<li>Once enough replicas are synchronized, the leader returns acknowledgment to the producer</li>
+<li>Distribution of replicas for each partition is called the replica distribution plan.</li>
+<li>The leader for a given partition creates the replica distribution plan and saves it in Zookeeper</li>
+</ul>
+<h3 id="in-sync-replicas"><a class="anchor" href="#in-sync-replicas">#</a> <strong>In-sync replicas</strong></h3>
+<p>One problem we need to tackle is keeping messages in-sync between the leader and the followers for a given partition.</p>
+<p>In-sync replicas (ISR) are replicas for a partition that stay in-sync with the leader.</p>
+<p>The <code>replica.lag.max.messages</code> defines how many messages can a replica be lagging behind the leader to be considered in-sync.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/in-sync-replicas-example.png" alt="in-sync-replicas-example" width="500" />
+</div>
+
+<ul>
+<li>Committed offset is 13</li>
+<li>Two new messages are written to the leader, but not committed yet.</li>
+<li>A message is committed once all replicas in the ISR have synchronized that message</li>
+<li>Replica 2 and 3 have fully caught up with leader, hence, they are in ISR</li>
+<li>Replica 4 has lagged behind, hence, is removed from ISR for now</li>
+</ul>
+<p>ISR reflects a trade-off between performance and durability.</p>
+<ul>
+<li>In order for producers not to lose messages, all replicas should be in sync before sending an acknowledgment</li>
+<li>But a slow replica will cause the whole partition to become unavailable</li>
+</ul>
+<p>Acknowledgment handling is configurable.</p>
+<p><code>ACK=all</code> means that all replicas in ISR have to sync a message. Message sending is slow, but message durability is highest.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/ack-all.png" alt="ack-all" width="500" />
+</div>
+
+<p><code>ACK=1</code> means that producer receives acknowledgment once leader receives the message. Message sending is fast, but message durability is low.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/ack-1.png" alt="ack-1" width="500" />
+</div>
+
+<p><code>ACK=0</code> means that producer sends messages without waiting for any acknowledgment from leader. Message sending is fastest, message durability is lowest.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/ack-0.png" alt="ack-0" width="500" />
+</div>
+
+<p>On the consumer side, we can connect all consumers to the leader for a partition and let them read messages from it:</p>
+<ul>
+<li>This makes for the simplest design and easiest operation</li>
+<li>Messages in a partition are sent to only one consumer in a group, which limits the connections to the leader replica</li>
+<li>The number of connections to leader replica is typically not high as long as the topic is not super hot</li>
+<li>We can scale a hot topic by increasing the number of partitions and consumers</li>
+<li>In certain scenarios, it might make sense to let a consumer lead from an ISR, eg if they&#39;re located in a separate DC</li>
+</ul>
+<p>The ISR list is maintained by the leader who tracks the lag between itself and each replica.</p>
+<h3 id="scalability"><a class="anchor" href="#scalability">#</a> <strong>Scalability</strong></h3>
+<p>Let&#39;s evaluate how we can scale different parts of the system.</p>
+<h4 id="producer"><a class="anchor" href="#producer">#</a> Producer</h4>
+<p>The producer is much smaller than the consumer. Its scalability can easily be achieved by adding/removing new producer instances.</p>
+<h4 id="consumer"><a class="anchor" href="#consumer">#</a> Consumer</h4>
+<p>Consumer groups are isolated from each other. It is easy to add/remove consumer groups at will.</p>
+<p>Rebalancing help handle the case when consumers are added/removed from a group gracefully.</p>
+<p>Consumer groups are rebalancing help us achieve scalability and fault tolerance.</p>
+<h4 id="broker"><a class="anchor" href="#broker">#</a> Broker</h4>
+<p>How do brokers handle failure?</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/broker-failure-recovery.png" alt="broker-failure-recovery" width="500" />
+</div>
+
+<ul>
+<li>Once a broker fails, there are still enough replicas to avoid partition data loss</li>
+<li>A new leader is elected and the broker coordinator redistributes partitions which were at the failed broker to existing replicas</li>
+<li>Existing replicas pick up the new partitions and act as followers until they&#39;re caught up with the leader and become ISR</li>
+</ul>
+<p>Additional considerations to make the broker fault-tolerant:</p>
+<ul>
+<li>The minimum number of ISRs balances latency and safety. You can fine-tune it to meet your needs.</li>
+<li>If all replicas of a partition are in the same node, then it&#39;s a waste of resources. Replicas should be across different brokers.</li>
+<li>If all replicas of a partition crash, then the data is lost forever. Spreading replicas across data centers can help, but it adds up a lot of latency. One option is to use <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27846330">data mirroring</a> as a work around.</li>
+</ul>
+<p>How do we handle redistribution of replicas when a new broker is added?</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/broker-replica-redistribution.png" alt="broker-replica-redistribution" width="500" />
+</div>
+
+<ul>
+<li>We can temporarily allow more replicas than configured, until new broker catches up</li>
+<li>Once it does, we can remove the partition replica which is no longer needed</li>
+</ul>
+<h4 id="partition"><a class="anchor" href="#partition">#</a> Partition</h4>
+<p>Whenever a new partition is added, the producer is notified and consumer rebalancing is triggered.</p>
+<p>In terms of data storage, we can only store new messages to the new partition vs. trying to copy all old ones:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/partition-exmaple.png" alt="partition-example" width="500" />
+</div>
+
+<p>Decreasing the number of partitions is more involved:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/partition-decrease.png" alt="partition-decrease" width="500" />
+</div>
+
+<ul>
+<li>Once a partition is decommissioned, new messages are only received by remaining partitions</li>
+<li>The decommissioned partition isn&#39;t removed immediately as messages can still be consumed from it</li>
+<li>Once a pre-configured retention period passes, do we truncate the data and storage space is freed up</li>
+<li>During the transitional period, producers only send messages to active partitions, but consumers read from all</li>
+<li>Once retention period expires, consumers are rebalanced</li>
+</ul>
+<h3 id="data-delivery-semantics"><a class="anchor" href="#data-delivery-semantics">#</a> <strong>Data delivery semantics</strong></h3>
+<p>Let&#39;s discuss different delivery semantics.</p>
+<h4 id="at-most-once"><a class="anchor" href="#at-most-once">#</a> At-most once</h4>
+<p>With this guarantee, messages are delivered not more than once and could not be delivered at all.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/at-most-once.png" alt="at-most-once" width="500" />
+</div>
+
+<ul>
+<li>Producer sends a message asynchronously to a topic. If message delivery fails, there is no retry.</li>
+<li>Consumer fetches message and immediately commits offset. If consumer crashes before processing the message, the message will not be processed.</li>
+</ul>
+<h4 id="at-least-once"><a class="anchor" href="#at-least-once">#</a> At-least once</h4>
+<p>A message can be sent more than once and no message should be left unprocessed.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/at-least-once.png" alt="at-least-once" width="500" />
+</div>
+
+<ul>
+<li>Producer sends message with <code>ack=1</code> or <code>ack=all</code>. If there is any issue, it will keep retrying.</li>
+<li>Consumer fetches the message and consumes the offset only after it&#39;s done processing it.</li>
+<li>It is possible for a message to be delivered more than once if eg consumer crashes before committing offset but after processing it.</li>
+<li>This is why, this is good for use-cases where data duplication is acceptable or deduplication is possible.</li>
+</ul>
+<h4 id="exactly-once"><a class="anchor" href="#exactly-once">#</a> Exactly once</h4>
+<p>Extremely costly to implement for the system, albeit it&#39;s the friendliest guarantee to users:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/exactly-once.png" alt="exactly-once" width="500" />
+</div>
+
+<h3 id="advanced-features"><a class="anchor" href="#advanced-features">#</a> <strong>Advanced features</strong></h3>
+<p>Let&#39;s discuss some advanced features, we might discuss in the interview.</p>
+<h4 id="message-filtering"><a class="anchor" href="#message-filtering">#</a> Message filtering</h4>
+<p>Some consumers might want to only consume messages of a certain type within a partition.</p>
+<p>This can be achieved by building separate topics for each subset of messages, but this can be costly if systems have too many differing use-cases.</p>
+<ul>
+<li>It is a waste of resources to store the same message on different topics</li>
+<li>Producer is now tightly coupled to consumers as it changes with each new consumer requirement</li>
+</ul>
+<p>We can resolve this using message filtering.</p>
+<ul>
+<li>A naive approach would be to do the filtering on the consumer-side, but that introduces unnecessary consumer traffic</li>
+<li>Alternatively, messages can have tags attached to them and consumers can specify which tags they&#39;re subscribed to</li>
+<li>Filtering could also be done via the message payloads but that can be challenging and unsafe for encrypted/serialized messages</li>
+<li>For more complex mathematical formulaes, the broker could implement a grammar parser or script executor, but that can be heavyweight for the message queue</li>
+</ul>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/message-filtering.png" alt="message-filtering" width="500" />
+</div>
+
+<h4 id="delayed-messages-scheduled-messages"><a class="anchor" href="#delayed-messages-scheduled-messages">#</a> Delayed messages &amp; scheduled messages</h4>
+<p>For some use-cases, we might want to delay or schedule message delivery. 
+For example, we might submit a payment verification check for 30m from now, which triggers the consumer to see if a payment was successful.</p>
+<p>This can be achieved by sending messages to temporary storage in the broker and moving the message to the partition at the right time:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/19.%20Distributed%20Message%20Queue/images/delayed-message-implementation.png" alt="delayed-message-implementation" width="500" />
+</div>
+
+<ul>
+<li>The temporary storage can be one or more special message topics</li>
+<li>The timing function can be achieved using dedicated delay queues or a <a href="http://www.cs.columbia.edu/~nahum/w6998/papers/sosp87-timing-wheels.pdf">hierarchical time wheel</a></li>
+</ul>
+<hr>
+<h2 id="step-4-wrap-up"><a class="anchor" href="#step-4-wrap-up">#</a> Step 4: Wrap Up</h2>
+<p>Additional talking points:</p>
+<ul>
+<li><strong>Protocol of communication</strong>: Important considerations - support all use-cases and high data volume, as well as verify message integrity. Popular protocols - AMQP and Kafka protocol.</li>
+<li><strong>Retry consumption</strong>: if we can&#39;t process a message immediately, we could send it to a dedicated retry topic to be attempted later.</li>
+<li><strong>Historical data archive</strong>: old messages can be backed up in high-capacity storages such as HDFS or object storage (eg S3).</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./18-google-maps.html"><span>← Previous</span><b>google maps</b></a>
+      <a class="next" href="./20-metrics-monitoring-and-alerting-system.html"><span>Next →</span><b>metrics monitoring and alerting system</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

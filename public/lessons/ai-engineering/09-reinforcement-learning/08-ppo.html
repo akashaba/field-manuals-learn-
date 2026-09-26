@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Proximal Policy Optimization (PPO) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/08-ppo/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Proximal Policy Optimization (PPO)</h1>
+    <p class="lesson-sub">A2C throws away each rollout after one update. PPO wraps the policy gradient in a clipped importance ratio so you can do 10+ epochs on the same data without the policy exploding. Schulman et al. (2017). Still the default policy-gradient algorithm in 2026.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 9 · 06 (REINFORCE), Phase 9 · 07 (Actor-Critic)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M87.1,98.0 L95.1,86.0 L103.2,98.0 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.3,92.7 L89.7,81.6 L97.1,92.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.6" y="117.9" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.6 130.9)"/>
+        <circle cx="21.2" cy="126.0" r="12.3" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.7" cy="121.0" r="11.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Proximal Policy</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Optimization (PPO)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A2C (Lesson 07) is on-policy: the gradient <code>E_{π_θ}[A · ∇ log π_θ]</code> requires data sampled from the <em>current</em> <code>π_θ</code>. Take one update, and <code>π_θ</code> changes; the data you used is now off-policy. Re-use it and your gradient is biased.</p>
+<p>Rollouts are expensive. On Atari, one rollout across 8 envs × 128 steps = 1024 transitions and a dozen seconds of environment time. Throwing that away after one gradient step is wasteful.</p>
+<p>Trust Region Policy Optimization (TRPO, Schulman 2015) was the first fix: constrain each update so the KL divergence between old and new policy stays below <code>δ</code>. Theoretically clean, but requires a conjugate-gradient solve per update. Nobody runs TRPO in 2026.</p>
+<p>PPO (Schulman et al. 2017) replaces the hard trust-region constraint with a simple clipped objective. One extra line of code. Ten epochs per rollout. No conjugate gradients. Good-enough theoretical guarantees. Nine years later it is still the default policy-gradient algorithm for everything from MuJoCo to RLHF.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/08-ppo/assets/ppo.svg" alt="PPO clipped surrogate objective: ratio clipping at 1 ± ε" loading="lazy" /></figure></p>
+<p><strong>The importance ratio.</strong></p>
+<p><code>r_t(θ) = π_θ(a_t | s_t) / π_{θ_old}(a_t | s_t)</code></p>
+<p>This is the likelihood ratio of the new policy vs the policy that collected the data. <code>r_t = 1</code> means no change. <code>r_t = 2</code> means the new policy is twice as likely to take <code>a_t</code> as the old.</p>
+<p><strong>The clipped surrogate.</strong></p>
+<p><code>L^{CLIP}(θ) = E_t [ min( r_t(θ) A_t, clip(r_t(θ), 1-ε, 1+ε) A_t ) ]</code></p>
+<p>Two terms:</p>
+<ul>
+<li>If the advantage <code>A_t &gt; 0</code> and the ratio tries to grow past <code>1 + ε</code>, the clip flattens the gradient — don&#39;t push a good action further than <code>+ε</code> above old probability.</li>
+<li>If the advantage <code>A_t &lt; 0</code> and the ratio tries to grow past <code>1 - ε</code> (meaning we would make a bad action more likely compared to its clipped reduction), the clip caps the gradient — don&#39;t push a bad action below <code>-ε</code>.</li>
+</ul>
+<p>The <code>min</code> handles the other direction: if the ratio has moved in the <em>beneficial</em> direction, you still get the gradient (no clipping on the side that would hurt you).</p>
+<p>Typical <code>ε = 0.2</code>. Plot the objective as a function of <code>r_t</code>: a piecewise-linear function with a flat roof on the &quot;good side&quot; and a flat floor on the &quot;bad side.&quot;</p>
+<p><strong>The full PPO loss.</strong></p>
+<p><code>L(θ, φ) = L^{CLIP}(θ) - c_v · (V_φ(s_t) - V_t^{target})² + c_e · H(π_θ(·|s_t))</code></p>
+<p>Same actor-critic structure as A2C. Three coefficients, usually <code>c_v = 0.5</code>, <code>c_e = 0.01</code>, <code>ε = 0.2</code>.</p>
+<p><strong>The training loop.</strong></p>
+<ol>
+<li>Collect <code>N × T</code> transitions across <code>N</code> parallel envs for <code>T</code> steps each.</li>
+<li>Compute advantages (GAE), freeze them as constants.</li>
+<li>Freeze <code>π_{θ_old}</code> as a snapshot of current <code>π_θ</code>.</li>
+<li>For <code>K</code> epochs, for each minibatch of <code>(s, a, A, V_target, log π_old(a|s))</code>:<ul>
+<li>Compute <code>r_t(θ) = exp(log π_θ(a|s) - log π_old(a|s))</code>.</li>
+<li>Apply <code>L^{CLIP}</code> + value loss + entropy.</li>
+<li>Gradient step.</li>
+</ul>
+</li>
+<li>Discard the rollout. Return to step 1.</li>
+</ol>
+<p><code>K = 10</code> and minibatches of 64 is a standard hyperparameter set. PPO is robust: the exact numbers rarely matter within ±50%.</p>
+<p><strong>KL-penalty variant.</strong> The original paper proposed an alternative using an adaptive KL penalty: <code>L = L^{PG} - β · KL(π_θ || π_old)</code> with <code>β</code> adjusted based on observed KL. The clipping version became dominant; the KL variant survives in RLHF (where KL to the reference policy is a separate constraint you always want anyway).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ppo-clip</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-capture-log-_olda-s-at-rollout-time"><a class="anchor" href="#step-1-capture-log-_olda-s-at-rollout-time">#</a> Step 1: capture <code>log π_old(a | s)</code> at rollout time</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for step in range(T):
+    probs = softmax(logits(theta, state_features(s)))
+    a = sample(probs, rng)
+    s_next, r, done = env.step(s, a)
+    buffer.append({
+        &quot;s&quot;: s, &quot;a&quot;: a, &quot;r&quot;: r, &quot;done&quot;: done,
+        &quot;v_old&quot;: value(w, state_features(s)),
+        &quot;log_pi_old&quot;: log(probs[a] + 1e-12),
+    })
+    s = s_next</code></pre>
+      </div>
+    <p>The snapshot is taken once, at rollout time. It does not change during the update epochs.</p>
+<h3 id="step-2-compute-gae-advantages-lesson-07"><a class="anchor" href="#step-2-compute-gae-advantages-lesson-07">#</a> Step 2: compute GAE advantages (Lesson 07)</h3>
+<p>Same as A2C. Normalize across the batch.</p>
+<h3 id="step-3-clipped-surrogate-update"><a class="anchor" href="#step-3-clipped-surrogate-update">#</a> Step 3: clipped surrogate update</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for _ in range(K_EPOCHS):
+    for mb in minibatches(buffer, size=64):
+        for rec in mb:
+            x = state_features(rec[&quot;s&quot;])
+            probs = softmax(logits(theta, x))
+            logp = log(probs[rec[&quot;a&quot;]] + 1e-12)
+            ratio = exp(logp - rec[&quot;log_pi_old&quot;])
+            adv = rec[&quot;advantage&quot;]
+            surrogate = min(
+                ratio * adv,
+                clamp(ratio, 1 - EPS, 1 + EPS) * adv,
+            )
+            # backprop -surrogate, add value loss, subtract entropy
+            grad_logpi = onehot(rec[&quot;a&quot;]) - probs
+            if (adv &gt; 0 and ratio &gt;= 1 + EPS) or (adv &lt; 0 and ratio &lt;= 1 - EPS):
+                pg_grad = 0.0  # clipped
+            else:
+                pg_grad = ratio * adv
+            for i in range(N_ACTIONS):
+                for j in range(N_FEAT):
+                    theta[i][j] += LR * pg_grad * grad_logpi[i] * x[j]</code></pre>
+      </div>
+    <p>The &quot;clipped → zero gradient&quot; pattern is the heart of PPO. If the new policy has already drifted too far in the beneficial direction, the update stops.</p>
+<h3 id="step-4-value-and-entropy"><a class="anchor" href="#step-4-value-and-entropy">#</a> Step 4: value and entropy</h3>
+<p>Add standard MSE to the critic target and an entropy bonus on the actor, same as A2C.</p>
+<h3 id="step-5-diagnostics"><a class="anchor" href="#step-5-diagnostics">#</a> Step 5: diagnostics</h3>
+<p>Three things to watch every update:</p>
+<ul>
+<li><strong>Mean KL</strong> <code>E[log π_old - log π_θ]</code>. Should stay in <code>[0, 0.02]</code>. If it blows past <code>0.1</code>, reduce <code>K_EPOCHS</code> or <code>LR</code>.</li>
+<li><strong>Clip fraction</strong> — the fraction of samples whose ratio lies outside <code>[1-ε, 1+ε]</code>. Should be <code>~0.1-0.3</code>. If <code>~0</code>, the clip never triggers → raise <code>LR</code> or <code>K_EPOCHS</code>. If <code>~0.5+</code>, you are over-fitting the rollout → lower them.</li>
+<li><strong>Explained variance</strong> <code>1 - Var(V_target - V_pred) / Var(V_target)</code>. Critic quality metric. Should climb toward 1 as the critic learns.</li>
+</ul>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Clip coefficient mistuned.</strong> <code>ε = 0.2</code> is the de-facto standard. Going to <code>0.1</code> makes updates too timid; <code>0.3+</code> invites instability.</li>
+<li><strong>Too many epochs.</strong> <code>K &gt; 20</code> routinely destabilizes because the policy drifts far from <code>π_old</code>. Cap epochs, especially for large networks.</li>
+<li><strong>No reward normalization.</strong> Large reward scales eat into the clip range. Normalize rewards (running std) before computing advantages.</li>
+<li><strong>Forgetting advantage normalization.</strong> Per-batch zero-mean/unit-std normalization is standard. Skipping it wrecks PPO on most benchmarks.</li>
+<li><strong>Learning rate not decayed.</strong> PPO benefits from linear LR decay to zero. Constant LR is often worse.</li>
+<li><strong>Importance ratio math errors.</strong> Always <code>exp(log_new - log_old)</code> for numerical stability, not <code>new / old</code>.</li>
+<li><strong>Wrong gradient sign.</strong> Maximize the surrogate = <em>minimize</em> <code>-L^{CLIP}</code>. A flipped sign is the most common PPO bug.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PPO is 2026&#39;s default RL algorithm across a surprising number of domains:</p>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>PPO variant</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MuJoCo / robotics control</td>
+<td>PPO with Gaussian policy, GAE(0.95)</td>
+</tr>
+<tr>
+<td>Atari / discrete games</td>
+<td>PPO with categorical policy, rolling 128-step rollouts</td>
+</tr>
+<tr>
+<td>RLHF for LLMs</td>
+<td>PPO with KL penalty to reference model, reward from RM at end of response</td>
+</tr>
+<tr>
+<td>Large-scale game agents</td>
+<td>IMPALA + PPO (AlphaStar, OpenAI Five)</td>
+</tr>
+<tr>
+<td>Reasoning LLMs</td>
+<td>GRPO (Lesson 12) — PPO variant without critic</td>
+</tr>
+<tr>
+<td>Preference-only data</td>
+<td>DPO — closed-form collapsing of PPO+KL, no online sampling</td>
+</tr>
+</tbody></table>
+<p>The PPO <em>loss shape</em> — clipped surrogate + value + entropy — is the scaffolding for DPO, GRPO, and nearly every RLHF pipeline.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-ppo-trainer.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: ppo-trainer
+description: Produce a PPO training config and a diagnostic plan for a given environment.
+version: 1.0.0
+phase: 9
+lesson: 8
+tags: [rl, ppo, policy-gradient]
+---
+
+Given an environment and training budget, output:
+
+1. Rollout size. `N` envs × `T` steps.
+2. Update schedule. `K` epochs, minibatch size, LR schedule.
+3. Surrogate params. `ε` (clip), `c_v`, `c_e`, advantage normalization on.
+4. Advantage. GAE(`λ`) with explicit `γ` and `λ`.
+5. Diagnostics plan. KL, clip fraction, explained variance thresholds with alerts.
+
+Refuse `K &gt; 30` or `ε &gt; 0.3` (unsafe trust region). Refuse any PPO run without advantage normalization or KL/clip monitoring. Flag clip fraction sustained above 0.4 as drift.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run PPO on 4×4 GridWorld with <code>ε=0.2, K=4</code>. Compare sample efficiency to A2C (one epoch per rollout) at matched env steps.</li>
+<li><strong>Medium.</strong> Sweep <code>K ∈ {1, 4, 10, 30}</code>. Plot return vs env steps and track mean KL per update. At what <code>K</code> does KL explode on this task?</li>
+<li><strong>Hard.</strong> Replace the clipped surrogate with an adaptive KL penalty (<code>β</code> doubled if <code>KL &gt; 2·target</code>, halved if <code>KL &lt; target/2</code>). Compare final return, stability, and clip-free-ness.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Importance ratio</td>
+<td>&quot;r_t(θ)&quot;</td>
+<td><code>π_θ(a|s) / π_old(a|s)</code>; deviation from the policy that collected the data.</td>
+</tr>
+<tr>
+<td>Clipped surrogate</td>
+<td>&quot;PPO&#39;s main trick&quot;</td>
+<td><code>min(r·A, clip(r, 1-ε, 1+ε)·A)</code>; flat gradient past the clip on beneficial side.</td>
+</tr>
+<tr>
+<td>Trust region</td>
+<td>&quot;TRPO / PPO intent&quot;</td>
+<td>Limit each update&#39;s KL to guarantee monotone improvement.</td>
+</tr>
+<tr>
+<td>KL penalty</td>
+<td>&quot;Soft trust region&quot;</td>
+<td>Alternative PPO: <code>L - β · KL(π_θ || π_old)</code>. Adaptive <code>β</code>.</td>
+</tr>
+<tr>
+<td>Clip fraction</td>
+<td>&quot;How often clipping triggers&quot;</td>
+<td>Diagnostic — should be 0.1-0.3; outside means mistuned.</td>
+</tr>
+<tr>
+<td>Multi-epoch training</td>
+<td>&quot;Data reuse&quot;</td>
+<td>K epochs on each rollout; variance cost traded for sample efficiency.</td>
+</tr>
+<tr>
+<td>On-policy-ish</td>
+<td>&quot;Mostly on-policy&quot;</td>
+<td>PPO is nominally on-policy but K&gt;1 epochs uses slightly-off-policy data safely.</td>
+</tr>
+<tr>
+<td>PPO-KL</td>
+<td>&quot;The other PPO&quot;</td>
+<td>KL-penalty variant; used in RLHF where KL-to-reference is already a constraint.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1707.06347">Schulman et al. (2017). Proximal Policy Optimization Algorithms</a> — the paper.</li>
+<li><a href="https://arxiv.org/abs/1502.05477">Schulman et al. (2015). Trust Region Policy Optimization</a> — TRPO, PPO&#39;s predecessor.</li>
+<li><a href="https://arxiv.org/abs/2006.05990">Andrychowicz et al. (2021). What Matters In On-Policy RL? A Large-Scale Empirical Study</a> — every PPO hyperparameter ablated.</li>
+<li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al. (2022). Training language models to follow instructions with human feedback</a> — InstructGPT; the PPO-in-RLHF recipe.</li>
+<li><a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html">OpenAI Spinning Up — PPO</a> — clean modern exposition with PyTorch.</li>
+<li><a href="https://github.com/vwxyzjn/cleanrl">CleanRL PPO implementation</a> — reference single-file PPO used by many papers.</li>
+<li><a href="https://huggingface.co/docs/trl/main/en/ppo_trainer">Hugging Face TRL — PPOTrainer</a> — the production recipe for PPO on language models; read alongside Lesson 09 (RLHF).</li>
+<li><a href="https://arxiv.org/abs/2005.12729">Engstrom et al. (2020). Implementation Matters in Deep Policy Gradients</a> — the &quot;37 code-level optimizations&quot; paper; which PPO tricks are load-bearing and which are folklore.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-actor-critic-a2c-a3c.html"><span>← Previous</span><b>actor critic a2c a3c</b></a>
+      <a class="next" href="./09-reward-modeling-rlhf.html"><span>Next →</span><b>reward modeling rlhf</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

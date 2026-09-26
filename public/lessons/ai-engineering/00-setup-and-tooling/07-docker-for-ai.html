@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Docker for AI — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/00-setup-and-tooling/07-docker-for-ai/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Setup &amp; Tooling</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Setup &amp; Tooling</div>
+    <h1 class="lesson-title">Docker for AI</h1>
+    <p class="lesson-sub">Containers make &quot;works on my machine&quot; a thing of the past.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Docker</b></div><div><span>Prerequisites</span><b>Phase 0, Lessons 01 and 03</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Setup &amp; Tooling 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M69.9,79.0 L75.7,70.4 L81.5,79.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.2,73.7 L70.3,66.0 L75.4,73.7 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.4,76.2 L64.9,49.9 L82.3,76.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.6" y="43.9" width="33.7" height="33.7" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(239 59.4 60.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">SETUP &amp; TOOLING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Docker for AI</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build a GPU-enabled Docker image with CUDA, PyTorch, and AI libraries from a Dockerfile</li>
+<li>Mount host directories as volumes to persist models, datasets, and code across container rebuilds</li>
+<li>Configure the NVIDIA Container Toolkit to expose GPUs inside containers</li>
+<li>Orchestrate multi-service AI applications (inference server + vector database) using Docker Compose</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You trained a model on your laptop with PyTorch 2.3, CUDA 12.4, and Python 3.12. Your colleague has PyTorch 2.1, CUDA 11.8, and Python 3.10. Your model crashes on their machine. Your Dockerfile works on both.</p>
+<p>AI projects are dependency nightmares. A typical stack includes Python, PyTorch, CUDA drivers, cuDNN, system-level C libraries, and specialized packages like flash-attn that need exact compiler versions. Docker packages all of this into a single image that runs identically everywhere.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p>Docker wraps your code, runtime, libraries, and system tools into an isolated unit called a container. Think of it as a lightweight virtual machine, except it shares the host OS kernel instead of running its own, so it starts in seconds instead of minutes.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph without[&quot;Without Docker&quot;]
+        A1[&quot;Your machine&lt;br/&gt;Python 3.12&lt;br/&gt;CUDA 12.4&lt;br/&gt;PyTorch 2.3&quot;] --&gt;|crashes| X1[&quot;???&quot;]
+        A2[&quot;Their machine&lt;br/&gt;Python 3.10&lt;br/&gt;CUDA 11.8&lt;br/&gt;PyTorch 2.1&quot;] --&gt;|crashes| X2[&quot;???&quot;]
+        A3[&quot;Server&lt;br/&gt;Python 3.11&lt;br/&gt;CUDA 12.1&lt;br/&gt;PyTorch 2.2&quot;] --&gt;|crashes| X3[&quot;???&quot;]
+    end
+
+    subgraph with_docker[&quot;With Docker — Same image everywhere&quot;]
+        B1[&quot;Your machine&lt;br/&gt;Python 3.12 | CUDA 12.4&lt;br/&gt;PyTorch 2.3 | Your code&quot;]
+        B2[&quot;Their machine&lt;br/&gt;Python 3.12 | CUDA 12.4&lt;br/&gt;PyTorch 2.3 | Your code&quot;]
+        B3[&quot;Server&lt;br/&gt;Python 3.12 | CUDA 12.4&lt;br/&gt;PyTorch 2.3 | Your code&quot;]
+    end</pre></div><h3 id="why-ai-projects-need-docker-more-than-most"><a class="anchor" href="#why-ai-projects-need-docker-more-than-most">#</a> Why AI projects need Docker more than most</h3>
+<ol>
+<li><p><strong>GPU drivers are fragile.</strong> CUDA 12.4 code does not run on CUDA 11.8. Docker isolates the CUDA toolkit inside the container while sharing the host GPU driver through the NVIDIA Container Toolkit.</p>
+</li>
+<li><p><strong>Model weights are large.</strong> A 7B parameter model is 14 GB in fp16. You do not want to re-download it every time you rebuild. Docker volumes let you mount a models directory from the host.</p>
+</li>
+<li><p><strong>Multi-service architectures are common.</strong> A real AI application is not just a Python script. It is an inference server, a vector database for RAG, maybe a web frontend. Docker Compose orchestrates all of these with one command.</p>
+</li>
+</ol>
+<h3 id="key-vocabulary"><a class="anchor" href="#key-vocabulary">#</a> Key vocabulary</h3>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Image</td>
+<td>A read-only template. Your recipe. Built from a Dockerfile.</td>
+</tr>
+<tr>
+<td>Container</td>
+<td>A running instance of an image. Your kitchen.</td>
+</tr>
+<tr>
+<td>Dockerfile</td>
+<td>Instructions to build an image. Layer by layer.</td>
+</tr>
+<tr>
+<td>Volume</td>
+<td>Persistent storage that survives container restarts.</td>
+</tr>
+<tr>
+<td>docker-compose</td>
+<td>A tool for defining multi-container applications in YAML.</td>
+</tr>
+</tbody></table>
+<h3 id="common-container-patterns-in-ai"><a class="anchor" href="#common-container-patterns-in-ai">#</a> Common container patterns in AI</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Dev Container
+  Full toolkit. Editor support. Jupyter. Debugging tools.
+  Used during development and experimentation.
+
+Training Container
+  Minimal. Just the training script and dependencies.
+  Runs on GPU clusters. No editor, no Jupyter.
+
+Inference Container
+  Optimized for serving. Small image. Fast cold start.
+  Runs behind a load balancer in production.</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">s0-image-layers</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-install-docker"><a class="anchor" href="#step-1-install-docker">#</a> Step 1: Install Docker</h3>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># macOS
+brew install --cask docker
+open /Applications/Docker.app
+
+# Ubuntu
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and back in for group change to take effect</code></pre>
+      </div>
+    <p>Verify:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker --version
+docker run hello-world</code></pre>
+      </div>
+    <h3 id="step-2-install-nvidia-container-toolkit-linux-with-nvidia-gpu"><a class="anchor" href="#step-2-install-nvidia-container-toolkit-linux-with-nvidia-gpu">#</a> Step 2: Install NVIDIA Container Toolkit (Linux with NVIDIA GPU)</h3>
+<p>This lets Docker containers access your GPU. macOS and Windows (WSL2) users can skip this; Docker Desktop handles GPU passthrough differently on those platforms.</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+    sed &#39;s#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g&#39; | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker</code></pre>
+      </div>
+    <p>Test GPU access inside a container:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi</code></pre>
+      </div>
+    <p>If you see your GPU info, the toolkit is working.</p>
+<h3 id="step-3-understand-base-images"><a class="anchor" href="#step-3-understand-base-images">#</a> Step 3: Understand base images</h3>
+<p>Choosing the right base image saves hours of debugging.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">nvidia/cuda:12.4.1-devel-ubuntu22.04
+  Full CUDA toolkit. Compilers included.
+  Use for: building packages that need nvcc (flash-attn, bitsandbytes)
+  Size: ~4 GB
+
+nvidia/cuda:12.4.1-runtime-ubuntu22.04
+  CUDA runtime only. No compilers.
+  Use for: running pre-built code
+  Size: ~1.5 GB
+
+pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+  PyTorch pre-installed on top of CUDA.
+  Use for: skipping the PyTorch install step
+  Size: ~6 GB
+
+python:3.12-slim
+  No CUDA. CPU only.
+  Use for: inference on CPU, lightweight tools
+  Size: ~150 MB</code></pre>
+      </div>
+    <h3 id="step-4-write-a-dockerfile-for-ai-development"><a class="anchor" href="#step-4-write-a-dockerfile-for-ai-development">#</a> Step 4: Write a Dockerfile for AI development</h3>
+<p>Here is the Dockerfile in <code>code/Dockerfile</code>. Walk through it:</p>
+
+      <div class="codeblock" data-lang="dockerfile">
+        <span class="cb-label">dockerfile</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-dockerfile hljs">FROM --platform=linux/amd64 nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update &amp;&amp; apt-get install -y --no-install-recommends \
+    software-properties-common \
+    git \
+    curl \
+    build-essential \
+    &amp;&amp; add-apt-repository -y ppa:deadsnakes/ppa \
+    &amp;&amp; apt-get update &amp;&amp; apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    &amp;&amp; rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+RUN curl -sSL https://raw.githubusercontent.com/pypa/get-pip/3b73145063be545b649ad9ca83ea8da5fc915a4f/public/get-pip.py -o /tmp/get-pip.py \
+    &amp;&amp; echo &quot;a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055  /tmp/get-pip.py&quot; | sha256sum -c - \
+    &amp;&amp; python /tmp/get-pip.py \
+    &amp;&amp; rm /tmp/get-pip.py \
+    &amp;&amp; update-alternatives --install /usr/bin/pip pip /usr/local/bin/pip3.12 1
+
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+RUN python -m pip install --no-cache-dir \
+    torch==2.6.0+cu124 \
+    torchvision==0.21.0+cu124 \
+    torchaudio==2.6.0+cu124 \
+    --index-url https://download.pytorch.org/whl/cu124
+
+RUN python -m pip install --no-cache-dir \
+    numpy \
+    pandas \
+    scikit-learn \
+    matplotlib \
+    jupyter \
+    transformers \
+    datasets \
+    accelerate \
+    safetensors
+
+WORKDIR /workspace
+
+VOLUME [&quot;/workspace&quot;, &quot;/models&quot;]
+
+EXPOSE 8888
+
+CMD [&quot;python&quot;]</code></pre>
+      </div>
+    <p>Build it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker build -t ai-dev -f phases/00-setup-and-tooling/07-docker-for-ai/code/Dockerfile .</code></pre>
+      </div>
+    <p>This takes a while the first time (downloading CUDA base image + PyTorch). Subsequent builds use cached layers.</p>
+<p><strong>macOS / Apple Silicon (M1/M2/M3/M4):</strong> The <code>--platform=linux/amd64</code> on the <code>FROM</code> line is what makes this build succeed on a Mac. The CUDA base image also ships an arm64 variant and Docker Desktop picks it automatically on Apple Silicon, but PyTorch publishes its <code>cu124</code> wheels for x86_64 only, so the <code>pip install torch==2.6.0+cu124</code> layer fails with <code>No matching distribution found for torch==2.6.0+cu124</code>. Pinning the platform pulls the x86_64 image and runs it under emulation: the build is slower and the container has no GPU (there is no CUDA on a Mac either way). Drop <code>--gpus all</code> from the <code>docker run</code> commands below on a Mac. For GPU work on Apple Silicon, run the lessons natively with the MPS build from Lesson 01 and keep this image for x86_64 Linux hosts with an NVIDIA GPU.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker run --rm -it --gpus all \
+    -v $(pwd):/workspace \
+    -v ~/models:/models \
+    ai-dev python -c &quot;import torch; print(f&#39;PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}&#39;)&quot;</code></pre>
+      </div>
+    <p>Run Jupyter inside the container:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker run --rm -it --gpus all \
+    -v $(pwd):/workspace \
+    -v ~/models:/models \
+    -p 8888:8888 \
+    ai-dev jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root</code></pre>
+      </div>
+    <h3 id="step-5-volume-mounts-for-data-and-models"><a class="anchor" href="#step-5-volume-mounts-for-data-and-models">#</a> Step 5: Volume mounts for data and models</h3>
+<p>Volume mounts are critical for AI work. Without them, your 14 GB model downloads vanish when the container stops.</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># Mount your code
+-v $(pwd):/workspace
+
+# Mount a shared models directory
+-v ~/models:/models
+
+# Mount datasets
+-v ~/datasets:/data</code></pre>
+      </div>
+    <p>Inside your training script, load from the mounted path:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoModel
+
+model = AutoModel.from_pretrained(&quot;/models/llama-7b&quot;)</code></pre>
+      </div>
+    <p>The model lives on your host filesystem. Rebuild the container as often as you want without re-downloading.</p>
+<h3 id="step-6-docker-compose-for-multi-service-ai-apps"><a class="anchor" href="#step-6-docker-compose-for-multi-service-ai-apps">#</a> Step 6: Docker Compose for multi-service AI apps</h3>
+<p>A real RAG application needs an inference server and a vector database. Docker Compose runs both with one command.</p>
+<p>See <code>code/docker-compose.yml</code>:</p>
+
+      <div class="codeblock" data-lang="yaml">
+        <span class="cb-label">yaml</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-yaml hljs">services:
+  ai-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ../../../:/workspace
+      - ~/models:/models
+      - ~/datasets:/data
+    ports:
+      - &quot;8888:8888&quot;
+    stdin_open: true
+    tty: true
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    ports:
+      - &quot;6333:6333&quot;
+      - &quot;6334:6334&quot;
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:</code></pre>
+      </div>
+    <p>Start everything:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/00-setup-and-tooling/07-docker-for-ai/code
+docker compose up -d</code></pre>
+      </div>
+    <p>Now your AI dev container can reach the vector database at <code>http://qdrant:6333</code> by service name. Docker Compose creates a shared network automatically.</p>
+<p>Test the connection from inside the AI container:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from qdrant_client import QdrantClient
+
+client = QdrantClient(host=&quot;qdrant&quot;, port=6333)
+print(client.get_collections())</code></pre>
+      </div>
+    <p>Stop everything:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker compose down</code></pre>
+      </div>
+    <p>Add <code>-v</code> to also delete the qdrant volume:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker compose down -v</code></pre>
+      </div>
+    <h3 id="step-7-useful-docker-commands-for-ai-work"><a class="anchor" href="#step-7-useful-docker-commands-for-ai-work">#</a> Step 7: Useful Docker commands for AI work</h3>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># List running containers
+docker ps
+
+# List all images and their sizes
+docker images
+
+# Remove unused images (reclaim disk space)
+docker system prune -a
+
+# Check GPU usage inside a running container
+docker exec -it &lt;container_id&gt; nvidia-smi
+
+# Copy a file from container to host
+docker cp &lt;container_id&gt;:/workspace/results.csv ./results.csv
+
+# View container logs
+docker logs -f &lt;container_id&gt;</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>You now have a reproducible AI development environment. For the rest of this course:</p>
+<ul>
+<li>Use <code>docker compose up</code> to start your dev environment and vector database together</li>
+<li>Mount your code, models, and data as volumes so nothing is lost between rebuilds</li>
+<li>When a lesson requires a new Python package, add it to the Dockerfile and rebuild</li>
+<li>Share your Dockerfile with teammates. They get the exact same environment.</li>
+</ul>
+<h3 id="no-gpu"><a class="anchor" href="#no-gpu">#</a> No GPU?</h3>
+<p>Remove the <code>--gpus all</code> flag and the NVIDIA deploy block. The container still works for CPU-based lessons. PyTorch detects the absence of CUDA and falls back to CPU automatically.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Build the Dockerfile and run <code>python -c &quot;import torch; print(torch.__version__)&quot;</code> inside the container</li>
+<li>Start the docker-compose stack and verify Qdrant is accessible from the AI container at <code>http://qdrant:6333/collections</code></li>
+<li>Add <code>flask</code> to the Dockerfile, rebuild, and run a simple API server on port 5000. Map the port with <code>-p 5000:5000</code></li>
+<li>Measure the image size with <code>docker images</code>. Try switching the base image from <code>devel</code> to <code>runtime</code> and compare sizes</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Container</td>
+<td>&quot;Lightweight VM&quot;</td>
+<td>An isolated process using the host kernel, with its own filesystem and network</td>
+</tr>
+<tr>
+<td>Image layer</td>
+<td>&quot;Cached step&quot;</td>
+<td>Each Dockerfile instruction creates a layer. Unchanged layers are cached, so rebuilds are fast.</td>
+</tr>
+<tr>
+<td>NVIDIA Container Toolkit</td>
+<td>&quot;GPU in Docker&quot;</td>
+<td>A runtime hook that exposes host GPUs to containers via <code>--gpus</code> flag</td>
+</tr>
+<tr>
+<td>Volume mount</td>
+<td>&quot;Shared folder&quot;</td>
+<td>A directory on the host mapped into the container. Changes persist after the container stops.</td>
+</tr>
+<tr>
+<td>Base image</td>
+<td>&quot;Starting point&quot;</td>
+<td>The <code>FROM</code> image your Dockerfile builds on top of. Determines what is pre-installed.</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-python-environments.html"><span>← Previous</span><b>python environments</b></a>
+      <a class="next" href="./08-editor-setup.html"><span>Next →</span><b>editor setup</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

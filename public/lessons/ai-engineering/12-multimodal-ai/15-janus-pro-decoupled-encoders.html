@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Janus-Pro: Decoupled Encoders for Unified Multimodal Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/15-janus-pro-decoupled-encoders/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Janus-Pro: Decoupled Encoders for Unified Multimodal Models</h1>
+    <p class="lesson-sub">Unified multimodal models have an unavoidable tension. Understanding wants semantic features — SigLIP or DINOv2 output vectors rich with concept-level information. Generation wants reconstruction-friendly codes — VQ tokens that compose back into crisp pixels. The two goals are not compatible in a single encoder. Janus (DeepSeek, October 2024) and Janus-Pro (DeepSeek, January 2025) argue the fix is to stop trying: decouple the two encoders. Share the transformer body between tasks, but route understanding through SigLIP and generation through a VQ tokenizer. At 7B, Janus-Pro beats DALL-E 3 on GenEval while matching LLaVA on MMMU. This lesson reads why two encoders work where one fails.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, dual-encoder routing + shared-body signal)</b></div><div><span>Prerequisites</span><b>Phase 12 · 13 (Transfusion), Phase 12 · 14 (Show-o)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="31.8" y="34.2" width="30.8" height="30.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(199 47.2 49.6)"/>
+        <rect x="27.0" y="129.9" width="29.5" height="29.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(181 41.8 144.7)"/>
+        <rect x="22.2" y="125.6" width="28.2" height="28.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(163 36.3 139.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Janus-Pro: Decoupled</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Encoders for Unified…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why a single shared encoder compromises either understanding or generation quality.</li>
+<li>Describe Janus-Pro&#39;s routing: SigLIP features on the input side for understanding, VQ tokens on both input and output for generation.</li>
+<li>Trace the data-mix scaling that makes Janus-Pro succeed where Janus did not.</li>
+<li>Compare decoupled (Janus-Pro), coupled-continuous (Transfusion), and coupled-discrete (Show-o) architectures.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Unified models share a transformer body across understanding and generation. Previous attempts (Chameleon, Show-o, Transfusion) all use one visual tokenizer for both directions. The tokenizer is a compromise:</p>
+<ul>
+<li>Optimized for reconstruction (generation): VQ-VAE captures fine-grained pixel detail but produces tokens with weak semantic coherence.</li>
+<li>Optimized for semantics (understanding): SigLIP embeddings group &quot;cat&quot; images near &quot;cat&quot; tokens but do not permit good reconstruction.</li>
+</ul>
+<p>Show-o and Transfusion pay for this with a visible quality tax on one direction. Janus-Pro asks: why require one tokenizer when the tasks have different needs?</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="decoupled-visual-encoding"><a class="anchor" href="#decoupled-visual-encoding">#</a> Decoupled visual encoding</h3>
+<p>Janus-Pro&#39;s architecture separates the two encoders:</p>
+<ul>
+<li>Understanding path. Input image → SigLIP-SO400m → 2-layer MLP → transformer body.</li>
+<li>Generation path. Input image (if conditioning on an existing image) → VQ tokenizer → token IDs → transformer body.</li>
+<li>Output generation. Image tokens predicted by the transformer → VQ decoder → pixels.</li>
+</ul>
+<p>The transformer body is shared. Everything upstream and downstream of the body is task-specific.</p>
+<p>Inputs are disambiguated by prompt format: a <code>&lt;understand&gt;</code> tag routes through SigLIP; <code>&lt;generate&gt;</code> routes through VQ. Or the routing is implicit from task.</p>
+<h3 id="why-this-works"><a class="anchor" href="#why-this-works">#</a> Why this works</h3>
+<p>Understanding loss gets SigLIP features, which CLIP-style pretraining has tuned for semantic similarity. The model&#39;s perception benchmarks improve over Show-o / Transfusion because the input features are better for the task.</p>
+<p>Generation loss gets VQ tokens, which a tokenizer has tuned for reconstruction. Image quality improves over Show-o because VQ codes compose back to pixels cleanly.</p>
+<p>The shared transformer body sees two input distributions (SigLIP and VQ) and learns to work with both. The claim: enough data + enough parameters, the body absorbs the switching.</p>
+<h3 id="data-scaling-janus-vs-janus-pro"><a class="anchor" href="#data-scaling-janus-vs-janus-pro">#</a> Data scaling — Janus vs Janus-Pro</h3>
+<p>Janus (original, arXiv 2410.13848) introduced the decoupling but at small scale (1.3B params, limited data). Janus-Pro (arXiv 2501.17811) scaled:</p>
+<ul>
+<li>7B params (vs 1.3B).</li>
+<li>90M image-text pairs for stage 1 (alignment) up from 72M.</li>
+<li>72M for stage 2 (unified) up from 26M.</li>
+<li>Added 200k image-gen instruction samples for stage 3.</li>
+</ul>
+<p>The upshot: Janus-Pro-7B matches LLaVA on MMMU (60.3 vs ~58) and beats DALL-E 3 on GenEval (0.80 vs 0.67). One open model, competitive on both sides of the unified spectrum.</p>
+<h3 id="janusflow-the-rectified-flow-variant"><a class="anchor" href="#janusflow-the-rectified-flow-variant">#</a> JanusFlow — the rectified flow variant</h3>
+<p>JanusFlow (arXiv 2411.07975) swaps the VQ generation path for a rectified-flow generation path (continuous). The split becomes SigLIP-for-understanding + rectified-flow-for-generation. Quality ceilings lift further. The architecture remains decoupled-encoders-shared-body.</p>
+<h3 id="the-shared-bodys-job"><a class="anchor" href="#the-shared-bodys-job">#</a> The shared body&#39;s job</h3>
+<p>The transformer body processes a unified sequence but with two input distributions. Its job is to:</p>
+<ul>
+<li>For understanding: consume SigLIP features + text tokens → emit text autoregressively.</li>
+<li>For generation: consume text tokens + (optional image VQ tokens) → emit image VQ tokens autoregressively.</li>
+</ul>
+<p>The body has no modality-specific weights per block. It is the text-style transformer you&#39;d expect to find inside Qwen or Llama, plus the two input adapters.</p>
+<p>Interestingly, this means Janus-Pro&#39;s body could be initialized from a pretrained LLM. Janus-Pro does initialize from DeepSeek-MoE-7B. That choice matters: the LLM contributes reasoning ability that pure-from-scratch unified models struggle to reach.</p>
+<h3 id="compared-to-internvl-u"><a class="anchor" href="#compared-to-internvl-u">#</a> Compared to InternVL-U</h3>
+<p>InternVL-U (Lesson 12.10) is the 2026 follow-up. It combines:</p>
+<ul>
+<li>Native multimodal pretraining (InternVL3 backbone).</li>
+<li>Decoupled-encoder routing (SigLIP in, VQ + diffusion heads out).</li>
+<li>Unified understanding + generation + editing.</li>
+</ul>
+<p>InternVL-U subsumes Janus-Pro&#39;s architectural choice into a larger framework. The decoupled-encoder idea is now the default for unified models at scale.</p>
+<h3 id="limitations"><a class="anchor" href="#limitations">#</a> Limitations</h3>
+<p>Decoupled encoders add architectural complexity. Two tokenizers to train, two input paths to maintain, two sets of fail modes. For products that do not need generation, Janus-Pro is over-engineered — pick a LLaVA-family understanding model.</p>
+<p>For products that do not need understanding, Janus-Pro is overqualified — pick a Stable Diffusion 3 / Flux model.</p>
+<p>For products that need both, Janus-Pro is now the reference open architecture.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-janus-decouple</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates Janus-Pro routing:</p>
+<ul>
+<li>Two mock encoders: SigLIP-like (produces 256-dim semantic vectors) and VQ-like (produces integer codes).</li>
+<li>A prompt router that picks the encoder based on a task tag.</li>
+<li>A shared body (stand-in) that processes token sequences regardless of which encoder produced them.</li>
+<li>A switch from stage 1 (alignment) to stage 3 (instruction tune) weighted-sample schedule.</li>
+</ul>
+<p>Print the routed paths for 3 examples: image QA, T2I, image editing.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-decoupled-encoder-picker.md</code>. Given a product that wants unified generation + understanding at frontier-ish quality, it picks Janus-Pro, JanusFlow, or InternVL-U with a concrete data-scale recommendation.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Janus-Pro-7B beats DALL-E 3 on GenEval. Explain why a 7B open model can match a frontier proprietary model on generation but not on understanding.</p>
+</li>
+<li><p>Implement a router function: given prompt text, classify as <code>understand</code> or <code>generate</code>. How do you handle ambiguous prompts like &quot;describe and then sketch&quot;?</p>
+</li>
+<li><p>JanusFlow replaces the VQ path with rectified flow. What does the transformer body now output, and what changes in the loss?</p>
+</li>
+<li><p>Propose a fourth task the Janus-Pro architecture could handle with one more decoupled encoder. Examples: image segmentation (DINO-style), depth (MiDaS-style).</p>
+</li>
+<li><p>Read Janus-Pro Section 4.2 on data scaling. Which data stage contributes most to the T2I quality gain vs Janus?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Decoupled encoding</td>
+<td>&quot;Two visual encoders&quot;</td>
+<td>Separate tokenizer or encoder per direction: semantic for understanding, reconstruction for generation</td>
+</tr>
+<tr>
+<td>Shared body</td>
+<td>&quot;One transformer&quot;</td>
+<td>Single transformer processes either encoder&#39;s output; no modality-specific weights</td>
+</tr>
+<tr>
+<td>SigLIP for understanding</td>
+<td>&quot;Semantic features&quot;</td>
+<td>CLIP-family vision tower providing rich conceptual features but poor reconstruction</td>
+</tr>
+<tr>
+<td>VQ for generation</td>
+<td>&quot;Reconstruction codes&quot;</td>
+<td>Vector-quantized tokens that decode cleanly back to pixels</td>
+</tr>
+<tr>
+<td>JanusFlow</td>
+<td>&quot;Rectified-flow variant&quot;</td>
+<td>Janus-Pro with a continuous flow-matching generation head instead of VQ</td>
+</tr>
+<tr>
+<td>Routing tag</td>
+<td>&quot;Task tag&quot;</td>
+<td>Prompt marker (<code>&lt;understand&gt;</code> / <code>&lt;generate&gt;</code>) that picks the input encoder</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2410.13848">Wu et al. — Janus (arXiv:2410.13848)</a></li>
+<li><a href="https://arxiv.org/abs/2501.17811">Chen et al. — Janus-Pro (arXiv:2501.17811)</a></li>
+<li><a href="https://arxiv.org/abs/2411.07975">Ma et al. — JanusFlow (arXiv:2411.07975)</a></li>
+<li><a href="https://arxiv.org/abs/2603.09877">InternVL-U (arXiv:2603.09877)</a></li>
+<li><a href="https://arxiv.org/abs/2309.11499">Dong et al. — DreamLLM (arXiv:2309.11499)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-show-o-discrete-diffusion-unified.html"><span>← Previous</span><b>show o discrete diffusion unified</b></a>
+      <a class="next" href="./16-mio-any-to-any-streaming.html"><span>Next →</span><b>mio any to any streaming</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

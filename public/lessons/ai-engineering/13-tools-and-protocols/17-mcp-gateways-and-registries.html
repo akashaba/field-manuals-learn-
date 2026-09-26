@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stateless MCP Gateways and Registry Admission — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/17-mcp-gateways-and-registries/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">Stateless MCP Gateways and Registry Admission</h1>
+    <p class="lesson-sub">A gateway should make every route explicit. The 2026-07-28 protocol gives it method, name, version, capability, identity, cache, and trace boundaries without a transport session.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 · 15 (security), Phase 13 · 16 (authorization)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 17">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="36.8" y="38.7" width="32.1" height="32.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(217 52.8 54.8)"/>
+        <rect x="32.0" y="34.4" width="30.8" height="30.8" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(199 47.4 49.8)"/>
+        <rect x="27.2" y="130.1" width="29.6" height="29.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(182 42.0 144.9)"/>
+        <rect x="22.4" y="125.8" width="28.3" height="28.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(164 36.6 140.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">17</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Stateless MCP</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Gateways and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Aggregate several MCP servers behind one 2026-07-28 endpoint without session affinity.</li>
+<li>Validate per-request metadata and routing headers before policy or forwarding.</li>
+<li>Merge tools with stable namespaces, deterministic order, descriptor pins, RBAC, and private caching.</li>
+<li>Treat registry records as discovery evidence that still requires admission policy.</li>
+<li>Route request-scoped SSE, <code>subscriptions/listen</code>, MRTR retries, and Tasks extension calls correctly.</li>
+<li>Isolate legacy handshake and session support from the modern path.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Connecting one client directly to one server is simple. A larger deployment needs a consistent answer to harder questions:</p>
+<ul>
+<li>Which servers are allowed?</li>
+<li>Which principal can see and call each tool?</li>
+<li>What happens when two backends expose the same name?</li>
+<li>How are descriptor changes reviewed?</li>
+<li>Where are rate limits and audit events applied?</li>
+<li>Can any instance handle the next request?</li>
+</ul>
+<p>A gateway sits between clients and backend MCP servers. It presents one MCP endpoint, applies cross-cutting policy, and forwards approved requests.</p>
+<p>Older gateway designs often multiplexed one client session into several backend sessions and rewrote <code>Mcp-Session-Id</code>. That is a legacy compatibility design. The 2026-07-28 core has no protocol sessions.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-modern-gateway-path"><a class="anchor" href="#the-modern-gateway-path">#</a> The modern gateway path</h3>
+<p>For each request:</p>
+<ol>
+<li>Authenticate the principal from transport authorization.</li>
+<li>Validate <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code>, <code>Mcp-Name</code>, and <code>params._meta</code>.</li>
+<li>Authorize the principal, resource, method, tool, and arguments.</li>
+<li>Apply descriptor, registry, rate, and data policy.</li>
+<li>Create a fresh self-contained request for the selected backend.</li>
+<li>Validate the backend result and return a gateway result.</li>
+<li>Record an audit event without logging secrets.</li>
+</ol>
+<p>No step needs a hidden protocol session. Application state can still exist in databases, explicit handles, Tasks, or integrity-protected MRTR state.</p>
+<h3 id="runtime-policy-is-the-primary-gateway-decision"><a class="anchor" href="#runtime-policy-is-the-primary-gateway-decision">#</a> Runtime policy is the primary gateway decision</h3>
+<p>Admission decides which backend version may enter the gateway. It does not authorize a live call. For every request, the gateway recomputes policy from the authenticated principal, issuer and resource, tenant, matched method and name, normalized arguments, admitted descriptor pin, current backend health, capability intersection, data classification, rate state, and any action-bound approval.</p>
+<p>This ordering matters. A Registry record can remain active while a user&#39;s role is revoked. A descriptor can remain pinned while a destination argument crosses a tenant boundary. A backend can remain approved while incident policy quarantines state-changing calls. Runtime policy is therefore the primary allow or deny decision, with Registry and descriptor evidence as inputs.</p>
+<p>Do not cache an allow decision under a connection or removed session identifier. If policy is unavailable, follow a declared failure policy by operation class. A safe default is to fail closed for state changes and sensitive reads, while explicitly approved public read paths may use a short-lived last-known policy only when their risk model permits it. Record which policy version and failure path made the decision, then validate the backend result before returning it.</p>
+<h3 id="one-post-endpoint"><a class="anchor" href="#one-post-endpoint">#</a> One POST endpoint</h3>
+<p>Modern Streamable HTTP sends each JSON-RPC message through POST:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">POST /mcp
+Authorization: Bearer &lt;gateway-token&gt;
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: tools/call
+Mcp-Name: notes.search
+Accept: application/json, text/event-stream</code></pre>
+      </div>
+    <p>The gateway can return JSON or request-scoped SSE for that POST. GET and DELETE return 405 for modern requests. <code>Mcp-Session-Id</code> and <code>Last-Event-ID</code> do not create authority, affinity, or replay behavior.</p>
+<p>Header and body values must agree. Reject mismatch with <code>-32020</code> before looking up a backend. This lets load balancers, gateways, and rate limiters route without parsing the full body while preserving end-to-end integrity.</p>
+<p>Validate in one exact order: JSON-RPC and metadata types, header and body equality, then support for the matched version. A mismatch returns HTTP 400 with <code>-32020</code>. If header and body agree on an unsupported version, return HTTP 400 with <code>-32022</code> and <code>data</code> exactly <code>{&quot;supported&quot;:[&quot;2026-07-28&quot;],&quot;requested&quot;:&quot;&lt;actual&gt;&quot;}</code>. An unknown method returns HTTP 404 with <code>-32601</code>.</p>
+<p><code>ProtocolError</code> carries optional <code>data</code>, and the gateway serializes it into the JSON-RPC error object. A notification has no <code>id</code>, so it never receives a JSON-RPC success or error. An accepted HTTP notification returns 202 with an empty body.</p>
+<h3 id="implement-discovery-at-every-layer"><a class="anchor" href="#implement-discovery-at-every-layer">#</a> Implement discovery at every layer</h3>
+<p>The gateway implements <code>server/discover</code> for clients. It also discovers each backend so it knows protocol versions, capabilities, and extensions.</p>
+<p>Example gateway result:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;resultType&quot;: &quot;complete&quot;,
+  &quot;supportedVersions&quot;: [&quot;2026-07-28&quot;],
+  &quot;capabilities&quot;: {
+    &quot;tools&quot;: {&quot;listChanged&quot;: true}
+  },
+  &quot;ttlMs&quot;: 30000,
+  &quot;cacheScope&quot;: &quot;private&quot;,
+  &quot;_meta&quot;: {
+    &quot;io.modelcontextprotocol/serverInfo&quot;: {
+      &quot;name&quot;: &quot;enterprise-gateway&quot;,
+      &quot;version&quot;: &quot;2.0.0&quot;
+    }
+  }
+}</code></pre>
+      </div>
+    <p>Advertise only the capability intersection the gateway can honor end to end. A backend feature is not automatically safe to expose. A gateway feature with no backend path is not useful to advertise.</p>
+<p><code>serverInfo</code> is self-reported display and diagnostic data. Do not use it as registry or publisher proof.</p>
+<h3 id="per-request-client-capabilities"><a class="anchor" href="#per-request-client-capabilities">#</a> Per-request client capabilities</h3>
+<p>Every forwarded request needs a current <code>_meta</code> envelope:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+  &quot;io.modelcontextprotocol/clientCapabilities&quot;: {},
+  &quot;io.modelcontextprotocol/clientInfo&quot;: {
+    &quot;name&quot;: &quot;enterprise-gateway&quot;,
+    &quot;version&quot;: &quot;1.0.0&quot;
+  }
+}</code></pre>
+      </div>
+    <p>Do not blindly copy the outer client capabilities to a backend. The gateway is the backend&#39;s client. Advertise only features the gateway will mediate correctly.</p>
+<h3 id="deterministic-namespacing"><a class="anchor" href="#deterministic-namespacing">#</a> Deterministic namespacing</h3>
+<p>Merge backend tools under stable public names:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">notes.search
+notes.create
+issues.list
+issues.open</code></pre>
+      </div>
+    <p>Keep a mapping from public name to backend and original tool name. Never choose the first or last collision. A public name is part of the approval and audit contract, so changing it is a migration.</p>
+<p><code>tools/list</code> must be deterministic. When visibility differs by principal, return <code>cacheScope: private</code>. A bounded <code>ttlMs</code> reduces backend discovery load without allowing a user-specific list to leak across authorization contexts.</p>
+<p>Every exposed tool descriptor includes a stable name, description, and object-root <code>inputSchema</code>. Namespacing cannot remove required descriptor fields. The complete list result also includes <code>resultType</code>, server identity metadata, and cache hints.</p>
+<h3 id="pin-approved-descriptors"><a class="anchor" href="#pin-approved-descriptors">#</a> Pin approved descriptors</h3>
+<p>At admission time, canonicalize the complete descriptor and store its digest under the qualified public name. At list and call time, compare the live descriptor with the approved digest.</p>
+<p>If it changes:</p>
+<ul>
+<li>Remove it from <code>tools/list</code>.</li>
+<li>Reject direct calls.</li>
+<li>Emit an audit event.</li>
+<li>Require policy or human re-approval before updating the pin.</li>
+</ul>
+<p>A gateway is a useful central enforcement point, but it does not turn a first-seen descriptor into a safe one. Initial review remains necessary.</p>
+<h3 id="registries-help-discover-not-decide"><a class="anchor" href="#registries-help-discover-not-decide">#</a> Registries help discover, not decide</h3>
+<p>A Registry <code>server.json</code> provides publication metadata. A package-backed record can look like this:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;$schema&quot;: &quot;https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json&quot;,
+  &quot;name&quot;: &quot;com.example/notes&quot;,
+  &quot;description&quot;: &quot;Example notes MCP server.&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;packages&quot;: [
+    {
+      &quot;registryType&quot;: &quot;npm&quot;,
+      &quot;identifier&quot;: &quot;@example/notes-mcp&quot;,
+      &quot;version&quot;: &quot;1.0.0&quot;,
+      &quot;transport&quot;: {&quot;type&quot;: &quot;stdio&quot;}
+    }
+  ]
+}</code></pre>
+      </div>
+    <p>Publication metadata does not carry the gateway&#39;s security decision. Keep verified publisher and provenance evidence in separate admission state:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;registryName&quot;: &quot;com.example/notes&quot;,
+  &quot;registryVersion&quot;: &quot;1.0.0&quot;,
+  &quot;publisher&quot;: {&quot;namespace&quot;: &quot;com.example&quot;, &quot;status&quot;: &quot;verified&quot;},
+  &quot;provenance&quot;: {
+    &quot;source&quot;: &quot;registry.modelcontextprotocol.io&quot;,
+    &quot;recordId&quot;: &quot;com.example/notes@1.0.0&quot;
+  },
+  &quot;admission&quot;: {&quot;status&quot;: &quot;approved&quot;, &quot;reviewedBy&quot;: &quot;gateway-policy&quot;}
+}</code></pre>
+      </div>
+    <p>The gateway checks the <code>server.json</code> shape and joins it to that external state. The gateway still needs an admission policy.</p>
+<p>For each admitted backend, record:</p>
+<ul>
+<li>Exact registry and record identifier.</li>
+<li>Verified publisher namespace or domain evidence.</li>
+<li>Allowed transport and endpoint.</li>
+<li>Pinned version or approved upgrade policy.</li>
+<li>Artifact or descriptor digest.</li>
+<li>Authorization issuer and resource.</li>
+<li>Reviewer, approval time, and expiry.</li>
+</ul>
+<p>Do not accept a server because its display name resembles a familiar product. Do not treat registry presence as an operational security review. Private servers can be admitted through the same evidence schema even when they never appear in a public registry.</p>
+<p>This lesson implements the gateway seam: join publication evidence to local admission before a backend becomes routable. <a href="../../30-mcp-registry-supply-chain-and-drift/docs/en.md">Lesson 30: MCP Registry Supply Chain, Admission, Drift, and Rollback</a> builds the full control plane for exact namespace proof, artifact provenance, immutable pins, live descriptor drift, Registry status reconciliation, a tamper-evident admission ledger, and evidence-backed rollback. Keep that supply-chain state separate from the per-request runtime decision above.</p>
+<h3 id="credential-mediation"><a class="anchor" href="#credential-mediation">#</a> Credential mediation</h3>
+<p>The gateway authenticates its callers and separately authenticates to backends. Backend credentials never go to the client.</p>
+<p>Keep these bindings explicit:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">outer principal -&gt; gateway role and policy
+backend issuer + resource -&gt; backend registration and token</code></pre>
+      </div>
+    <p>Never pass the outer gateway token to a backend. Never reuse a backend token at a different issuer or resource. If a tool acts on behalf of an end user, preserve that delegation with a designed exchange or claims model rather than impersonating the user with a shared service credential.</p>
+<h3 id="rate-limits-without-sessions"><a class="anchor" href="#rate-limits-without-sessions">#</a> Rate limits without sessions</h3>
+<p>Key limits by authenticated principal, issuer, resource, public tool, cost class, and time window. A session id is absent and would be easy to rotate even if it existed.</p>
+<p>Apply cheap validation before consuming expensive work. Decide whether rejected calls count against abuse limits, business quotas, or both.</p>
+<h3 id="audit-the-decision-chain"><a class="anchor" href="#audit-the-decision-chain">#</a> Audit the decision chain</h3>
+<p>Record enough to reconstruct a call:</p>
+<ul>
+<li>Request and trace identifiers.</li>
+<li>Authenticated principal and issuer.</li>
+<li>Public tool and backend route.</li>
+<li>Descriptor pin version.</li>
+<li>Policy decision and reason.</li>
+<li>Latency and result class.</li>
+<li>MRTR round or task identifier when applicable.</li>
+</ul>
+<p>Redact bearer tokens, authorization codes, refresh tokens, raw secrets, and unnecessary sensitive arguments.</p>
+<h3 id="request-scoped-sse"><a class="anchor" href="#request-scoped-sse">#</a> Request-scoped SSE</h3>
+<p>A normal POST may return request-scoped SSE when work streams during that one request. Closing the response stream cancels that in-flight modern HTTP request.</p>
+<p>Do not create a separate GET stream and do not promise Last-Event-ID replay. Those are older transport assumptions.</p>
+<h3 id="long-lived-change-notifications"><a class="anchor" href="#long-lived-change-notifications">#</a> Long-lived change notifications</h3>
+<p>For list and resource change notifications, a current client sends <code>subscriptions/listen</code> through POST and receives an SSE response. Notification filters use the exact flat fields <code>toolsListChanged</code>, <code>promptsListChanged</code>, <code>resourcesListChanged</code>, and <code>resourceSubscriptions</code>:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: &quot;listen-tools&quot;,
+  &quot;method&quot;: &quot;subscriptions/listen&quot;,
+  &quot;params&quot;: {
+    &quot;notifications&quot;: {
+      &quot;toolsListChanged&quot;: true
+    },
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {}
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The first event acknowledges the supported subset. Its subscription identifier is the JSON-RPC id of the request that opened the stream:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;method&quot;: &quot;notifications/subscriptions/acknowledged&quot;,
+  &quot;params&quot;: {
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/subscriptionId&quot;: &quot;listen-tools&quot;
+    },
+    &quot;notifications&quot;: {
+      &quot;toolsListChanged&quot;: true
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The gateway then forwards only the acknowledged change types. Every notification on that stream carries the same <code>io.modelcontextprotocol/subscriptionId</code> in <code>params._meta</code>. There is no automatic replay or automatic re-listen. On reconnect, the client reopens the subscription and refreshes the lists it relies on. A server-initiated graceful close returns a final complete result tagged with the same subscription id.</p>
+<p>The modern path replaces <code>resources/subscribe</code>, <code>resources/unsubscribe</code>, and unsolicited standalone GET streaming. Keep those only in a version-gated older path.</p>
+<h3 id="mrtr-through-a-gateway"><a class="anchor" href="#mrtr-through-a-gateway">#</a> MRTR through a gateway</h3>
+<p>When a backend returns <code>resultType: input_required</code>, the gateway can forward that result only if the outer client supports the needed input request. Preserve <code>requestState</code> byte for byte unless the gateway deliberately terminates and reissues the interaction.</p>
+<p>The client retries the original public tool with a fresh JSON-RPC id and <code>inputResponses</code>. The gateway re-authorizes the retry, checks the same public route, then forwards a fresh backend request. It must not assume an earlier round granted unlimited approval.</p>
+<h3 id="tasks-extension-routing"><a class="anchor" href="#tasks-extension-routing">#</a> Tasks extension routing</h3>
+<p>Tasks are an official extension identified by <code>io.modelcontextprotocol/tasks</code>. They are not a core session replacement.</p>
+<p>The client declares the extension inside per-request client capabilities, and the gateway advertises it in discovery only when it can preserve the lifecycle end to end. For a supported <code>tools/call</code>, the backend alone decides whether to return the ordinary result or <code>resultType: task</code>. A task result carries <code>taskId</code>, <code>status</code>, timestamps, <code>ttlMs</code>, and an optional <code>pollIntervalMs</code> directly in the result. The task must already be durably readable before that result is sent.</p>
+<p>The gateway records the authenticated principal and backend route for the opaque task identifier. Subsequent <code>tasks/get</code>, <code>tasks/update</code>, and <code>tasks/cancel</code> calls use <code>params.taskId</code> as <code>Mcp-Name</code>, which gives intermediaries a routing key. <code>tasks/get</code> returns <code>resultType: complete</code> with the current task state and inlines the final result or protocol error in a terminal state. <code>tasks/update</code> sends keyed <code>inputResponses</code> for outstanding task input and returns an empty complete acknowledgment. <code>tasks/cancel</code> is a cooperative intent with an empty complete acknowledgment, not a guarantee that work stops.</p>
+<p>Do not implement new <code>tasks/list</code> or <code>tasks/result</code> methods. They belong to the older experimental model. A task that needs input exposes complete embedded requests through <code>tasks/get</code>; the client answers them through <code>tasks/update</code>, not by retrying the original tool call. The client still polls at the suggested interval; task creation remains server-directed.</p>
+<p>Durable task route state is application data keyed by the task handle, not a protocol session.</p>
+<h3 id="compatibility-boundary"><a class="anchor" href="#compatibility-boundary">#</a> Compatibility boundary</h3>
+<p>If the gateway must serve an older client or backend:</p>
+<ul>
+<li>Detect the era explicitly.</li>
+<li>Keep initialization, transport sessions, GET streams, resource subscriptions, and old task vocabulary inside a legacy adapter.</li>
+<li>Never leak a legacy session id into modern routing or authorization.</li>
+<li>Prefer a bounded discovery probe and explicit fallback policy over silent downgrade.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">t3-gateway-funnel</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements an in-process protocol gateway and two backend servers. Each backend receives a fresh current-protocol request. The gateway provides discovery, user-filtered deterministic <code>tools/list</code>, namespaced routing, Registry <code>server.json</code> plus external admission state, descriptor pins, RBAC, principal-keyed rate limits, audit decisions, and a modeled <code>subscriptions/listen</code> SSE acknowledgment.</p>
+<p>The model receives parsed request bodies, routing headers, and an authenticated bearer identity. It is not a complete HTTP adapter and does not parse <code>Content-Type</code> or the full <code>Accept</code> contract. Connect it to Lesson 09&#39;s Streamable HTTP adapter, which requires <code>Content-Type: application/json</code> and an <code>Accept</code> value containing both <code>application/json</code> and <code>text/event-stream</code>.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/17-mcp-gateways-and-registries
+python3 code/main.py
+python3 -m unittest discover code/tests -v</code></pre>
+      </div>
+    <p>The demo prints the outer request id and fresh backend request id so the stateless hop is visible.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Replace the in-process backend objects with real current-protocol clients. Keep the same seams:</p>
+<ul>
+<li>Admission record before connection.</li>
+<li>Backend discovery before capability exposure.</li>
+<li>Qualified public name before authorization.</li>
+<li>Descriptor pin before list or call.</li>
+<li>Fresh per-request metadata before forwarding.</li>
+<li>Result validation before returning.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson ships <code>outputs/skill-gateway-bootstrap.md</code>. It produces a modern gateway design covering ingress, discovery, admission, namespaces, authorization, caching, streaming, subscriptions, MRTR, Tasks, observability, and legacy isolation.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add trace context to the outer and forwarded request metadata and record the correlation in the audit event.</li>
+<li>Add a Tasks-capable backend and route <code>tasks/get</code> by task id in <code>Mcp-Name</code>.</li>
+<li>Change one backend descriptor and prove both discovery and direct call are blocked.</li>
+<li>Add a principal-specific server capability and explain why discovery must remain privately cached.</li>
+<li>Write a legacy adapter interface without adding any legacy state to the modern <code>Gateway</code> class.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MCP gateway</td>
+<td>Policy and routing server between clients and backend MCP servers</td>
+</tr>
+<tr>
+<td>Admission record</td>
+<td>Evidence and policy decision allowing one backend into the gateway</td>
+</tr>
+<tr>
+<td>Qualified tool name</td>
+<td>Stable public route such as <code>notes.search</code></td>
+</tr>
+<tr>
+<td>Descriptor pin</td>
+<td>Approved digest checked during discovery and dispatch</td>
+</tr>
+<tr>
+<td>Private cache scope</td>
+<td>Cached result restricted to one authorization context</td>
+</tr>
+<tr>
+<td>Request-scoped SSE</td>
+<td>Streaming response attached to one POST request</td>
+</tr>
+<tr>
+<td><code>subscriptions/listen</code></td>
+<td>Client-opened SSE stream for selected long-lived change notifications</td>
+</tr>
+<tr>
+<td>Task route</td>
+<td>Application mapping from an opaque task id to its backend</td>
+</tr>
+<tr>
+<td>Legacy adapter</td>
+<td>Explicit version-gated boundary for old handshake and session behavior</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http">Streamable HTTP transport</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">Server discovery</a></li>
+<li><a href="https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md">Official Registry server.json requirements</a></li>
+<li><a href="https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks">MCP Tasks extension</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./16-mcp-security-oauth-2-1.html"><span>← Previous</span><b>mcp security oauth 2 1</b></a>
+      <a class="next" href="./18-mcp-auth-production.html"><span>Next →</span><b>mcp auth production</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

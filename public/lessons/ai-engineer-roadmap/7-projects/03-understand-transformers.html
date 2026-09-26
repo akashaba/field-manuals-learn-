@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Project 03 — Understand Transformers (Implement a Mini-GPT) — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/7%20-%20Projects/03-understand-transformers.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Projects</div>
+    <ol class="toc"><li><a href="#1-project-overview">1. Project Overview</a></li><li><a href="#2-step-by-step-build">2. Step-by-Step Build</a></li><li><a href="#3-what-each-component-actually-does">3. What Each Component Actually Does</a></li><li><a href="#4-the-kv-cache-what-makes-inference-fast">4. The KV Cache (What Makes Inference Fast)</a></li><li><a href="#5-extensions">5. Extensions</a></li><li><a href="#6-common-confusions">6. Common Confusions</a></li><li><a href="#7-interview-talking-points">7. Interview Talking Points</a></li><li><a href="#8-references">8. References</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Projects</div>
+    <h1 class="lesson-title">Capstone Project 03 — Understand Transformers (Implement a Mini-GPT)</h1>
+    <p class="lesson-sub">**Deliverable:** A tiny GPT-style character-level language model, ~1M parameters, trained on the works of Shakespeare (or any text corpus you like). Implemented in PyTorch from scratch — every submodule visible: token embedding, positional encoding, multi-head self-attention, MLP block, residual + layer-norm. Generates readable Shakespeare-ish text after a few minutes on a laptop.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Projects 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="105.8" cy="102.9" r="9.3" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.4" cy="98.0" r="8.7" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.9,97.9 L95.0,85.8 L103.0,97.9 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.1,92.6 L89.6,81.5 L97.0,92.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.5" y="117.8" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.4 130.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Project 03</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Understand…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Time:</strong> 6–8 hours; understanding is more important than novelty.</p>
+<p><strong>What you&#39;ll be able to say:</strong> &quot;I built a GPT from scratch. I understand what Q, K, V are, why we divide by √d_k, what causal masking does, why residual connections matter for training stability, and what layer norm does that batch norm can&#39;t.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="1-project-overview"><a class="anchor" href="#1-project-overview">#</a> 1. Project Overview</h2>
+<p>Follow Karpathy&#39;s nanoGPT / &quot;Let&#39;s build GPT&quot; walkthrough, but write every piece yourself with heavy annotation. Train on <code>tinyshakespeare.txt</code> (1MB, character-level).</p>
+<p>We build up in five stages:</p>
+<ol>
+<li>Bigram model (baseline)</li>
+<li>Add position embedding</li>
+<li>Add single-head self-attention</li>
+<li>Add multi-head + MLP + residuals + layer norm = one transformer block</li>
+<li>Stack N blocks = GPT</li>
+</ol>
+<h3 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h3>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/AI-Engineer-Roadmap/main/7%20-%20Projects/7%2520-%2520Projects/images/IMG-CAP03-01.jpg" alt="IMG-CAP03-01" loading="lazy" /></figure></p>
+<h3 id="prerequisites"><a class="anchor" href="#prerequisites">#</a> Prerequisites</h3>
+<ul>
+<li>Python 3.11+, PyTorch</li>
+<li>A GPU is helpful (Colab free tier is fine); CPU works but slower</li>
+<li><code>tinyshakespeare.txt</code> from <a href="https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt">https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt</a></li>
+</ul>
+<hr>
+<h2 id="2-step-by-step-build"><a class="anchor" href="#2-step-by-step-build">#</a> 2. Step-by-Step Build</h2>
+<h3 id="step-1-data-tokenizer-character-level"><a class="anchor" href="#step-1-data-tokenizer-character-level">#</a> Step 1 — Data &amp; tokenizer (character-level)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;minigpt.py&quot;&quot;&quot;
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from pathlib import Path
+
+torch.manual_seed(42)
+device = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+
+# Download once:
+# curl -o input.txt https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+text = Path(&quot;input.txt&quot;).read_text()
+chars = sorted(set(text))
+vocab_size = len(chars)  # ~65 for Shakespeare
+stoi = {c: i for i, c in enumerate(chars)}
+itos = {i: c for c, i in stoi.items()}
+encode = lambda s: [stoi[c] for c in s]
+decode = lambda l: &quot;&quot;.join(itos[i] for i in l)
+
+data = torch.tensor(encode(text), dtype=torch.long)
+n = int(0.9 * len(data))
+train_data, val_data = data[:n], data[n:]</code></pre>
+      </div>
+    <p><strong>Why character-level?</strong> Simplest possible tokenizer. Real GPTs use BPE tokens (~50k pieces of subwords), but the math is identical.</p>
+<h3 id="step-2-batching-function"><a class="anchor" href="#step-2-batching-function">#</a> Step 2 — Batching function</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">BLOCK_SIZE = 128  # context length
+BATCH_SIZE = 64
+
+def get_batch(split: str):
+    d = train_data if split == &quot;train&quot; else val_data
+    ix = torch.randint(len(d) - BLOCK_SIZE, (BATCH_SIZE,))
+    x = torch.stack([d[i:i+BLOCK_SIZE] for i in ix])
+    y = torch.stack([d[i+1:i+BLOCK_SIZE+1] for i in ix])
+    return x.to(device), y.to(device)</code></pre>
+      </div>
+    <p><strong>Why the offset?</strong> The model predicts the next character at every position. If input is <code>&quot;the ca&quot;</code>, target is <code>&quot;he cat&quot;</code>. Every position in the sequence contributes a training signal — this is why transformers train so efficiently.</p>
+<h3 id="step-3-bigram-baseline"><a class="anchor" href="#step-3-bigram-baseline">#</a> Step 3 — Bigram baseline</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class BigramModel(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        # Just a lookup: given char i, what&#39;s the next-char distribution?
+        self.token_embedding = nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, idx, targets=None):
+        logits = self.token_embedding(idx)  # (B, T, vocab_size)
+        loss = None
+        if targets is not None:
+            B, T, C = logits.shape
+            loss = F.cross_entropy(logits.view(B*T, C), targets.view(B*T))
+        return logits, loss
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens):
+        for _ in range(max_new_tokens):
+            logits, _ = self(idx)
+            probs = F.softmax(logits[:, -1, :], dim=-1)
+            next_idx = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat([idx, next_idx], dim=1)
+        return idx</code></pre>
+      </div>
+    <p>Trains to loss ~2.5 (baseline). Generated text is gibberish but has right letter frequencies.</p>
+<h3 id="step-4-single-head-self-attention-the-heart-of-it"><a class="anchor" href="#step-4-single-head-self-attention-the-heart-of-it">#</a> Step 4 — Single-Head Self-Attention (the heart of it)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SelfAttentionHead(nn.Module):
+    def __init__(self, d_model, head_size, block_size):
+        super().__init__()
+        self.key   = nn.Linear(d_model, head_size, bias=False)
+        self.query = nn.Linear(d_model, head_size, bias=False)
+        self.value = nn.Linear(d_model, head_size, bias=False)
+        # Register as buffer — moves with .to(device) but isn&#39;t a parameter
+        self.register_buffer(&quot;tril&quot;, torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        K = self.key(x)                         # (B, T, head_size)
+        Q = self.query(x)                       # (B, T, head_size)
+        V = self.value(x)                       # (B, T, head_size)
+
+        # Attention scores: (B, T, T)
+        scores = Q @ K.transpose(-2, -1) / (C ** 0.5)
+
+        # Causal mask — position i can only attend to positions ≤ i
+        scores = scores.masked_fill(self.tril[:T, :T] == 0, float(&quot;-inf&quot;))
+        weights = F.softmax(scores, dim=-1)     # rows sum to 1
+
+        return weights @ V                       # (B, T, head_size)</code></pre>
+      </div>
+    <p><strong>The mental model:</strong></p>
+<ul>
+<li><strong>Query</strong> = &quot;what am I looking for?&quot;</li>
+<li><strong>Key</strong> = &quot;what do I offer as a match?&quot;</li>
+<li><strong>Value</strong> = &quot;what do I actually contribute if you pick me?&quot;</li>
+<li>Q·K^T = compatibility scores; softmax turns into weights; · V is the weighted sum.</li>
+</ul>
+<p><strong>Why divide by √d_k?</strong> As <code>d_k</code> grows, dot products grow proportionally, pushing softmax into saturation (nearly one-hot). Dividing by √d_k keeps the pre-softmax scores in a &quot;soft&quot; regime where gradients flow well. Without it, deeper transformers train poorly.</p>
+<p><strong>Why the causal mask?</strong> For a language model, position <code>i</code> predicting the next token must not &quot;see&quot; the future — otherwise it&#39;s just copying. The lower-triangular mask forces attention to be autoregressive.</p>
+<h3 id="step-5-multi-head-attention"><a class="anchor" href="#step-5-multi-head-attention">#</a> Step 5 — Multi-Head Attention</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class MultiHeadAttention(nn.Module):
+    def __init__(self, n_heads, d_model, head_size, block_size):
+        super().__init__()
+        self.heads = nn.ModuleList([
+            SelfAttentionHead(d_model, head_size, block_size)
+            for _ in range(n_heads)
+        ])
+        self.proj = nn.Linear(n_heads * head_size, d_model)
+
+    def forward(self, x):
+        # Concat heads along the last dim
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        return self.proj(out)</code></pre>
+      </div>
+    <p><strong>Why multi-head?</strong> Each head can specialize: one attends to previous-noun agreement, another to punctuation, another to long-range topic. Concatenating gives the next layer a richer representation than one head could produce. The final <code>proj</code> mixes heads back into <code>d_model</code>.</p>
+<p>Production transformers implement this as a single matmul with reshaping (much faster), but the semantics are identical.</p>
+<h3 id="step-6-mlp-block"><a class="anchor" href="#step-6-mlp-block">#</a> Step 6 — MLP block</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class FeedForward(nn.Module):
+    def __init__(self, d_model, hidden_mult=4):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_model, hidden_mult * d_model),
+            nn.GELU(),
+            nn.Linear(hidden_mult * d_model, d_model),
+        )
+    def forward(self, x):
+        return self.net(x)</code></pre>
+      </div>
+    <p><strong>Why 4× expansion?</strong> Standard from the original paper; empirically the sweet spot. The MLP is where the model does per-token nonlinear processing on the aggregated attention output.</p>
+<p><strong>Why GELU over ReLU?</strong> Smooth (differentiable everywhere), retains small negative activations rather than hard-zeroing them. Empirically better for transformers.</p>
+<h3 id="step-7-transformer-block-attention-mlp-layernorm-residuals"><a class="anchor" href="#step-7-transformer-block-attention-mlp-layernorm-residuals">#</a> Step 7 — Transformer block (Attention + MLP + LayerNorm + Residuals)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class TransformerBlock(nn.Module):
+    def __init__(self, d_model, n_heads, block_size):
+        super().__init__()
+        head_size = d_model // n_heads
+        self.ln1 = nn.LayerNorm(d_model)
+        self.attn = MultiHeadAttention(n_heads, d_model, head_size, block_size)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.mlp = FeedForward(d_model)
+
+    def forward(self, x):
+        # Pre-norm architecture: x + f(norm(x))
+        x = x + self.attn(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
+        return x</code></pre>
+      </div>
+    <p><strong>Why residual connections?</strong> Deep networks suffer from <strong>degradation</strong> — beyond ~10 layers, training loss stops decreasing not from overfitting but because gradients don&#39;t flow. Residual (<code>x + f(x)</code>) means at initialization each block computes the identity plus a small perturbation; gradients flow directly along the residual path. Enables 50+ layer nets.</p>
+<p><strong>Why LayerNorm not BatchNorm?</strong> BatchNorm normalizes across the batch dimension — problematic for language (variable sequence lengths, non-IID batches). LayerNorm normalizes across the feature dimension per-token — batch-independent and works cleanly with the causal mask.</p>
+<p><strong>Why pre-norm vs post-norm?</strong> Original paper used post-norm (<code>norm(x + f(x))</code>). Modern practice is pre-norm — more stable training, works without careful warm-up. Almost every modern LLM uses pre-norm.</p>
+<h3 id="step-8-full-gpt"><a class="anchor" href="#step-8-full-gpt">#</a> Step 8 — Full GPT</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class MiniGPT(nn.Module):
+    def __init__(self, vocab_size, d_model=192, n_heads=6, n_layers=6, block_size=128):
+        super().__init__()
+        self.block_size = block_size
+        self.token_embed = nn.Embedding(vocab_size, d_model)
+        self.pos_embed   = nn.Embedding(block_size, d_model)
+        self.blocks = nn.Sequential(*[
+            TransformerBlock(d_model, n_heads, block_size)
+            for _ in range(n_layers)
+        ])
+        self.ln_f = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, vocab_size)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        tok = self.token_embed(idx)                         # (B, T, d_model)
+        pos = self.pos_embed(torch.arange(T, device=idx.device))  # (T, d_model)
+        x = tok + pos                                        # (B, T, d_model)
+        x = self.blocks(x)
+        x = self.ln_f(x)
+        logits = self.head(x)                                # (B, T, vocab_size)
+        loss = None
+        if targets is not None:
+            B, T, C = logits.shape
+            loss = F.cross_entropy(logits.view(B*T, C), targets.view(B*T))
+        return logits, loss
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -self.block_size:]  # truncate to context window
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :] / temperature
+            if top_k is not None:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits &lt; v[:, -1:]] = -float(&quot;inf&quot;)
+            probs = F.softmax(logits, dim=-1)
+            next_idx = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat([idx, next_idx], dim=1)
+        return idx</code></pre>
+      </div>
+    <p><strong>Why positional embedding?</strong> Attention itself is permutation-invariant — it treats tokens as a set. Adding a learned position vector gives the model a sense of &quot;this token is 3rd in the sequence&quot; so it can learn word order. Modern GPTs use RoPE (rotary) or ALiBi; learned absolute is the original.</p>
+<p><strong>Why <code>token_embed</code> and <code>head</code> weights aren&#39;t tied here?</strong> Weight tying (same matrix for input embedding and output projection) saves parameters and slightly helps small models. It&#39;s optional; add if you want. GPT-2 uses tying.</p>
+<h3 id="step-9-training-loop"><a class="anchor" href="#step-9-training-loop">#</a> Step 9 — Training loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def estimate_loss(model, iters=100):
+    model.eval()
+    losses = {&quot;train&quot;: [], &quot;val&quot;: []}
+    for split in losses:
+        for _ in range(iters):
+            X, Y = get_batch(split)
+            _, loss = model(X, Y)
+            losses[split].append(loss.item())
+    model.train()
+    return {k: sum(v)/len(v) for k, v in losses.items()}
+
+model = MiniGPT(vocab_size).to(device)
+print(f&quot;Params: {sum(p.numel() for p in model.parameters()):,}&quot;)
+
+opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.01)
+
+for step in range(5000):
+    X, Y = get_batch(&quot;train&quot;)
+    _, loss = model(X, Y)
+    opt.zero_grad(set_to_none=True)
+    loss.backward()
+    opt.step()
+
+    if step % 500 == 0:
+        est = estimate_loss(model)
+        print(f&quot;step {step}: train {est[&#39;train&#39;]:.3f}, val {est[&#39;val&#39;]:.3f}&quot;)
+
+# Generate
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(model.generate(context, 500)[0].tolist()))</code></pre>
+      </div>
+    <p>Expected losses: train <del>1.5, val ~1.7 after 5000 steps (</del>10 min on a laptop GPU).</p>
+<p>Sample generation after training:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">DUKE VINCENTIO:
+Well, but he is a plague to me.
+
+FLORIZEL:
+I am ashamed of it, and yet I would
+Not have him hate me for my hatred.</code></pre>
+      </div>
+    <p>It&#39;s not writing coherent plays, but it&#39;s clearly learned Shakespeare&#39;s line structure, capitalized character names, iambic-ish rhythm. That&#39;s a ~1M-parameter model doing that from scratch.</p>
+<hr>
+<h2 id="3-what-each-component-actually-does"><a class="anchor" href="#3-what-each-component-actually-does">#</a> 3. What Each Component Actually Does</h2>
+<p><code>[IMG-CAP03-02]</code> — <em>Prompt: A visualization of self-attention weights during one forward pass. Show a 20×20 grid representing the attention weight matrix for one head on the sentence &quot;The cat sat on the mat because it was tired.&quot; Cells are colored by weight magnitude (dark = low, bright yellow = high). Highlight that &quot;it&quot; (row 8) has bright cells at &quot;cat&quot; (col 1) — the head has learned coreference. Diagonal shows self-attention. Lower triangle only (causal mask); upper triangle is dark. Include a colorbar and title &quot;Head 3, Layer 4: coreference-like attention pattern.&quot;</em></p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Token embedding</strong></td>
+<td>Map discrete token IDs to dense vectors</td>
+</tr>
+<tr>
+<td><strong>Position embedding</strong></td>
+<td>Inject sequence order (attention is permutation-invariant otherwise)</td>
+</tr>
+<tr>
+<td><strong>Multi-head attention</strong></td>
+<td>Each token gathers information from other positions weighted by learned relevance</td>
+</tr>
+<tr>
+<td><strong>Causal mask</strong></td>
+<td>Enforce autoregressive: position i can only see positions ≤ i</td>
+</tr>
+<tr>
+<td><strong>√d_k scaling</strong></td>
+<td>Keep softmax pre-activations from saturating</td>
+</tr>
+<tr>
+<td><strong>MLP block</strong></td>
+<td>Per-token nonlinear processing on aggregated info</td>
+</tr>
+<tr>
+<td><strong>LayerNorm</strong></td>
+<td>Stabilize activations without depending on batch stats</td>
+</tr>
+<tr>
+<td><strong>Residual connections</strong></td>
+<td>Enable gradient flow through many layers</td>
+</tr>
+<tr>
+<td><strong>Final projection</strong></td>
+<td>Map d_model back to vocab_size for next-token prediction</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="4-the-kv-cache-what-makes-inference-fast"><a class="anchor" href="#4-the-kv-cache-what-makes-inference-fast">#</a> 4. The KV Cache (What Makes Inference Fast)</h2>
+<p>Not built into this project but critical to know:</p>
+<p>During autoregressive generation, at each step you re-compute attention. Naive: O(T²) work per step, O(T³) total. <strong>KV cache</strong>: keys and values for past tokens don&#39;t change; cache them and only compute Q for the new token. Reduces to O(T) per step, O(T²) total — the difference between a viable chatbot and an unresponsive one.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Sketch (not integrated with the above)
+def generate_with_kv_cache(model, idx, max_new_tokens):
+    # Run once to populate cache
+    logits, cache = model(idx, use_cache=True)
+    for _ in range(max_new_tokens):
+        next_idx = sample_from(logits[:, -1, :])
+        idx = torch.cat([idx, next_idx], dim=1)
+        # Only forward the new token, past K/V from cache
+        logits, cache = model(next_idx, cache=cache, use_cache=True)
+    return idx</code></pre>
+      </div>
+    <hr>
+<h2 id="5-extensions"><a class="anchor" href="#5-extensions">#</a> 5. Extensions</h2>
+<ul>
+<li><strong>Byte-Pair Encoding tokenizer</strong> — replace char-level with a small BPE using tiktoken. Model becomes vastly more efficient.</li>
+<li><strong>RoPE positional encoding</strong> — replace learned position embeddings with rotary; the modern default.</li>
+<li><strong>Grouped-query attention (GQA)</strong> — fewer K/V heads than Q heads; standard in modern models (Llama, Claude, Gemma).</li>
+<li><strong>Flash Attention</strong> — memory-efficient attention; requires GPU with proper library.</li>
+<li><strong>Fine-tune on your own text corpus</strong> — a blog, an email archive, chat logs. Watch it learn your idioms.</li>
+<li><strong>Scale up</strong> — 6 layers → 12; d_model 192 → 384; watch quality improve.</li>
+</ul>
+<hr>
+<h2 id="6-common-confusions"><a class="anchor" href="#6-common-confusions">#</a> 6. Common Confusions</h2>
+<ul>
+<li><strong>&quot;Attention is what makes transformers powerful.&quot;</strong> Partial. Residuals, LayerNorm, and MLPs matter equally. Attention lets tokens <em>communicate</em>; MLPs let them <em>think per-token</em>.</li>
+<li><strong>&quot;Q, K, V come from three separate inputs.&quot;</strong> No — same input <code>x</code> projected through three different learned matrices.</li>
+<li><strong>&quot;Positional embedding is added, not concatenated.&quot;</strong> Yes, added. Concatenation would waste dimensions.</li>
+<li><strong>&quot;Self-attention is O(n) per token.&quot;</strong> Naive attention is O(n²) per token because each token looks at all others. Flash Attention makes it memory-linear but the compute is still O(n²).</li>
+<li><strong>&quot;Causal mask is only during training.&quot;</strong> It&#39;s used during both training and generation.</li>
+</ul>
+<hr>
+<h2 id="7-interview-talking-points"><a class="anchor" href="#7-interview-talking-points">#</a> 7. Interview Talking Points</h2>
+<p>Common transformer questions:</p>
+<ol>
+<li><strong>&quot;Walk me through self-attention.&quot;</strong> Explain Q, K, V, dot product for compatibility, softmax over past positions, weighted sum of V. Mention √d_k scaling and causal mask.</li>
+<li><strong>&quot;Why LayerNorm and not BatchNorm?&quot;</strong> Batch stats don&#39;t work well for variable-length sequences; LayerNorm is batch-independent.</li>
+<li><strong>&quot;What does the residual connection do?&quot;</strong> Enables gradient flow through deep stacks; at init, each block is near-identity so training starts stable.</li>
+<li><strong>&quot;Why multi-head?&quot;</strong> Different heads specialize in different attention patterns (syntax, coreference, long-range topic).</li>
+<li><strong>&quot;What&#39;s the KV cache?&quot;</strong> During generation, past keys/values don&#39;t change; caching them turns O(n²) per-step into O(n).</li>
+<li><strong>&quot;What&#39;s positional encoding for?&quot;</strong> Attention is permutation-invariant; we must inject order.</li>
+<li><strong>&quot;Explain how a modern LLM differs from what you built.&quot;</strong> Bigger (billions of params), BPE tokenizer, RoPE, GQA, Flash Attention, mixture-of-experts optional, RLHF/DPO post-training, safety fine-tuning.</li>
+</ol>
+<hr>
+<h2 id="8-references"><a class="anchor" href="#8-references">#</a> 8. References</h2>
+<ul>
+<li>Andrej Karpathy — &quot;Let&#39;s build GPT: from scratch, in code, spelled out&quot; (YouTube; the definitive walkthrough)</li>
+<li>Vaswani et al., &quot;Attention Is All You Need&quot; (2017) — the original paper; short and worth reading</li>
+<li>Karpathy&#39;s nanoGPT — <a href="https://github.com/karpathy/nanoGPT">https://github.com/karpathy/nanoGPT</a></li>
+<li>3Blue1Brown &quot;Attention in Transformers&quot; video (excellent geometric intuition)</li>
+<li>Lilian Weng — &quot;The Transformer Family Version 2.0&quot; (blog post overview)</li>
+<li>FlashAttention paper — Dao et al., 2022</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-build-neural-network.html"><span>← Previous</span><b>build neural network</b></a>
+      <a class="next" href="./04-work-with-llm-apis.html"><span>Next →</span><b>work with llm apis</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

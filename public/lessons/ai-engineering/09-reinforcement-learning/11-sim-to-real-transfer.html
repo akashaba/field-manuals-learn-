@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sim-to-Real Transfer — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/11-sim-to-real-transfer/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Sim-to-Real Transfer</h1>
+    <p class="lesson-sub">A policy trained in a simulator that fails on hardware is a policy that memorized the simulator. Domain randomization, domain adaptation, and system identification are the three tools to make learned controllers cross the reality gap.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 9 · 08 (PPO), Phase 2 · 10 (Bias/Variance)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M74.6,84.1 L81.0,74.6 L87.3,84.1 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M69.8,78.8 L75.5,70.2 L81.3,78.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.0,73.5 L70.1,65.9 L75.2,73.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.2,76.0 L64.7,49.8 L82.2,76.0 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.4" y="43.8" width="33.6" height="33.6" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(238 59.3 60.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Sim-to-Real Transfer</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Training a real robot is slow, dangerous, and expensive. A biped takes millions of training episodes to learn to walk; a real biped that falls over even once breaks hardware. Simulation gives you unlimited resets, deterministic reproducibility, parallel environments, and no physical damage.</p>
+<p>But simulators are wrong. Bearings have more friction than MuJoCo models. Cameras have lens distortion the simulator does not include. Motors have delays, backlash, and saturation that 99% of sim models skip. Wind, dust, and variable lighting sabotage a policy trained on sterile rendering. The <strong>reality gap</strong> — systematic difference between sim distribution and real distribution — is the central problem of deployed RL for robotics.</p>
+<p>You need a policy that is <em>robust to sim-to-real distribution shift</em>. Three historical approaches: randomize the simulator (domain randomization), adapt the policy with a little real data (domain adaptation / fine-tuning), or identify the real system&#39;s parameters and match them (system identification). In 2026 the dominant recipe combines all three with massive parallel simulation (Isaac Sim, Isaac Lab, Mujoco MJX on GPU).</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/11-sim-to-real-transfer/assets/sim-to-real.svg" alt="Three sim-to-real regimes: domain randomization, adaptation, system identification" loading="lazy" /></figure></p>
+<p><strong>Domain Randomization (DR).</strong> Tobin et al. 2017, Peng et al. 2018. During training, randomize every sim parameter that might differ on the real robot: masses, friction coefficients, motor PD gains, sensor noise, camera position, lighting, textures, contact models. The policy learns a conditional distribution over &quot;which sim it is in today&quot; and generalizes across the full span. If the real robot falls within the training envelope, the policy works.</p>
+<ul>
+<li><strong>Upside:</strong> no real data needed. One recipe, many robots.</li>
+<li><strong>Downside:</strong> over-randomized training produces a &quot;universal&quot; but overly cautious policy. Too much noise ≈ too much regularization.</li>
+</ul>
+<p><strong>System Identification (SI).</strong> Fit the simulator&#39;s parameters to real-world data before training. If you can measure arm-joint friction on the real robot, plug that into the sim. Then train a policy that expects those values. Needs access to the real system but reduces the reality gap directly.</p>
+<ul>
+<li><strong>Upside:</strong> precise, low-noise training target.</li>
+<li><strong>Downside:</strong> residual model error is invisible to the policy; small un-identified effects (e.g., motor deadband) still break deployment.</li>
+</ul>
+<p><strong>Domain Adaptation.</strong> Train in sim, fine-tune with a small amount of real data. Two flavors:</p>
+<ul>
+<li><strong>Real2Sim2Real:</strong> learn a residual simulator <code>f(s, a, z) - f_sim(s, a)</code> using real rollouts, train in the corrected sim. Closes the gap without much real data.</li>
+<li><strong>Observation adaptation:</strong> train a policy that maps real obs → sim-like obs via a learned feature extractor (e.g., GAN pixel-to-pixel). The controller stays in sim.</li>
+</ul>
+<p><strong>Privileged learning / teacher-student.</strong> Miki et al. 2022 (ANYmal quadruped). Train a <em>teacher</em> in simulation that has access to privileged information (ground truth friction, terrain height, IMU drift). Distill a <em>student</em> that only sees real-sensor observations. The student learns to infer privileged features from history, robust across physical parameters.</p>
+<p><strong>Massively parallel simulation.</strong> 2024–2026. Isaac Lab, Mujoco MJX, Brax all run thousands of parallel robots on a single GPU. PPO with 4,096 parallel humanoids collects years of experience in hours. The &quot;reality gap&quot; shrinks as training distribution widens; DR becomes almost free when each of those 4,096 envs has different randomized parameters.</p>
+<p><strong>The real-world 2026 recipe (quadruped walking example):</strong></p>
+<ol>
+<li>Massively parallel sim with domain-randomized gravity, friction, motor gains, payload.</li>
+<li>Teacher policy trained with privileged info (terrain map, body velocity ground truth).</li>
+<li>Student policy distilled from teacher using only proprioception (leg joint encoders).</li>
+<li>Optional observation adaptation via autoencoder on real IMU.</li>
+<li>Deploy. Zero-shot on 10+ environments. If it fails, do minutes of real-world fine-tuning with safety-constrained PPO.</li>
+</ol>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">f3-reality-gap</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>This lesson&#39;s code is a tiny demonstration of domain randomization on a GridWorld with <em>noisy</em> transitions. We train a policy that experiences randomized slip probabilities in &quot;sim&quot; and evaluate on &quot;real&quot; with a slip level it never saw during training. The shape maps directly to MuJoCo-to-hardware transfer.</p>
+<h3 id="step-1-parameterized-sim"><a class="anchor" href="#step-1-parameterized-sim">#</a> Step 1: parameterized sim</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def step(state, action, slip):
+    if rng.random() &lt; slip:
+        action = random_perpendicular(action)
+    ...</code></pre>
+      </div>
+    <p><code>slip</code> is a parameter the simulator exposes. In real robotics it could be friction, mass, motor gain — anything that shifts between sim and real.</p>
+<h3 id="step-2-train-with-dr"><a class="anchor" href="#step-2-train-with-dr">#</a> Step 2: train with DR</h3>
+<p>At the start of each episode, sample <code>slip ~ Uniform[0.0, 0.4]</code>. Train PPO / Q-learning / anything. Do this for many episodes.</p>
+<h3 id="step-3-evaluate-zero-shot-on-real-slips"><a class="anchor" href="#step-3-evaluate-zero-shot-on-real-slips">#</a> Step 3: evaluate zero-shot on &quot;real&quot; slips</h3>
+<p>Evaluate on <code>slip ∈ {0.0, 0.1, 0.2, 0.3, 0.5, 0.7}</code>. The first four are within training support; <code>0.5</code> and <code>0.7</code> are outside. A DR-trained policy should stay near-optimal inside support and degrade gracefully outside. A fixed-slip-trained policy will be brittle outside its training slip.</p>
+<h3 id="step-4-compare-to-narrow-training"><a class="anchor" href="#step-4-compare-to-narrow-training">#</a> Step 4: compare to narrow training</h3>
+<p>Train a second policy with <code>slip = 0.0</code> only. Evaluate on the same <code>slip</code> sweep. You should see a catastrophic drop as soon as real slip &gt; 0.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Too much randomization.</strong> Train on <code>slip ∈ [0, 0.9]</code> and your policy is so risk-averse it never tries the optimal path. Match the <em>expected</em> real-world distribution, not &quot;anything could happen.&quot;</li>
+<li><strong>Too little randomization.</strong> Train on a thin slice and the policy can&#39;t generalize at all. Use adaptive curriculum (Automatic Domain Randomization) that widens the distribution as the policy improves.</li>
+<li><strong>Misidentified parameter space.</strong> Randomize the wrong thing (camera hue when the real gap is motor delay) and DR does not help. Profile the real robot first.</li>
+<li><strong>Privileged info leakage.</strong> A teacher that uses global state for actions, not just observations, can produce a student that cannot catch up. Ensure the teacher&#39;s policy is realizable by the student given observation history.</li>
+<li><strong>Sim-to-sim transfer failure.</strong> If your policy is not robust to a harder sim variant, it will not be robust to the real world either. Always test on a held-out sim variant before deploying.</li>
+<li><strong>No real-world safety envelope.</strong> A policy that works in sim and &quot;works in real&quot; without a low-level safety shield can still break hardware. Add rate limits, torque limits, joint limits in a non-learned controller.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 sim-to-real stack:</p>
+<table>
+<thead>
+<tr>
+<th>Domain</th>
+<th>Stack</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Legged locomotion (ANYmal, Spot, humanoid)</td>
+<td>Isaac Lab + DR + privileged teacher / student</td>
+</tr>
+<tr>
+<td>Manipulation (dexterous hands, pick-and-place)</td>
+<td>Isaac Lab + DR + DR-GAN for vision</td>
+</tr>
+<tr>
+<td>Autonomous driving</td>
+<td>CARLA / NVIDIA DRIVE Sim + DR + real fine-tune</td>
+</tr>
+<tr>
+<td>Drone racing</td>
+<td>RotorS / Flightmare + DR + online adaptation</td>
+</tr>
+<tr>
+<td>Finger/in-hand manipulation</td>
+<td>OpenAI Dactyl (DR at unprecedented scale)</td>
+</tr>
+<tr>
+<td>Industrial arms</td>
+<td>MuJoCo-Warp + SI + small real fine-tune</td>
+</tr>
+</tbody></table>
+<p>For control at all scales, the workflow is consistent: fit the sim as best you can, randomize what you can&#39;t fit, train enormous policies, distill, deploy with a safety shield.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-sim2real-planner.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: sim2real-planner
+description: Plan a sim-to-real transfer pipeline for a given robot + task, covering DR, SI, and safety.
+version: 1.0.0
+phase: 9
+lesson: 11
+tags: [rl, sim2real, robotics, domain-randomization]
+---
+
+Given a robot platform, a task, and access to real hardware time, output:
+
+1. Reality gap inventory. Suspected sources ranked by expected impact (contact, sensing, actuation delay, vision).
+2. DR parameters. Exact list, ranges, distribution. Justify each range against real measurements.
+3. SI steps. Which parameters to measure; measurement method.
+4. Teacher/student split. What privileged info the teacher uses; what obs the student uses.
+5. Safety envelope. Low-level limits, emergency stops, backup controller.
+
+Refuse to deploy without (a) a zero-shot sim-variant test, (b) a safety shield, (c) a rollback plan. Flag any DR range wider than 3× measured real variability as likely over-randomized.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Train a Q-learning agent on the fixed-slip GridWorld (slip=0.0). Evaluate on slip ∈ {0.0, 0.1, 0.3, 0.5}. Plot return vs slip.</li>
+<li><strong>Medium.</strong> Train a DR Q-learning agent sampling <code>slip ~ Uniform[0, 0.3]</code>. Evaluate the same sweep. How much does DR buy at slip=0.5 (out-of-distribution)?</li>
+<li><strong>Hard.</strong> Implement a curriculum: start with slip=0.0, widen the DR range every time the policy hits 90% of optimal. Measure total environment steps to reach slip=0.3 zero-shot vs. a fixed DR baseline.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Reality gap</td>
+<td>&quot;Sim-to-real difference&quot;</td>
+<td>Distribution shift between training and deployment physics/sensing.</td>
+</tr>
+<tr>
+<td>Domain randomization (DR)</td>
+<td>&quot;Train across random sims&quot;</td>
+<td>Randomize sim parameters during training so policy generalizes.</td>
+</tr>
+<tr>
+<td>System identification (SI)</td>
+<td>&quot;Measure real and fit sim&quot;</td>
+<td>Estimate real physical parameters; set sim to match.</td>
+</tr>
+<tr>
+<td>Domain adaptation</td>
+<td>&quot;Fine-tune on real data&quot;</td>
+<td>Small real-world fine-tune after sim training; may adapt obs or dynamics.</td>
+</tr>
+<tr>
+<td>Privileged info</td>
+<td>&quot;Ground truth for teacher&quot;</td>
+<td>Information only the sim has; student must infer it from obs history.</td>
+</tr>
+<tr>
+<td>Teacher/student</td>
+<td>&quot;Distill privileged -&gt; observable&quot;</td>
+<td>Teacher trained with shortcuts; student learns to mimic without them.</td>
+</tr>
+<tr>
+<td>ADR</td>
+<td>&quot;Automatic Domain Randomization&quot;</td>
+<td>Curriculum that widens DR ranges as the policy improves.</td>
+</tr>
+<tr>
+<td>Real2Sim</td>
+<td>&quot;Close the gap with real data&quot;</td>
+<td>Learn a residual to make the sim mimic real rollouts.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1703.06907">Tobin et al. (2017). Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World</a> — the original DR paper (vision for robotics).</li>
+<li><a href="https://arxiv.org/abs/1710.06537">Peng et al. (2018). Sim-to-Real Transfer of Robotic Control with Dynamics Randomization</a> — DR for dynamics, quadruped locomotion.</li>
+<li><a href="https://arxiv.org/abs/1910.07113">OpenAI et al. (2019). Solving Rubik&#39;s Cube with a Robot Hand</a> — Dactyl, ADR at scale.</li>
+<li><a href="https://www.science.org/doi/10.1126/scirobotics.abk2822">Miki et al. (2022). Learning robust perceptive locomotion for quadrupedal robots in the wild</a> — teacher-student for ANYmal.</li>
+<li><a href="https://arxiv.org/abs/2108.10470">Makoviychuk et al. (2021). Isaac Gym: High Performance GPU Based Physics Simulation for Robot Learning</a> — the massively parallel sim that drives 2025–2026 deployments.</li>
+<li><a href="https://arxiv.org/abs/1910.07113">Akkaya et al. (2019). Automatic Domain Randomization</a> — ADR curriculum method.</li>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 8 — Planning and Learning with Tabular Methods</a> — the Dyna framing (use a model for planning + rollouts) that underpins modern sim-to-real pipelines.</li>
+<li><a href="https://arxiv.org/abs/2009.13303">Zhao, Queralta &amp; Westerlund (2020). Sim-to-Real Transfer in Deep Reinforcement Learning for Robotics: a Survey</a> — taxonomy of sim-to-real methods with benchmark results.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-multi-agent-rl.html"><span>← Previous</span><b>multi agent rl</b></a>
+      <a class="next" href="./12-rl-for-games.html"><span>Next →</span><b>rl for games</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

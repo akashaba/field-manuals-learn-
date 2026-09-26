@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image Generation — Diffusion Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/10-image-generation-diffusion/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Image Generation — Diffusion Models</h1>
+    <p class="lesson-sub">A diffusion model learns to denoise. Train it to remove a tiny bit of noise from a noisy image, repeat that backwards a thousand times, and you have an image generator.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 07 (U-Net), Phase 1 Lesson 06 (Probability), Phase 3 Lesson 06 (Optimizers)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="29.6" y="32.2" width="30.2" height="30.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(190 44.7 47.3)"/>
+        <rect x="24.8" y="127.9" width="28.9" height="28.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(173 39.2 142.4)"/>
+        <rect x="20.0" y="123.6" width="27.6" height="27.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(155 33.8 137.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Image Generation —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Diffusion Models</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Derive the forward noising process <code>x_0 -&gt; x_1 -&gt; ... -&gt; x_T</code> and explain why the closed-form <code>q(x_t | x_0)</code> holds for any t</li>
+<li>Implement a DDPM-style training objective that regresses the noise added at each step, and a sampler that walks back from pure noise to an image</li>
+<li>Build a time-conditioned U-Net (small enough to train on CPU) that predicts the noise for any timestep</li>
+<li>Explain the difference between DDPM and DDIM sampling, and when each is appropriate (Lesson 23 covers flow matching and rectified flow in depth)</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>GANs generate one-shot: noise in, image out, one forward pass. They are fast and hard to train. Diffusion models generate iteratively: start from pure noise, denoise in small steps, image emerges. They are slow and easy to train. For the last five years the latter property has dominated: any small team can train a diffusion model and get reasonable samples; GAN training is a craft you learn over years of failed runs.</p>
+<p>Beyond training stability, diffusion&#39;s iterative structure is what unlocks everything modern image generation does: text conditioning, inpainting, image editing, super-resolution, controllable style. Each step of the sampling loop is a place to inject a new constraint. That hook is why Stable Diffusion, Imagen, DALL-E 3, Midjourney, and every controllable image model you will use are all diffusion-based.</p>
+<p>This lesson builds the minimal DDPM: forward noising, backward denoising, training loop. The next lesson (Stable Diffusion) wires it into a production system with a VAE, a text encoder, and classifier-free guidance.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-forward-process"><a class="anchor" href="#the-forward-process">#</a> The forward process</h3>
+<p>Take an image <code>x_0</code>. Add a tiny amount of Gaussian noise to get <code>x_1</code>. Add a tiny amount more to get <code>x_2</code>. Keep going for T steps until <code>x_T</code> is nearly indistinguishable from pure Gaussian noise.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">q(x_t | x_{t-1}) = N(x_t; sqrt(1 - beta_t) * x_{t-1},  beta_t * I)</code></pre>
+      </div>
+    <p><code>beta_t</code> is a small variance schedule, typically linear from 0.0001 to 0.02 over T=1000 steps. Each step slightly shrinks the signal and injects fresh noise.</p>
+<h3 id="the-closed-form-jump"><a class="anchor" href="#the-closed-form-jump">#</a> The closed-form jump</h3>
+<p>Adding noise one step at a time is a Markov chain, but the math folds: you can sample <code>x_t</code> directly from <code>x_0</code> in one step.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Define alpha_t = 1 - beta_t
+Define alpha_bar_t = prod_{s=1..t} alpha_s
+
+Then:
+  q(x_t | x_0) = N(x_t; sqrt(alpha_bar_t) * x_0,  (1 - alpha_bar_t) * I)
+
+Equivalently:
+  x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon
+  where epsilon ~ N(0, I)</code></pre>
+      </div>
+    <p>This single equation is the whole reason diffusion is practical. During training you pick a random <code>t</code>, sample <code>x_t</code> directly from <code>x_0</code>, and train in one step — no simulation of the full Markov chain needed.</p>
+<h3 id="the-reverse-process"><a class="anchor" href="#the-reverse-process">#</a> The reverse process</h3>
+<p>The forward process is fixed. The reverse process <code>p(x_{t-1} | x_t)</code> is what the neural network learns. Diffusion models do not predict <code>x_{t-1}</code> directly; they predict the noise <code>epsilon</code> added at step t, and the math derives <code>x_{t-1}</code> from it.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    X0[&quot;x_0&lt;br/&gt;(clean image)&quot;] --&gt; Q1[&quot;q(x_t|x_0)&lt;br/&gt;add noise&quot;]
+    Q1 --&gt; XT[&quot;x_t&lt;br/&gt;(noisy)&quot;]
+    XT --&gt; MODEL[&quot;model(x_t, t)&quot;]
+    MODEL --&gt; EPS[&quot;predicted epsilon&quot;]
+    EPS --&gt; LOSS[&quot;MSE against&lt;br/&gt;true epsilon&quot;]
+
+    XT -.-&gt;|sampling| STEP[&quot;p(x_{t-1}|x_t)&quot;]
+    STEP -.-&gt; XT1[&quot;x_{t-1}&quot;]
+    XT1 -.-&gt;|repeat 1000x| X0S[&quot;x_0 (sampled)&quot;]
+
+    style X0 fill:#dcfce7,stroke:#16a34a
+    style MODEL fill:#fef3c7,stroke:#d97706
+    style LOSS fill:#fecaca,stroke:#dc2626
+    style X0S fill:#dbeafe,stroke:#2563eb</pre></div><h3 id="the-training-loss"><a class="anchor" href="#the-training-loss">#</a> The training loss</h3>
+<p>For every training step:</p>
+<ol>
+<li>Sample a real image <code>x_0</code>.</li>
+<li>Sample a timestep <code>t</code> uniformly from [1, T].</li>
+<li>Sample noise <code>epsilon ~ N(0, I)</code>.</li>
+<li>Compute <code>x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon</code>.</li>
+<li>Predict <code>epsilon_theta(x_t, t)</code> with the network.</li>
+<li>Minimise <code>|| epsilon - epsilon_theta(x_t, t) ||^2</code>.</li>
+</ol>
+<p>That is it. The neural network learns to predict the noise at any timestep. The loss is MSE. There is no adversarial game, no collapse, no oscillation.</p>
+<h3 id="the-sampler-ddpm"><a class="anchor" href="#the-sampler-ddpm">#</a> The sampler (DDPM)</h3>
+<p>To generate: start from <code>x_T ~ N(0, I)</code> and walk backwards one step at a time.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">for t = T, T-1, ..., 1:
+    eps = model(x_t, t)
+    x_{t-1} = (1 / sqrt(alpha_t)) * (x_t - (beta_t / sqrt(1 - alpha_bar_t)) * eps) + sqrt(beta_t) * z
+    where z ~ N(0, I) if t &gt; 1, else 0
+return x_0</code></pre>
+      </div>
+    <p>The key is that even though the reverse conditional is not known in closed form in general, for this specific Gaussian forward process it is. The ugly-looking coefficients are what Bayes&#39; rule gives you.</p>
+<h3 id="why-1000-steps"><a class="anchor" href="#why-1000-steps">#</a> Why 1000 steps</h3>
+<p>The forward noise schedule is chosen so each step adds just enough noise that the reverse step is nearly Gaussian. Too few steps and the reverse step is far from Gaussian, the network cannot model it well. Too many steps and sampling becomes expensive with diminishing gain. T=1000 with a linear schedule is the DDPM default.</p>
+<h3 id="ddim-20x-faster-sampling"><a class="anchor" href="#ddim-20x-faster-sampling">#</a> DDIM: 20x faster sampling</h3>
+<p>Training is the same. Sampling changes. DDIM (Song et al., 2020) defines a deterministic reverse process that skips timesteps without retraining. Sampling in 50 steps with DDIM gives near-1000-step DDPM quality. Every production system uses DDIM or an even faster variant (DPM-Solver, Euler ancestral).</p>
+<h3 id="time-conditioning"><a class="anchor" href="#time-conditioning">#</a> Time conditioning</h3>
+<p>The network <code>epsilon_theta(x_t, t)</code> needs to know which timestep it is denoising. Modern diffusion models inject <code>t</code> via sinusoidal time embeddings (same idea as positional encoding in transformers) that get added to feature maps at every U-Net level.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">t_embedding = sinusoidal(t)
+feature_map += MLP(t_embedding)</code></pre>
+      </div>
+    <p>Without time conditioning the network has to guess the noise level from the image itself, which works but is much less sample-efficient.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv-diffusion-image</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-noise-schedule"><a class="anchor" href="#step-1-noise-schedule">#</a> Step 1: Noise schedule</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+def linear_beta_schedule(T=1000, beta_start=1e-4, beta_end=2e-2):
+    return torch.linspace(beta_start, beta_end, T)
+
+
+def precompute_schedule(betas):
+    alphas = 1.0 - betas
+    alphas_cumprod = torch.cumprod(alphas, dim=0)
+    return {
+        &quot;betas&quot;: betas,
+        &quot;alphas&quot;: alphas,
+        &quot;alphas_cumprod&quot;: alphas_cumprod,
+        &quot;sqrt_alphas_cumprod&quot;: torch.sqrt(alphas_cumprod),
+        &quot;sqrt_one_minus_alphas_cumprod&quot;: torch.sqrt(1.0 - alphas_cumprod),
+        &quot;sqrt_recip_alphas&quot;: torch.sqrt(1.0 / alphas),
+    }
+
+schedule = precompute_schedule(linear_beta_schedule(T=1000))</code></pre>
+      </div>
+    <p>Precompute once, gather by index during training and sampling.</p>
+<h3 id="step-2-forward-diffusion-q_sample"><a class="anchor" href="#step-2-forward-diffusion-q_sample">#</a> Step 2: Forward diffusion (q_sample)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def q_sample(x0, t, noise, schedule):
+    sqrt_a = schedule[&quot;sqrt_alphas_cumprod&quot;][t].view(-1, 1, 1, 1)
+    sqrt_one_minus_a = schedule[&quot;sqrt_one_minus_alphas_cumprod&quot;][t].view(-1, 1, 1, 1)
+    return sqrt_a * x0 + sqrt_one_minus_a * noise</code></pre>
+      </div>
+    <p>One-line closed form. <code>t</code> is a batch of timesteps, one per image in the batch.</p>
+<h3 id="step-3-a-tiny-time-conditioned-u-net"><a class="anchor" href="#step-3-a-tiny-time-conditioned-u-net">#</a> Step 3: A tiny time-conditioned U-Net</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+def timestep_embedding(t, dim=64):
+    half = dim // 2
+    freqs = torch.exp(-math.log(10000) * torch.arange(half, device=t.device) / half)
+    args = t[:, None].float() * freqs[None]
+    emb = torch.cat([args.sin(), args.cos()], dim=-1)
+    return emb
+
+
+class TinyUNet(nn.Module):
+    def __init__(self, img_channels=3, base=32, t_dim=64):
+        super().__init__()
+        self.t_mlp = nn.Sequential(
+            nn.Linear(t_dim, base * 4),
+            nn.SiLU(),
+            nn.Linear(base * 4, base * 4),
+        )
+        self.t_dim = t_dim
+        self.enc1 = nn.Conv2d(img_channels, base, 3, padding=1)
+        self.enc2 = nn.Conv2d(base, base * 2, 4, stride=2, padding=1)
+        self.mid = nn.Conv2d(base * 2, base * 2, 3, padding=1)
+        self.dec1 = nn.ConvTranspose2d(base * 2, base, 4, stride=2, padding=1)
+        self.dec2 = nn.Conv2d(base * 2, img_channels, 3, padding=1)
+        self.time_proj = nn.Linear(base * 4, base * 2)
+
+    def forward(self, x, t):
+        t_emb = timestep_embedding(t, self.t_dim)
+        t_emb = self.t_mlp(t_emb)
+        t_proj = self.time_proj(t_emb)[:, :, None, None]
+
+        h1 = F.silu(self.enc1(x))
+        h2 = F.silu(self.enc2(h1)) + t_proj
+        h3 = F.silu(self.mid(h2))
+        d1 = F.silu(self.dec1(h3))
+        d2 = torch.cat([d1, h1], dim=1)
+        return self.dec2(d2)</code></pre>
+      </div>
+    <p>Two-level U-Net with time conditioning injected at the bottleneck. Scale up the depth and width for real images.</p>
+<h3 id="step-4-training-loop"><a class="anchor" href="#step-4-training-loop">#</a> Step 4: Training loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def train_step(model, x0, schedule, optimizer, device, T=1000):
+    model.train()
+    x0 = x0.to(device)
+    bs = x0.size(0)
+    t = torch.randint(0, T, (bs,), device=device)
+    noise = torch.randn_like(x0)
+    x_t = q_sample(x0, t, noise, schedule)
+    pred = model(x_t, t)
+    loss = F.mse_loss(pred, noise)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return loss.item()</code></pre>
+      </div>
+    <p>That is the entire training loop. No GAN game, no specialised loss, one MSE call.</p>
+<h3 id="step-5-sampler-ddpm"><a class="anchor" href="#step-5-sampler-ddpm">#</a> Step 5: Sampler (DDPM)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@torch.no_grad()
+def sample(model, schedule, shape, T=1000, device=&quot;cpu&quot;):
+    model.eval()
+    x = torch.randn(shape, device=device)
+    betas = schedule[&quot;betas&quot;].to(device)
+    sqrt_one_minus_a = schedule[&quot;sqrt_one_minus_alphas_cumprod&quot;].to(device)
+    sqrt_recip_alphas = schedule[&quot;sqrt_recip_alphas&quot;].to(device)
+
+    for t in reversed(range(T)):
+        t_batch = torch.full((shape[0],), t, dtype=torch.long, device=device)
+        eps = model(x, t_batch)
+        coef = betas[t] / sqrt_one_minus_a[t]
+        mean = sqrt_recip_alphas[t] * (x - coef * eps)
+        if t &gt; 0:
+            x = mean + torch.sqrt(betas[t]) * torch.randn_like(x)
+        else:
+            x = mean
+    return x</code></pre>
+      </div>
+    <p>1000 forward passes to produce one batch of samples. In real code you would swap this for a DDIM 50-step sampler.</p>
+<h3 id="step-6-ddim-sampler-deterministic-20x-faster"><a class="anchor" href="#step-6-ddim-sampler-deterministic-20x-faster">#</a> Step 6: DDIM sampler (deterministic, ~20x faster)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@torch.no_grad()
+def sample_ddim(model, schedule, shape, steps=50, T=1000, device=&quot;cpu&quot;, eta=0.0):
+    model.eval()
+    x = torch.randn(shape, device=device)
+    alphas_cumprod = schedule[&quot;alphas_cumprod&quot;].to(device)
+
+    ts = torch.linspace(T - 1, 0, steps + 1).long()
+    for i in range(steps):
+        t = ts[i]
+        t_prev = ts[i + 1]
+        t_batch = torch.full((shape[0],), t, dtype=torch.long, device=device)
+        eps = model(x, t_batch)
+        a_t = alphas_cumprod[t]
+        a_prev = alphas_cumprod[t_prev] if t_prev &gt;= 0 else torch.tensor(1.0, device=device)
+        x0_pred = (x - torch.sqrt(1 - a_t) * eps) / torch.sqrt(a_t)
+        sigma = eta * torch.sqrt((1 - a_prev) / (1 - a_t) * (1 - a_t / a_prev))
+        dir_xt = torch.sqrt(1 - a_prev - sigma ** 2) * eps
+        noise = sigma * torch.randn_like(x) if eta &gt; 0 else 0
+        x = torch.sqrt(a_prev) * x0_pred + dir_xt + noise
+    return x</code></pre>
+      </div>
+    <p><code>eta=0</code> is fully deterministic (same noise input always produces the same output). <code>eta=1</code> recovers DDPM.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For production work, use <code>diffusers</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from diffusers import DDPMScheduler, UNet2DModel
+
+unet = UNet2DModel(sample_size=32, in_channels=3, out_channels=3, layers_per_block=2)
+scheduler = DDPMScheduler(num_train_timesteps=1000)</code></pre>
+      </div>
+    <p>The library ships ready-made schedulers (DDPM, DDIM, DPM-Solver, Euler, Heun), configurable U-Nets, pipelines for text-to-image and image-to-image, and LoRA fine-tuning helpers.</p>
+<p>For research, <code>k-diffusion</code> (Katherine Crowson) has the most faithful reference implementations and the best sampling variants.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-diffusion-sampler-picker.md</code> — a prompt that picks DDPM / DDIM / DPM-Solver / Euler based on quality target, latency budget, and conditioning type.</li>
+<li><code>outputs/skill-noise-schedule-designer.md</code> — a skill that produces a linear, cosine, or sigmoid beta schedule given T and target corruption level, plus diagnostic plots of signal-to-noise ratio over time.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Visualise the forward process: take one image and plot <code>x_t</code> at <code>t in [0, 100, 250, 500, 750, 1000]</code>. Verify that <code>x_1000</code> looks like pure Gaussian noise.</li>
+<li><strong>(Medium)</strong> Train the TinyUNet on the synthetic-circles dataset for 20 epochs and sample 16 circles. Compare DDPM (1000 steps) and DDIM (50 steps) sampling — do they produce similar images from the same noise seed?</li>
+<li><strong>(Hard)</strong> Implement a cosine noise schedule (Nichol &amp; Dhariwal, 2021): <code>alpha_bar_t = cos^2((t/T + s) / (1 + s) * pi / 2)</code>. Train the same model with linear and cosine schedules and show that cosine gives better samples at low step counts.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Forward process</td>
+<td>&quot;Add noise over time&quot;</td>
+<td>Fixed Markov chain that corrupts an image into Gaussian noise over T steps</td>
+</tr>
+<tr>
+<td>Reverse process</td>
+<td>&quot;Denoise step by step&quot;</td>
+<td>Learned distribution that walks back from noise to image</td>
+</tr>
+<tr>
+<td>Epsilon prediction</td>
+<td>&quot;Predict the noise&quot;</td>
+<td>The training target: <code>epsilon_theta(x_t, t)</code> predicts the noise added at step t</td>
+</tr>
+<tr>
+<td>Beta schedule</td>
+<td>&quot;Noise amounts&quot;</td>
+<td>Sequence of T small variances that define how much noise enters per step</td>
+</tr>
+<tr>
+<td>alpha_bar_t</td>
+<td>&quot;Cumulative retain factor&quot;</td>
+<td>Product of (1 - beta_s) up to time t; bigger t means less signal left</td>
+</tr>
+<tr>
+<td>DDPM sampler</td>
+<td>&quot;Ancestral, stochastic&quot;</td>
+<td>Samples each x_{t-1} from its conditional Gaussian; 1000 steps</td>
+</tr>
+<tr>
+<td>DDIM sampler</td>
+<td>&quot;Deterministic, fast&quot;</td>
+<td>Rewrites sampling as a deterministic ODE; 20-100 steps with similar quality</td>
+</tr>
+<tr>
+<td>Time conditioning</td>
+<td>&quot;Tell the model which t&quot;</td>
+<td>Sinusoidal embedding of t injected into the U-Net so it knows the noise level</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2006.11239">Denoising Diffusion Probabilistic Models (Ho et al., 2020)</a> — the paper that made diffusion practical and beat GANs on FID</li>
+<li><a href="https://arxiv.org/abs/2102.09672">Improved DDPM (Nichol &amp; Dhariwal, 2021)</a> — cosine schedule and v-parameterisation</li>
+<li><a href="https://arxiv.org/abs/2010.02502">DDIM (Song, Meng, Ermon, 2020)</a> — the deterministic sampler that made real-time inference possible</li>
+<li><a href="https://arxiv.org/abs/2206.00364">Elucidating the Design Space of Diffusion (Karras et al., 2022)</a> — a unified view of every diffusion design choice; current best reference</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-image-generation-gans.html"><span>← Previous</span><b>image generation gans</b></a>
+      <a class="next" href="./11-stable-diffusion.html"><span>Next →</span><b>stable diffusion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

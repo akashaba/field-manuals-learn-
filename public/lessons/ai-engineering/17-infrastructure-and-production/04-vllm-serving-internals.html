@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Serving Engine Internals — PagedAttention, Continuous Batching, Chunked Prefill — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/04-vllm-serving-internals/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Serving Engine Internals — PagedAttention, Continuous Batching, Chunked Prefill</h1>
+    <p class="lesson-sub">Modern serving-engine throughput rests on three compounding defaults, not a single trick. PagedAttention is always on. Continuous batching injects new requests into the active batch between decode iterations. Chunked prefill slices long prompts so decode tokens never starve. Turn all three on and a Llama 3.3 70B FP8 on one H100 SXM5 pushes 2,200-2,400 tok/s at 128 concurrent — roughly 25% above vLLM&#39;s own default and 3-4x a naive PyTorch loop. This lesson reads the scheduler and attention kernel of vLLM — the reference engine for all three techniques — at a level you can diagram, and ends with a toy continuous batcher in `code/main.py` that schedules prefill and decode the way vLLM does.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy continuous batching scheduler)</b></div><div><span>Prerequisites</span><b>Phase 17 · 01 (Model Serving), Phase 11 (LLM Engineering)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M67.1,75.8 L72.5,67.8 L77.9,75.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.3,78.3 L67.1,51.7 L84.8,78.3 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M44.5,73.0 L61.6,47.4 L78.7,73.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.7" y="41.4" width="32.9" height="32.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.2 57.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Serving Engine</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Internals —…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain PagedAttention as a KV cache allocator: blocks, block tables, and why fragmentation stays under 4% at production load.</li>
+<li>Diagram continuous batching at the iteration level: how finished sequences leave the batch and new ones join without draining.</li>
+<li>Describe chunked prefill in one sentence and name which latency metric it protects (hint: it is TTFT tail, not mean throughput).</li>
+<li>Name the 2026 vLLM v0.18.0 gotcha that bites teams enabling every optimization at once.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A naive PyTorch serve loop runs one request at a time: tokenize, prefill, decode until EOS, return. At one user this works. At one hundred, it is a queue of patient people. The obvious fix — static batching — pads every request to the longest prompt in the window, pads every decode to the longest expected output, and stalls the whole batch on the slowest sequence. You pay for padding you never use, and fast requests wait for slow ones.</p>
+<p>vLLM solves three problems at once. PagedAttention stops KV cache fragmentation from eating 60-80% of GPU memory the way classic contiguous allocation does. Continuous batching lets requests join and leave the batch between each decode iteration, so the batch is always full of real work. Chunked prefill breaks a 32k-token prompt into ~512-token slices that interleave with decode, so a long prompt does not freeze every decode token on the GPU.</p>
+<p>The 2026 production default is all three on. You need to understand what each one does because the failure modes are all on the scheduler, not the model.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="pagedattention-as-a-virtual-memory-system"><a class="anchor" href="#pagedattention-as-a-virtual-memory-system">#</a> PagedAttention as a virtual memory system</h3>
+<p>A KV cache is <code>num_layers × 2 × num_heads × head_dim × seq_len × bytes_per_element</code> per sequence. For Llama 3.3 70B at 8192 tokens, that is roughly 1.25 GB per sequence in BF16. If you pre-reserve 8192 slots for every request but the average request only uses 1500 tokens, you waste roughly 82% of the HBM you reserved. Classic batching pays this waste.</p>
+<p>PagedAttention borrows the idea from OS virtual memory. KV cache is not contiguous per sequence. It is allocated in fixed-size blocks (default 16 tokens). Each sequence has a block table that maps its logical token positions to physical block IDs. When a sequence grows past its allocated blocks, one more block is added. When it finishes, its blocks return to the pool.</p>
+<p>Fragmentation drops from 60-80% (classic) to under 4% (PagedAttention). You do not enable PagedAttention with a flag — it is the only allocator vLLM ships. The knob is <code>--gpu-memory-utilization</code> (default 0.9), which tells vLLM how much HBM to reserve for KV blocks after loading weights and activations.</p>
+<h3 id="continuous-batching-at-the-iteration-level"><a class="anchor" href="#continuous-batching-at-the-iteration-level">#</a> Continuous batching at the iteration level</h3>
+<p>The old &quot;dynamic batching&quot; waited for a window (say 10 ms) to fill a batch, then ran prefill + decode + decode + decode until every sequence finished. Fast sequences left early and sat idle while the GPU finished the slow ones.</p>
+<p>Continuous batching operates between each decode step. Call the set of running sequences the <code>RUNNING</code> list. At each iteration:</p>
+<ol>
+<li>Any sequence in <code>RUNNING</code> that just hit EOS or max_tokens is removed.</li>
+<li>The scheduler looks at the waiting queue. If there are free KV blocks, it admits new sequences (prefill or resumed).</li>
+<li>The forward pass runs on whatever is now in <code>RUNNING</code>, emitting one new token per sequence.</li>
+</ol>
+<p>The batch size is never padded to a fixed number. Sequences at different positions in their output share one fused forward. In 2026 vLLM this is called the <code>V1 scheduler</code>. The key invariant: the scheduler runs once per decode iteration, not once per request.</p>
+<h3 id="chunked-prefill-protects-ttft-tail"><a class="anchor" href="#chunked-prefill-protects-ttft-tail">#</a> Chunked prefill protects TTFT tail</h3>
+<p>Prefill is compute-bound. A 32k-token prompt on Llama 3.3 70B takes ~800 ms of pure prefill on one H100. While prefill runs, decode tokens for every other sequence in the batch wait. In a serving loop, the first-token latency (TTFT) of one long prompt becomes the inter-token latency (ITL) blip for dozens of other users.</p>
+<p>Chunked prefill splits prefill into fixed-size chunks (default 512 tokens) and schedules each chunk as a unit. Between chunks the scheduler can advance decode sequences by one token. You trade a small absolute prefill latency hit (a few ms per chunk) for much lower decode-time jitter. P99 ITL under mixed load drops from ~50 ms to ~15 ms in published benchmarks.</p>
+<h3 id="the-three-defaults-interact"><a class="anchor" href="#the-three-defaults-interact">#</a> The three defaults interact</h3>
+<p>All three features assume each other. PagedAttention gives the scheduler a fine-grained KV resource to trade against. Continuous batching needs that fine-grained resource so admitting a new sequence does not force a global reshuffle. Chunked prefill is a decision the scheduler makes on the same <code>RUNNING</code> list — it is one more scheduler policy, not a separate system.</p>
+<p>You do not need to know every flag. You need to know what the scheduler optimizes: goodput under KV-block budget, subject to chunked prefill slicing.</p>
+<h3 id="the-2026-v0180-gotcha"><a class="anchor" href="#the-2026-v0180-gotcha">#</a> The 2026 v0.18.0 gotcha</h3>
+<p>In vLLM v0.18.0 you cannot combine <code>--enable-chunked-prefill</code> with draft-model speculative decoding (<code>--speculative-model</code>). The documented exception is N-gram GPU speculative decoding in the V1 scheduler. Teams that flip every flag on without reading the release notes get a run-time error at startup, not a soft regression. If your speculative gain was worth enabling chunked prefill for, revisit the choice — the right answer in 2026 is often EAGLE-3 without chunked prefill, not a draft model plus chunked prefill that does not compile.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>Llama 3.3 70B FP8, H100 SXM5, 128 concurrent, all three on: 2,200-2,400 tok/s.</li>
+<li>Same model, default vLLM (no chunked prefill): ~1,800 tok/s.</li>
+<li>Same model, naive PyTorch forward loop: ~600 tok/s.</li>
+<li>KV fragmentation waste under PagedAttention at production load: &lt;4%.</li>
+<li>P99 ITL under mixed load: ~15 ms with chunked prefill, ~50 ms without.</li>
+</ul>
+<h3 id="what-the-scheduler-looks-like"><a class="anchor" href="#what-the-scheduler-looks-like">#</a> What the scheduler looks like</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">while True:
+    finished = [s for s in RUNNING if s.is_done()]
+    for s in finished: release_blocks(s); RUNNING.remove(s)
+
+    while WAITING and have_free_blocks_for(WAITING[0]):
+        s = WAITING.pop(0)
+        allocate_initial_blocks(s)
+        RUNNING.append(s)
+
+    # schedule prefill chunks + decode in one batch
+    batch = []
+    for s in RUNNING:
+        if s.in_prefill:
+            batch.append(next_prefill_chunk(s))   # e.g. 512 tokens
+        else:
+            batch.append(decode_one_token(s))     # 1 token
+
+    run_forward(batch)                            # one fused GPU call</code></pre>
+      </div>
+    <p><code>code/main.py</code> is exactly this loop in stdlib Python with fake token counts and fake forward latency. Running it shows how chunked prefill keeps decode sequences alive during a long prefill.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">tensor-parallel</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a vLLM-style scheduler with toggleable features. Run it to see:</p>
+<ul>
+<li><code>NAIVE</code> mode: one request at a time, no batching.</li>
+<li><code>STATIC</code> mode: pad and wait, classic batching.</li>
+<li><code>CONTINUOUS</code> mode: iteration-level admission and release.</li>
+<li><code>CONTINUOUS + CHUNKED</code> mode: prefill slices interleaved with decode.</li>
+</ul>
+<p>The output shows total throughput (tokens per virtual second), TTFT mean, and P99 ITL. The <code>CONTINUOUS + CHUNKED</code> row should dominate on mixed traffic.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-vllm-scheduler-reader.md</code>. Given a serving config (batch size, KV memory utilization, chunked prefill size, speculative config), it produces a scheduler diagnosis that names which of the three defaults is bottlenecking and what to tune.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Compare <code>STATIC</code> to <code>CONTINUOUS</code> on a workload with mixed short and long requests. Where does the throughput gap come from — prefill efficiency, decode efficiency, or tail latency?</li>
+<li>Modify the toy scheduler to add <code>--max-num-batched-tokens</code>. What is the right value for an H100 running Llama 3.3 70B FP8? (Hint: it is a function of KV block size and number of free blocks, not raw HBM.)</li>
+<li>Re-read the vLLM v0.18.0 release notes. Which combinations of flags are mutually exclusive? List them.</li>
+<li>Compute the KV cache fragmentation waste for a trace of 1,000 requests with mean 1,500 output tokens, std 600 tokens, under (a) contiguous per-request allocation at 8192 max, (b) PagedAttention with 16-token blocks.</li>
+<li>Explain in one paragraph why chunked prefill helps P99 ITL but not throughput in isolation. Where does the throughput win come from in practice?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PagedAttention</td>
+<td>&quot;the KV trick&quot;</td>
+<td>Fixed-size block allocator for KV cache; fragmentation &lt;4%</td>
+</tr>
+<tr>
+<td>Block table</td>
+<td>&quot;the page table&quot;</td>
+<td>Per-sequence map from logical token position to physical KV block</td>
+</tr>
+<tr>
+<td>Continuous batching</td>
+<td>&quot;dynamic batching, but right&quot;</td>
+<td>Admit/release decisions made every decode iteration</td>
+</tr>
+<tr>
+<td>Chunked prefill</td>
+<td>&quot;prefill splitting&quot;</td>
+<td>Break long prefill into 512-token slices interleaved with decode</td>
+</tr>
+<tr>
+<td>TTFT</td>
+<td>&quot;first token time&quot;</td>
+<td>Prefill + queue + network; dominated by prefill at long prompts</td>
+</tr>
+<tr>
+<td>ITL</td>
+<td>&quot;inter-token latency&quot;</td>
+<td>Time between consecutive decode tokens; dominated by batch size</td>
+</tr>
+<tr>
+<td>Goodput</td>
+<td>&quot;throughput that meets SLO&quot;</td>
+<td>Tokens/sec where every request still hit TTFT and ITL targets</td>
+</tr>
+<tr>
+<td>V1 scheduler</td>
+<td>&quot;the new scheduler&quot;</td>
+<td>vLLM&#39;s 2026 scheduler; N-gram spec decode is the chunked-prefill-compatible path</td>
+</tr>
+<tr>
+<td><code>--gpu-memory-utilization</code></td>
+<td>&quot;the memory knob&quot;</td>
+<td>Fraction of HBM reserved for KV blocks after weights and activations</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://docs.vllm.ai/en/latest/features/spec_decode/">vLLM documentation — Speculative Decoding</a> — official source on chunked-prefill and speculative-decoding compatibility.</li>
+<li><a href="https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/index.html">vLLM Release Notes (NVIDIA)</a> — 2026 release cadence and version-specific behavior.</li>
+<li><a href="https://blog.vllm.ai/2023/06/20/vllm.html">vLLM Blog — PagedAttention</a> — the original write-up that still defines how to think about the allocator.</li>
+<li><a href="https://arxiv.org/abs/2309.06180">PagedAttention paper (arXiv:2309.06180)</a> — fragmentation analysis and scheduler design.</li>
+<li><a href="https://www.aleksagordic.com/blog/vllm">Aleksa Gordic — Inside vLLM</a> — detailed V1 scheduler walkthrough with flame graphs.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-gpu-autoscaling-kubernetes.html"><span>← Previous</span><b>gpu autoscaling kubernetes</b></a>
+      <a class="next" href="./05-eagle3-speculative-decoding.html"><span>Next →</span><b>eagle3 speculative decoding</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

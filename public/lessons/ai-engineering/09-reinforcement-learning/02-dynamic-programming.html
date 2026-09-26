@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dynamic Programming — Policy Iteration &amp; Value Iteration — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/02-dynamic-programming/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Dynamic Programming — Policy Iteration &amp; Value Iteration</h1>
+    <p class="lesson-sub">Dynamic programming is RL with cheating. You already know the transition and reward functions; you just iterate the Bellman equation until `V` or `π` stops moving. It is the benchmark every sampling-based method tries to approach.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 9 · 01 (MDPs)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M82.2,92.6 L89.6,81.5 L97.0,92.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.5" y="117.8" width="25.9" height="25.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.5 130.8)"/>
+        <circle cx="21.0" cy="125.8" r="12.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.6" cy="120.9" r="11.7" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.2" cy="116.0" r="11.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Dynamic Programming</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Policy Iteration &amp;…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have an MDP with a known model: you can query <code>P(s&#39; | s, a)</code> and <code>R(s, a, s&#39;)</code> for any state-action pair. An inventory manager knows the demand distribution. A board game has deterministic transitions. A gridworld is four lines of Python. You have a <em>model</em>.</p>
+<p>Model-free RL (Q-learning, PPO, REINFORCE) was invented for the case where you don&#39;t have a model — you can only sample from the environment. But when you do have one, there are faster, better methods: dynamic programming. Bellman designed them in 1957. They still define correctness: when people say &quot;optimal policy for this MDP,&quot; they mean the policy DP would return.</p>
+<p>You need them in 2026 for three reasons. First, every tabular environment in RL research (GridWorld, FrozenLake, CliffWalking) is solved with DP to produce the gold-standard policy. Second, exact values let you <em>debug</em> sampling methods: if Q-learning&#39;s estimate for <code>V*(s_0)</code> disagrees with the DP answer by 30%, your Q-learning has a bug. Third, modern offline RL and planning methods (MCTS, AlphaZero&#39;s search, model-based RL in Phase 9 · 10) all iterate a Bellman backup over a learned or given model.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/02-dynamic-programming/assets/dp.svg" alt="Policy iteration and value iteration, side by side" loading="lazy" /></figure></p>
+<p><strong>Two algorithms, both fixed-point iteration on Bellman.</strong></p>
+<p><strong>Policy iteration.</strong> Alternates two steps until the policy stops changing.</p>
+<ol>
+<li><em>Evaluation:</em> given policy <code>π</code>, compute <code>V^π</code> by repeatedly applying <code>V(s) ← Σ_a π(a|s) Σ_{s&#39;,r} P(s&#39;,r|s,a) [r + γ V(s&#39;)]</code> until it converges.</li>
+<li><em>Improvement:</em> given <code>V^π</code>, make <code>π</code> greedy w.r.t. <code>V^π</code>: <code>π(s) ← argmax_a Σ_{s&#39;,r} P(s&#39;,r|s,a) [r + γ V(s&#39;)]</code>.</li>
+</ol>
+<p>Convergence is guaranteed because (a) each improvement step either keeps <code>π</code> the same or strictly increases <code>V^π</code> for some state, (b) the space of deterministic policies is finite. Usually converges in ~5–20 outer iterations even for large state spaces.</p>
+<p><strong>Value iteration.</strong> Collapses evaluation and improvement into one sweep. Apply the Bellman <em>optimality</em> equation:</p>
+<p><code>V(s) ← max_a Σ_{s&#39;,r} P(s&#39;,r|s,a) [r + γ V(s&#39;)]</code></p>
+<p>Repeat until <code>max_s |V_{new}(s) - V(s)| &lt; ε</code>. Extract the policy at the end by taking the greedy action. Strictly faster per iteration — no inner evaluation loop — but typically needs more iterations to converge.</p>
+<p><strong>Generalized policy iteration (GPI).</strong> The unifying framing. Value function and policy are locked in a two-way improvement loop; any method that drives both toward mutual consistency (async value iteration, modified policy iteration, Q-learning, actor-critic, PPO) is an instance of GPI.</p>
+<p><strong>Why <code>γ &lt; 1</code> matters.</strong> The Bellman operator is a <code>γ</code>-contraction in the sup-norm: <code>||T V - T V&#39;||_∞ ≤ γ ||V - V&#39;||_∞</code>. Contraction implies unique fixed point and geometric convergence. Drop <code>γ &lt; 1</code> and you lose the guarantee — you need a finite horizon or an absorbing terminal state.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">value-iteration-gamma</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-build-the-gridworld-mdp-model"><a class="anchor" href="#step-1-build-the-gridworld-mdp-model">#</a> Step 1: build the GridWorld MDP model</h3>
+<p>Use the same 4×4 GridWorld from Lesson 01. We add a stochastic variant: with probability <code>0.1</code> the agent slips to a random perpendicular direction.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">SLIP = 0.1
+
+def transitions(state, action):
+    if state == TERMINAL:
+        return [(state, 0.0, 1.0)]
+    outcomes = []
+    for direction, prob in action_probs(action):
+        outcomes.append((apply_move(state, direction), -1.0, prob))
+    return outcomes</code></pre>
+      </div>
+    <p><code>transitions(s, a)</code> returns a list of <code>(s&#39;, r, p)</code>. This is the entire model.</p>
+<h3 id="step-2-policy-evaluation"><a class="anchor" href="#step-2-policy-evaluation">#</a> Step 2: policy evaluation</h3>
+<p>Given a policy <code>π(s) = {action: prob}</code>, iterate the Bellman equation until <code>V</code> stops moving:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def policy_evaluation(policy, gamma=0.99, tol=1e-6):
+    V = {s: 0.0 for s in states()}
+    while True:
+        delta = 0.0
+        for s in states():
+            v = sum(pi_a * sum(p * (r + gamma * V[s_prime])
+                              for s_prime, r, p in transitions(s, a))
+                   for a, pi_a in policy(s).items())
+            delta = max(delta, abs(v - V[s]))
+            V[s] = v
+        if delta &lt; tol:
+            return V</code></pre>
+      </div>
+    <h3 id="step-3-policy-improvement"><a class="anchor" href="#step-3-policy-improvement">#</a> Step 3: policy improvement</h3>
+<p>Replace <code>π</code> with the greedy policy w.r.t. <code>V</code>. If <code>π</code> did not change, return — we are at the optimum.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def policy_improvement(V, gamma=0.99):
+    new_policy = {}
+    for s in states():
+        best_a = max(
+            ACTIONS,
+            key=lambda a: sum(p * (r + gamma * V[s_prime])
+                              for s_prime, r, p in transitions(s, a)),
+        )
+        new_policy[s] = best_a
+    return new_policy</code></pre>
+      </div>
+    <h3 id="step-4-stitch-them-together"><a class="anchor" href="#step-4-stitch-them-together">#</a> Step 4: stitch them together</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def policy_iteration(gamma=0.99):
+    policy = {s: &quot;up&quot; for s in states()}   # arbitrary start
+    for _ in range(100):
+        V = policy_evaluation(lambda s: {policy[s]: 1.0}, gamma)
+        new_policy = policy_improvement(V, gamma)
+        if new_policy == policy:
+            return V, policy
+        policy = new_policy</code></pre>
+      </div>
+    <p>Typical convergence on 4×4: 4–6 outer iterations. Outputs <code>V*(0,0) ≈ -6</code> and a policy that strictly decreases the step count.</p>
+<h3 id="step-5-value-iteration-the-one-loop-version"><a class="anchor" href="#step-5-value-iteration-the-one-loop-version">#</a> Step 5: value iteration (the one-loop version)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def value_iteration(gamma=0.99, tol=1e-6):
+    V = {s: 0.0 for s in states()}
+    while True:
+        delta = 0.0
+        for s in states():
+            v = max(sum(p * (r + gamma * V[s_prime])
+                       for s_prime, r, p in transitions(s, a))
+                   for a in ACTIONS)
+            delta = max(delta, abs(v - V[s]))
+            V[s] = v
+        if delta &lt; tol:
+            break
+    policy = policy_improvement(V, gamma)
+    return V, policy</code></pre>
+      </div>
+    <p>Same fixed point, fewer lines of code.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Forgetting to handle terminals.</strong> If you apply Bellman to an absorbing state, it still picks up a &quot;best action&quot; that changes nothing. Guard with <code>if s == terminal: V[s] = 0</code>.</li>
+<li><strong>Sup-norm vs L2 convergence.</strong> Use <code>max |V_new - V|</code>, not average. The theoretical guarantee is on the sup-norm.</li>
+<li><strong>In-place vs synchronous updates.</strong> Updating <code>V[s]</code> in-place (Gauss-Seidel) converges faster than a separate <code>V_new</code> dict (Jacobi). Production code uses in-place.</li>
+<li><strong>Policy ties.</strong> If two actions have equal Q-value, <code>argmax</code> may break ties differently each iteration, causing the &quot;policy stable&quot; check to oscillate. Use a stable tie-break (first action in fixed order).</li>
+<li><strong>State-space explosion.</strong> DP is <code>O(|S| · |A|)</code> per sweep. Works up to ~10⁷ states. Beyond that, you need function approximation (Phase 9 · 05 onwards).</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In 2026, DP is the correctness baseline and the inner loop of planners:</p>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Solve a small tabular MDP exactly</td>
+<td>Value iteration (simpler) or policy iteration (fewer outer steps)</td>
+</tr>
+<tr>
+<td>Verify a Q-learning / PPO implementation</td>
+<td>Compare to DP-optimal V* on a toy environment</td>
+</tr>
+<tr>
+<td>Model-based RL (Phase 9 · 10)</td>
+<td>Bellman backup on a learned transition model</td>
+</tr>
+<tr>
+<td>Planning in AlphaZero / MuZero</td>
+<td>Monte Carlo Tree Search = async Bellman backup</td>
+</tr>
+<tr>
+<td>Offline RL (CQL, IQL)</td>
+<td>Conservative Q-iteration — DP with a penalty on OOD actions</td>
+</tr>
+</tbody></table>
+<p>Every time someone says &quot;the optimal value function,&quot; they mean &quot;the DP fixed point.&quot; When you see <code>V*</code> or <code>Q*</code> in a paper, picture this loop.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-dp-solver.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: dp-solver
+description: Solve a small tabular MDP exactly via policy iteration or value iteration. Report convergence behavior.
+version: 1.0.0
+phase: 9
+lesson: 2
+tags: [rl, dynamic-programming, bellman]
+---
+
+Given an MDP with a known model, output:
+
+1. Choice. Policy iteration vs value iteration. Reason tied to |S|, |A|, γ.
+2. Initialization. V_0, starting policy. Convergence sensitivity.
+3. Stopping. Sup-norm tolerance ε. Expected number of sweeps.
+4. Verification. V*(s_0) computed exactly. Greedy policy extracted.
+5. Use. How this baseline will be used to debug/evaluate sampling-based methods.
+
+Refuse to run DP on state spaces &gt; 10⁷. Refuse to claim convergence without a sup-norm check. Flag any γ ≥ 1 on an infinite-horizon task as a guarantee violation.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run value iteration on the 4×4 GridWorld with <code>γ ∈ {0.9, 0.99}</code>. How many sweeps until <code>max |ΔV| &lt; 1e-6</code>? Print <code>V*</code> as a 4×4 grid.</li>
+<li><strong>Medium.</strong> Compare policy iteration vs value iteration on the <em>stochastic</em> GridWorld (slip probability <code>0.1</code>). Count: sweeps, wall-clock time, final <code>V*(0,0)</code>. Which converges faster in iterations? In wall-clock?</li>
+<li><strong>Hard.</strong> Build modified policy iteration: in the evaluation step, run only <code>k</code> sweeps instead of to convergence. Plot <code>V*(0,0)</code> error vs <code>k</code> for <code>k ∈ {1, 2, 5, 10, 50}</code>. What does the curve tell you about the evaluation/improvement tradeoff?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Policy iteration</td>
+<td>&quot;DP algorithm&quot;</td>
+<td>Alternating evaluation (<code>V^π</code>) and improvement (greedy <code>π</code> w.r.t. <code>V^π</code>) until the policy stops changing.</td>
+</tr>
+<tr>
+<td>Value iteration</td>
+<td>&quot;Faster DP&quot;</td>
+<td>Bellman optimality backup applied in one sweep; converges to <code>V*</code> geometrically.</td>
+</tr>
+<tr>
+<td>Bellman operator</td>
+<td>&quot;The recursion&quot;</td>
+<td><code>(T V)(s) = max_a Σ P (r + γ V(s&#39;))</code>; a <code>γ</code>-contraction in sup-norm.</td>
+</tr>
+<tr>
+<td>Contraction</td>
+<td>&quot;Why DP converges&quot;</td>
+<td>Any operator <code>T</code> with <code>||T x - T y|| ≤ γ ||x - y||</code> has a unique fixed point.</td>
+</tr>
+<tr>
+<td>GPI</td>
+<td>&quot;Everything is DP&quot;</td>
+<td>Generalized Policy Iteration: any method driving <code>V</code> and <code>π</code> to mutual consistency.</td>
+</tr>
+<tr>
+<td>Synchronous update</td>
+<td>&quot;Jacobi-style&quot;</td>
+<td>Use old <code>V</code> throughout a sweep; cleanly analyzable but slower.</td>
+</tr>
+<tr>
+<td>In-place update</td>
+<td>&quot;Gauss-Seidel-style&quot;</td>
+<td>Use <code>V</code> as it&#39;s being updated; converges faster in practice.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 4 — Dynamic Programming</a> — the canonical presentation of policy iteration and value iteration.</li>
+<li><a href="http://www.athenasc.com/rlbook.html">Bertsekas (2019). Reinforcement Learning and Optimal Control</a> — rigorous treatment of contraction-mapping arguments.</li>
+<li><a href="https://onlinelibrary.wiley.com/doi/book/10.1002/9780470316887">Puterman (2005). Markov Decision Processes</a> — modified policy iteration and its convergence analysis.</li>
+<li><a href="https://mitpress.mit.edu/9780262582300/dynamic-programming-and-markov-processes/">Howard (1960). Dynamic Programming and Markov Processes</a> — the original policy iteration paper.</li>
+<li><a href="http://www.athenasc.com/ndpbook.html">Bertsekas &amp; Tsitsiklis (1996). Neuro-Dynamic Programming</a> — the bridge from DP to approximate-DP / deep RL used by every subsequent lesson.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-mdps-states-actions-rewards.html"><span>← Previous</span><b>mdps states actions rewards</b></a>
+      <a class="next" href="./03-monte-carlo-methods.html"><span>Next →</span><b>monte carlo methods</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

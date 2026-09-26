@@ -1,0 +1,1822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building an In-Memory Vector Store - Conceptual Overview — RAG from Scratch</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#c05621;--accent-2:#8a3d17;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/rag-from-scratch"><b>RAG from Scratch</b></a>
+  <nav>
+    <a href="/rag-from-scratch">Index</a>
+    <a href="https://github.com/pguso/rag-from-scratch/blob/main/examples/05_building_vector_store/01_in_memory_store/CONCEPT.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/rag-from-scratch">RAG from Scratch</a>
+    </div>
+    <div class="phase-label">Vector Store</div>
+    <ol class="toc"><li><a href="#what-is-a-vector-store">What is a Vector Store?</a></li><li><a href="#why-vector-stores-matter-for-rag">Why Vector Stores Matter for RAG</a></li><li><a href="#in-memory-vs-persistent-vector-stores">In-Memory vs Persistent Vector Stores</a></li><li><a href="#how-vector-search-works">How Vector Search Works</a></li><li><a href="#key-concepts">Key Concepts</a></li><li><a href="#the-embedded-vector-db-package">The `embedded-vector-db` Package</a></li><li><a href="#architecture-overview">Architecture Overview</a></li><li><a href="#real-world-use-cases">Real-World Use Cases</a></li><li><a href="#performance-characteristics">Performance Characteristics</a></li><li><a href="#common-patterns">Common Patterns</a></li><li><a href="#best-practices">Best Practices</a></li><li><a href="#migration-path-to-production">Migration Path to Production</a></li><li><a href="#summary">Summary</a></li><li><a href="#code-walkthrough">Code walkthrough</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">RAG from Scratch · Vector Store</div>
+    <h1 class="lesson-title">Building an In-Memory Vector Store - Conceptual Overview</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RAG from Scratch — Vector Store 01">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="19.2" y="122.9" width="27.4" height="27.4" rx="2" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55" transform="rotate(152 32.9 136.7)"/>
+        <rect x="14.4" y="118.7" width="26.1" height="26.1" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.5 131.7)"/>
+        <circle cx="22.1" cy="126.8" r="12.4" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#c05621" textLength="128" lengthAdjust="spacingAndGlyphs">RAG FROM SCRATCH</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#c05621" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#c05621" letter-spacing="-2">01</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="96" lengthAdjust="spacingAndGlyphs">VECTOR STORE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Building an</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">In-Memory Vector…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="what-is-a-vector-store"><a class="anchor" href="#what-is-a-vector-store">#</a> What is a Vector Store?</h2>
+<p>A <strong>vector store</strong> (also called a vector database) is a specialized database designed to store and search high-dimensional vectors efficiently.</p>
+<p>Think of it as a <strong>semantic search engine</strong> that finds similar items based on meaning rather than exact text matches.</p>
+<h3 id="the-problem-it-solves"><a class="anchor" href="#the-problem-it-solves">#</a> The Problem It Solves</h3>
+<p><strong>Traditional keyword search:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Can only find exact matches or word variations
+searchDatabase(&quot;Python programming&quot;);
+// Finds: Documents containing &quot;Python&quot; AND/OR &quot;programming&quot;
+// Misses: &quot;Learn to code&quot;, &quot;Beginner&#39;s guide to scripting&quot;</code></pre>
+      </div>
+    <p><strong>Vector-based semantic search:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Finds semantically similar content
+vectorStore.search(embed(&quot;Python programming&quot;), k=5);
+// Finds: 
+// - &quot;Python is a programming language...&quot;
+// - &quot;JavaScript for web development...&quot;
+// - &quot;Learn coding basics...&quot;
+// All are conceptually related!</code></pre>
+      </div>
+    <hr>
+<h2 id="why-vector-stores-matter-for-rag"><a class="anchor" href="#why-vector-stores-matter-for-rag">#</a> Why Vector Stores Matter for RAG</h2>
+<p>In a <strong>Retrieval-Augmented Generation (RAG)</strong> system:</p>
+<ol>
+<li><strong>Store knowledge:</strong> Convert documents to embeddings and store them</li>
+<li><strong>Search efficiently:</strong> Find relevant documents for a user&#39;s query</li>
+<li><strong>Augment LLM:</strong> Provide context to the language model</li>
+<li><strong>Generate answers:</strong> LLM produces informed responses</li>
+</ol>
+<p>Without a vector store, RAG systems can&#39;t efficiently search through large document collections.</p>
+<h3 id="the-rag-workflow"><a class="anchor" href="#the-rag-workflow">#</a> The RAG Workflow</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User Query
+    ↓
+Embed Query → [0.23, -0.45, 0.12, ...]
+    ↓
+Search Vector Store (similarity search)
+    ↓
+Retrieve Top K Documents
+    ↓
+Combine Query + Retrieved Context
+    ↓
+Send to LLM
+    ↓
+Generate Response</code></pre>
+      </div>
+    <p><strong>Key insight:</strong> The vector store is the &quot;retrieval&quot; in Retrieval-Augmented Generation!</p>
+<hr>
+<h2 id="in-memory-vs-persistent-vector-stores"><a class="anchor" href="#in-memory-vs-persistent-vector-stores">#</a> In-Memory vs Persistent Vector Stores</h2>
+<h3 id="in-memory-vector-stores"><a class="anchor" href="#in-memory-vector-stores">#</a> In-Memory Vector Stores</h3>
+<p><strong>What they are:</strong><br>Store all vectors entirely in RAM without writing them to disk automatically.<br>(Manual persistence is only available if the developer explicitly adds <code>save()</code> / <code>load()</code> logic.)</p>
+<p><strong>Characteristics:</strong></p>
+<ul>
+<li>✅ Extremely fast (no disk I/O)</li>
+<li>✅ Simple setup (no external services)</li>
+<li>✅ Perfect for development</li>
+<li>❌ Data <strong>lost on restart unless manually saved</strong></li>
+<li>❌ Limited by available RAM</li>
+<li>❌ Not suitable for production without persistence logic</li>
+</ul>
+<p><strong>When to use:</strong></p>
+<ul>
+<li>Development and prototyping</li>
+<li>Testing and evaluation</li>
+<li>Small datasets (&lt; 10,000 documents)</li>
+<li>Short-lived processes</li>
+<li>Local experimentation</li>
+<li>Use cases where you do <em>not</em> need persistence or can save manually</li>
+</ul>
+<h3 id="persistent-vector-stores"><a class="anchor" href="#persistent-vector-stores">#</a> Persistent Vector Stores</h3>
+<p><strong>What they are:</strong><br>Store vectors on disk (or across distributed nodes) and load them back into memory when needed.<br>Persistence is built-in and automatic or semi-automatic depending on the database.</p>
+<p><strong>Examples:</strong></p>
+<ul>
+<li><strong>Qdrant</strong></li>
+<li><strong>Neo4j</strong></li>
+<li><strong>Chroma</strong></li>
+<li><strong>Pinecone</strong></li>
+<li><strong>LanceDB</strong></li>
+<li><strong>Weaviate</strong></li>
+</ul>
+<p><strong>Characteristics:</strong></p>
+<ul>
+<li>✅ Data persists between restarts</li>
+<li>✅ Scales to millions of vectors</li>
+<li>✅ Production-ready</li>
+<li>✅ Often distributed &amp; fault-tolerant</li>
+<li>❌ More complex setup</li>
+<li>❌ Requires running server or storage layer</li>
+<li>❌ Slightly slower than pure in-memory (due to disk involvement)</li>
+</ul>
+<p><strong>When to use:</strong></p>
+<ul>
+<li>Production applications</li>
+<li>Large datasets (&gt; 10,000 documents)</li>
+<li>Need for automatic and reliable persistence</li>
+<li>Multi-user applications</li>
+<li>Long-running microservices</li>
+<li>Systems requiring backups, replication, or versioning</li>
+</ul>
+<hr>
+<h2 id="how-vector-search-works"><a class="anchor" href="#how-vector-search-works">#</a> How Vector Search Works</h2>
+<h3 id="step-1-create-embeddings"><a class="anchor" href="#step-1-create-embeddings">#</a> Step 1: Create Embeddings</h3>
+<p><strong>Embedding:</strong> A numerical representation of text as a high-dimensional vector.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;Python programming&quot; → [0.23, -0.45, 0.12, 0.87, -0.34, ...]
+                       (384 dimensions for BGE-small)</code></pre>
+      </div>
+    <p><strong>Key property:</strong> Similar concepts have similar embeddings.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">embed(&quot;dog&quot;) ≈ embed(&quot;puppy&quot;)  // Similar vectors
+embed(&quot;dog&quot;) ≠ embed(&quot;car&quot;)    // Different vectors</code></pre>
+      </div>
+    <h3 id="step-2-store-vectors"><a class="anchor" href="#step-2-store-vectors">#</a> Step 2: Store Vectors</h3>
+<p><strong>What&#39;s stored:</strong></p>
+<ul>
+<li><strong>Vector</strong>: The embedding (e.g., 384 numbers)</li>
+<li><strong>ID</strong>: Unique identifier</li>
+<li><strong>Metadata</strong>: Original content and additional data</li>
+</ul>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    id: &quot;doc_1&quot;,
+    vector: [0.23, -0.45, ...],  // 384 dimensions
+    metadata: {
+        content: &quot;Python is a programming language&quot;,
+        category: &quot;programming&quot;,
+        author: &quot;John Doe&quot;
+    }
+}</code></pre>
+      </div>
+    <h3 id="step-3-similarity-search"><a class="anchor" href="#step-3-similarity-search">#</a> Step 3: Similarity Search</h3>
+<p><strong>Goal:</strong> Find vectors most similar to a query vector.</p>
+<p><strong>Method:</strong> Cosine similarity (measures angle between vectors)</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Query
+queryVector = embed(&quot;Learn coding&quot;);
+
+// Compute similarity with each stored vector
+similarity(queryVector, doc1.vector) = 0.82  // High similarity
+similarity(queryVector, doc2.vector) = 0.65
+similarity(queryVector, doc3.vector) = 0.43  // Low similarity
+
+// Return top K results
+topK = [doc1, doc2, doc3]</code></pre>
+      </div>
+    <p><strong>Cosine similarity:</strong></p>
+<ul>
+<li>Range: -1 to 1 (or converted to 0 to 1)</li>
+<li>1 = identical direction</li>
+<li>0 = orthogonal (unrelated)</li>
+<li>-1 = opposite direction</li>
+</ul>
+<h3 id="step-4-filter-and-rank"><a class="anchor" href="#step-4-filter-and-rank">#</a> Step 4: Filter and Rank</h3>
+<p><strong>Optional filtering:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Only return documents matching metadata criteria
+results = search(query, k=10, filter={
+    category: &quot;programming&quot;,
+    difficulty: &quot;beginner&quot;
+});</code></pre>
+      </div>
+    <p><strong>Result ranking:</strong></p>
+<ul>
+<li>Results sorted by similarity score (highest first)</li>
+<li>Apply threshold to filter low-quality matches</li>
+<li>Re-rank if needed with more sophisticated models</li>
+</ul>
+<hr>
+<h2 id="key-concepts"><a class="anchor" href="#key-concepts">#</a> Key Concepts</h2>
+<h3 id="1-embeddings-the-foundation"><a class="anchor" href="#1-embeddings-the-foundation">#</a> 1. Embeddings: The Foundation</h3>
+<p><strong>What makes good embeddings:</strong></p>
+<ul>
+<li><strong>Semantic meaning captured:</strong> Similar concepts cluster together</li>
+<li><strong>Consistent dimensions:</strong> All vectors same size</li>
+<li><strong>Domain-appropriate:</strong> Model trained on relevant data</li>
+</ul>
+<p><strong>Popular embedding models:</strong></p>
+<ul>
+<li><strong>BGE-small (384D)</strong>: Fast, good for general use</li>
+<li><strong>BGE-large (1024D)</strong>: Higher quality, slower</li>
+<li><strong>OpenAI text-embedding-3-small</strong>: Cloud-based</li>
+<li><strong>Sentence-Transformers</strong>: Many specialized models</li>
+</ul>
+<p><strong>Key rule:</strong> Use the <strong>same embedding model</strong> for documents and queries!</p>
+<h3 id="2-hnsw-the-search-algorithm"><a class="anchor" href="#2-hnsw-the-search-algorithm">#</a> 2. HNSW: The Search Algorithm</h3>
+<p><strong>Hierarchical Navigable Small World (HNSW):</strong></p>
+<ul>
+<li>Graph-based approximate nearest neighbor (ANN) search</li>
+<li>Very fast: O(log N) search time</li>
+<li>High recall: Finds most relevant results</li>
+<li>Trade-off: Approximate, not exact</li>
+</ul>
+<p><strong>Why HNSW:</strong></p>
+<ul>
+<li>Exact search is too slow for large datasets: O(N)</li>
+<li>HNSW is ~100x faster with minimal accuracy loss</li>
+<li>Industry standard for vector search</li>
+</ul>
+<p><strong>How it works (simplified):</strong></p>
+<ol>
+<li>Build multi-layer graph of vectors</li>
+<li>Navigate from entry point toward query</li>
+<li>Use &quot;small world&quot; property to skip irrelevant areas</li>
+<li>Return approximate nearest neighbors</li>
+</ol>
+<h3 id="3-namespaces-data-isolation"><a class="anchor" href="#3-namespaces-data-isolation">#</a> 3. Namespaces: Data Isolation</h3>
+<p><strong>What they are:</strong> Logical partitions within one database.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Different collections, same database
+await db.insert(&quot;products&quot;, &quot;p1&quot;, vector, {...});
+await db.insert(&quot;articles&quot;, &quot;a1&quot;, vector, {...});
+await db.insert(&quot;users&quot;, &quot;u1&quot;, vector, {...});
+
+// Search only products
+await db.search(&quot;products&quot;, queryVector, 5);</code></pre>
+      </div>
+    <p><strong>Benefits:</strong></p>
+<ul>
+<li>Organize different data types</li>
+<li>Faster search (smaller search space)</li>
+<li>Easier management and cleanup</li>
+<li>Multi-tenant applications</li>
+</ul>
+<h3 id="4-metadata-adding-context"><a class="anchor" href="#4-metadata-adding-context">#</a> 4. Metadata: Adding Context</h3>
+<p><strong>Beyond vectors:</strong>
+Metadata lets you store structured information alongside embeddings.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    vector: [...],
+    metadata: {
+        content: &quot;The document text&quot;,
+        title: &quot;Document Title&quot;,
+        author: &quot;John Doe&quot;,
+        date: &quot;2024-01-15&quot;,
+        category: &quot;technology&quot;,
+        tags: [&quot;AI&quot;, &quot;machine learning&quot;],
+        source: &quot;blog.example.com&quot;,
+        language: &quot;en&quot;
+    }
+}</code></pre>
+      </div>
+    <p><strong>Use cases:</strong></p>
+<ul>
+<li><strong>Filtering</strong>: Only show documents from 2024</li>
+<li><strong>Display</strong>: Show title and author to user</li>
+<li><strong>Business logic</strong>: Route by category or source</li>
+<li><strong>Analytics</strong>: Track popular topics or authors</li>
+</ul>
+<hr>
+<h2 id="the-embedded-vector-db-package"><a class="anchor" href="#the-embedded-vector-db-package">#</a> The <code>embedded-vector-db</code> Package</h2>
+<h3 id="what-it-is"><a class="anchor" href="#what-it-is">#</a> What It Is</h3>
+<p><strong>Package:</strong> <code>embedded-vector-db</code> (npm)</p>
+<ul>
+<li><strong>Status:</strong> Beta (API may change before 1.0)</li>
+<li><strong>Purpose:</strong> Embedded vector database for Node.js</li>
+<li><strong>Built on:</strong> hnswlib-node for kNN search</li>
+<li><strong>License:</strong> MIT</li>
+</ul>
+<h3 id="why-we-use-it"><a class="anchor" href="#why-we-use-it">#</a> Why We Use It</h3>
+<p><strong>Advantages:</strong></p>
+<ol>
+<li><strong>Pure JavaScript/TypeScript</strong>: No separate database server</li>
+<li><strong>Embedded</strong>: Runs in your Node.js process</li>
+<li><strong>Simple API</strong>: Easy to learn and use</li>
+<li><strong>Fast</strong>: HNSW-based search</li>
+<li><strong>Lightweight</strong>: Minimal dependencies</li>
+</ol>
+<p><strong>Perfect for:</strong></p>
+<ul>
+<li>Learning and experimentation</li>
+<li>Small to medium projects</li>
+<li>Prototyping RAG systems</li>
+<li>Development and testing</li>
+</ul>
+<h3 id="core-api"><a class="anchor" href="#core-api">#</a> Core API</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Initialize
+const db = new VectorDB({
+    dim: 384,           // Vector dimensions
+    maxElements: 10000  // Maximum capacity
+});
+
+// Create (Insert)
+await db.insert(namespace, id, vector, metadata);
+
+// Read (Search)
+const results = await db.search(namespace, queryVector, k);
+
+// Read (Get by ID)
+const doc = await db.get(namespace, id);
+
+// Update
+await db.update(namespace, id, newVector, newMetadata);
+
+// Delete
+await db.delete(namespace, id);</code></pre>
+      </div>
+    <p><strong>Simple CRUD operations</strong> just like traditional databases!</p>
+<hr>
+<h2 id="architecture-overview"><a class="anchor" href="#architecture-overview">#</a> Architecture Overview</h2>
+<h3 id="component-layers"><a class="anchor" href="#component-layers">#</a> Component Layers</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌─────────────────────────────────────────────┐
+│         Your RAG Application                │
+│     (Queries, document processing)          │
+└─────────────────┬───────────────────────────┘
+                  │
+                  │ High-level API
+                  │
+┌─────────────────▼───────────────────────────┐
+│          Your Helper Functions              │
+│  (addDocuments, searchStore, etc.)          │
+└─────────────────┬───────────────────────────┘
+                  │
+                  │ Wrapper functions
+                  │
+┌─────────────────▼───────────────────────────┐
+│         embedded-vector-db                  │
+│  (VectorDB class with CRUD methods)         │
+└─────────────────┬───────────────────────────┘
+                  │
+                  │ Low-level operations
+                  │
+┌─────────────────▼───────────────────────────┐
+│            hnswlib-node                     │
+│  (Native HNSW implementation)               │
+└─────────────────────────────────────────────┘</code></pre>
+      </div>
+    <h3 id="data-flow"><a class="anchor" href="#data-flow">#</a> Data Flow</h3>
+<p><strong>Adding documents:</strong></p>
+<ol>
+<li>Your app provides text documents</li>
+<li>Embedding model converts text to vectors</li>
+<li>Helper function calls VectorDB.insert()</li>
+<li>VectorDB stores in HNSW index</li>
+<li>Metadata stored alongside vectors</li>
+</ol>
+<p><strong>Searching:</strong></p>
+<ol>
+<li>User provides query text</li>
+<li>Embedding model converts query to vector</li>
+<li>Helper function calls VectorDB.search()</li>
+<li>HNSW finds k nearest neighbors</li>
+<li>Results returned with metadata</li>
+<li>Your app displays or processes results</li>
+</ol>
+<hr>
+<h2 id="real-world-use-cases"><a class="anchor" href="#real-world-use-cases">#</a> Real-World Use Cases</h2>
+<h3 id="use-case-1-documentation-search"><a class="anchor" href="#use-case-1-documentation-search">#</a> Use Case 1: Documentation Search</h3>
+<p><strong>Scenario:</strong> Build a semantic search for your documentation.</p>
+<p><strong>Implementation:</strong></p>
+<ol>
+<li>Split documentation into chunks</li>
+<li>Generate embeddings for each chunk</li>
+<li>Store in vector database with metadata (title, URL, section)</li>
+<li>User searches: &quot;How do I deploy?&quot;</li>
+<li>Vector search finds relevant docs</li>
+<li>Display top results with links</li>
+</ol>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li>Finds relevant docs even without exact keywords</li>
+<li>Better than Ctrl+F or traditional search</li>
+<li>Works across multiple documentation sources</li>
+</ul>
+<h3 id="use-case-2-customer-support-bot"><a class="anchor" href="#use-case-2-customer-support-bot">#</a> Use Case 2: Customer Support Bot</h3>
+<p><strong>Scenario:</strong> Answer customer questions using past tickets.</p>
+<p><strong>Implementation:</strong></p>
+<ol>
+<li>Embed all resolved support tickets</li>
+<li>Store with metadata (category, resolution, satisfaction)</li>
+<li>User asks question</li>
+<li>Search similar past tickets</li>
+<li>Retrieve solutions</li>
+<li>LLM generates answer based on similar tickets</li>
+</ol>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li>Leverages historical knowledge</li>
+<li>Consistent answers</li>
+<li>Reduces support team workload</li>
+</ul>
+<h3 id="use-case-3-code-search"><a class="anchor" href="#use-case-3-code-search">#</a> Use Case 3: Code Search</h3>
+<p><strong>Scenario:</strong> Find similar code snippets in a large codebase.</p>
+<p><strong>Implementation:</strong></p>
+<ol>
+<li>Embed functions, classes, or files</li>
+<li>Store with metadata (file path, language, author)</li>
+<li>Developer searches: &quot;authentication logic&quot;</li>
+<li>Find semantically similar code</li>
+<li>Show examples from codebase</li>
+</ol>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li>Discovers patterns across codebase</li>
+<li>Helps with code reuse</li>
+<li>Onboards new developers faster</li>
+</ul>
+<h3 id="use-case-4-recommendation-system"><a class="anchor" href="#use-case-4-recommendation-system">#</a> Use Case 4: Recommendation System</h3>
+<p><strong>Scenario:</strong> Recommend similar articles or products.</p>
+<p><strong>Implementation:</strong></p>
+<ol>
+<li>Embed articles/products</li>
+<li>User views an item</li>
+<li>Search for similar embeddings</li>
+<li>Recommend top K results</li>
+<li>Filter by category or user preferences</li>
+</ol>
+<p><strong>Benefits:</strong></p>
+<ul>
+<li>Content-based recommendations</li>
+<li>Works even for new items (cold start problem)</li>
+<li>No collaborative filtering needed initially</li>
+</ul>
+<hr>
+<h2 id="performance-characteristics"><a class="anchor" href="#performance-characteristics">#</a> Performance Characteristics</h2>
+<h3 id="speed-comparison"><a class="anchor" href="#speed-comparison">#</a> Speed Comparison</h3>
+<p><strong>Exact search (brute force):</strong></p>
+<ul>
+<li>Compare query with every vector</li>
+<li>Time: O(N × D) where N = documents, D = dimensions</li>
+<li>Example: 10,000 docs × 384 dims = 3.84M operations</li>
+<li>Too slow for real-time search!</li>
+</ul>
+<p><strong>HNSW approximate search:</strong></p>
+<ul>
+<li>Navigate graph structure</li>
+<li>Time: O(log N × D)</li>
+<li>Example: log₂(10,000) × 384 ≈ 5,000 operations</li>
+<li>~100x faster!</li>
+</ul>
+<h3 id="memory-usage"><a class="anchor" href="#memory-usage">#</a> Memory Usage</h3>
+<p><strong>Per document:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Vector: 384 dimensions × 4 bytes (float32) = 1,536 bytes
+Metadata: ~500-2000 bytes (JSON)
+HNSW overhead: ~200 bytes
+Total: ~2-4 KB per document</code></pre>
+      </div>
+    <p><strong>Example calculations:</strong></p>
+<ul>
+<li>1,000 documents: ~2-4 MB</li>
+<li>10,000 documents: ~20-40 MB</li>
+<li>100,000 documents: ~200-400 MB</li>
+</ul>
+<p><strong>Practical limits:</strong></p>
+<ul>
+<li>In-memory: Up to ~1M documents on typical machine</li>
+<li>Constrained by RAM</li>
+<li>Performance degrades with size</li>
+</ul>
+<h3 id="embedding-time"><a class="anchor" href="#embedding-time">#</a> Embedding Time</h3>
+<p><strong>Bottleneck:</strong> Embedding generation is slowest part.</p>
+<p><strong>Typical times (BGE-small on CPU):</strong></p>
+<ul>
+<li>Short text (50 words): ~40ms</li>
+<li>Medium text (200 words): ~60ms</li>
+<li>Long text (500 words): ~80ms</li>
+</ul>
+<p><strong>Optimization strategies:</strong></p>
+<ul>
+<li>Batch embedding when possible</li>
+<li>Use GPU acceleration</li>
+<li>Cache embeddings</li>
+<li>Pre-compute embeddings offline</li>
+</ul>
+<hr>
+<h2 id="common-patterns"><a class="anchor" href="#common-patterns">#</a> Common Patterns</h2>
+<h3 id="pattern-1-semantic-search-with-filtering"><a class="anchor" href="#pattern-1-semantic-search-with-filtering">#</a> Pattern 1: Semantic Search with Filtering</h3>
+<p><strong>Goal:</strong> Find relevant documents within a category.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Search with high k
+const results = await vectorStore.search(namespace, queryVector, 20);
+
+// Filter by metadata
+const filtered = results
+    .filter(r =&gt; r.metadata.category === &quot;programming&quot;)
+    .filter(r =&gt; r.metadata.difficulty === &quot;beginner&quot;)
+    .filter(r =&gt; r.score &gt; 0.5)  // Relevance threshold
+    .slice(0, 5);  // Top 5</code></pre>
+      </div>
+    <h3 id="pattern-2-hybrid-search"><a class="anchor" href="#pattern-2-hybrid-search">#</a> Pattern 2: Hybrid Search</h3>
+<p><strong>Goal:</strong> Combine semantic and keyword search.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Semantic search
+const semanticResults = await vectorStore.search(ns, queryVector, 10);
+
+// Keyword search (if supported)
+const keywordResults = await vectorStore.fullTextSearch(ns, query, 10);
+
+// Merge and deduplicate
+const combined = mergeResults(semanticResults, keywordResults);</code></pre>
+      </div>
+    <h3 id="pattern-3-re-ranking"><a class="anchor" href="#pattern-3-re-ranking">#</a> Pattern 3: Re-ranking</h3>
+<p><strong>Goal:</strong> Improve search quality with a second model.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Initial search (fast, broad)
+const candidates = await vectorStore.search(ns, queryVector, 20);
+
+// Re-rank with better model (slower, more accurate)
+const reranked = await reranker.rank(query, candidates);
+
+// Return top results
+return reranked.slice(0, 5);</code></pre>
+      </div>
+    <h3 id="pattern-4-document-chunking"><a class="anchor" href="#pattern-4-document-chunking">#</a> Pattern 4: Document Chunking</h3>
+<p><strong>Goal:</strong> Handle long documents by splitting into chunks.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Split document
+const chunks = splitIntoChunks(longDocument, maxChunkSize=500);
+
+// Embed each chunk
+for (const [i, chunk] of chunks.entries()) {
+    const embedding = await embed(chunk);
+    await vectorStore.insert(ns, `${docId}_chunk_${i}`, embedding, {
+        content: chunk,
+        documentId: docId,
+        chunkIndex: i,
+        title: documentTitle
+    });
+}
+
+// Search returns chunks, group by document
+const results = await vectorStore.search(ns, queryVector, 10);
+const groupedByDoc = groupBy(results, r =&gt; r.metadata.documentId);</code></pre>
+      </div>
+    <hr>
+<h2 id="best-practices"><a class="anchor" href="#best-practices">#</a> Best Practices</h2>
+<h3 id="1-chunk-documents-appropriately"><a class="anchor" href="#1-chunk-documents-appropriately">#</a> 1. Chunk Documents Appropriately</h3>
+<p><strong>Problem:</strong> Long documents create noisy embeddings.</p>
+<p><strong>Solution:</strong> </p>
+<ul>
+<li>Split into semantic chunks (paragraphs, sections)</li>
+<li>Typical size: 200-500 words</li>
+<li>Include context from surrounding chunks</li>
+</ul>
+<h3 id="2-store-original-content"><a class="anchor" href="#2-store-original-content">#</a> 2. Store Original Content</h3>
+<p><strong>Always include content in metadata:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.insert(ns, id, vector, {
+    content: originalText,  // Essential!
+    // ... other metadata
+});</code></pre>
+      </div>
+    <p><strong>Why:</strong> You&#39;ll need it to display results and provide context to LLM.</p>
+<h3 id="3-use-consistent-embeddings"><a class="anchor" href="#3-use-consistent-embeddings">#</a> 3. Use Consistent Embeddings</h3>
+<p><strong>Critical rule:</strong> Same model for indexing and searching.</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// ❌ Wrong
+const docEmbedding = await modelA.embed(document);
+const queryEmbedding = await modelB.embed(query);  // Different model!
+
+// ✅ Correct
+const docEmbedding = await model.embed(document);
+const queryEmbedding = await model.embed(query);  // Same model</code></pre>
+      </div>
+    <h3 id="4-set-relevance-thresholds"><a class="anchor" href="#4-set-relevance-thresholds">#</a> 4. Set Relevance Thresholds</h3>
+<p><strong>Filter low-quality results:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const THRESHOLD = 0.5;
+const relevantResults = results.filter(r =&gt; r.score &gt; THRESHOLD);</code></pre>
+      </div>
+    <p><strong>Tune threshold based on:</strong></p>
+<ul>
+<li>Your use case requirements</li>
+<li>Model characteristics</li>
+<li>User feedback</li>
+</ul>
+<h3 id="5-include-rich-metadata"><a class="anchor" href="#5-include-rich-metadata">#</a> 5. Include Rich Metadata</h3>
+<p><strong>More metadata = more flexibility:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    content: &quot;...&quot;,
+    title: &quot;...&quot;,
+    author: &quot;...&quot;,
+    date: &quot;...&quot;,
+    category: &quot;...&quot;,
+    tags: [...],
+    source: &quot;...&quot;,
+    language: &quot;...&quot;,
+    wordCount: 1234
+}</code></pre>
+      </div>
+    <h3 id="6-monitor-performance"><a class="anchor" href="#6-monitor-performance">#</a> 6. Monitor Performance</h3>
+<p><strong>Track key metrics:</strong></p>
+<ul>
+<li>Embedding generation time</li>
+<li>Search latency</li>
+<li>Result relevance (user feedback)</li>
+<li>Memory usage</li>
+<li>Cache hit rates</li>
+</ul>
+<hr>
+<h2 id="migration-path-to-production"><a class="anchor" href="#migration-path-to-production">#</a> Migration Path to Production</h2>
+<h3 id="phase-1-development-current"><a class="anchor" href="#phase-1-development-current">#</a> Phase 1: Development (Current)</h3>
+<p><strong>Tools:</strong> <code>embedded-vector-db</code> (in-memory)</p>
+<p><strong>Characteristics:</strong></p>
+<ul>
+<li>Fast iteration</li>
+<li>No external dependencies</li>
+<li>Perfect for learning</li>
+</ul>
+<h3 id="phase-2-local-persistence"><a class="anchor" href="#phase-2-local-persistence">#</a> Phase 2: Local Persistence</h3>
+<p><strong>Tools:</strong> <code>embedded-vector-db</code> with save/load, or LanceDB</p>
+<p><strong>Implementation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Save to disk
+await vectorStore.save(namespace, &quot;./data/vectors&quot;);
+
+// Load on restart
+await vectorStore.load(namespace, &quot;./data/vectors&quot;);</code></pre>
+      </div>
+    <p><strong>Benefits:</strong></p>
+<ul>
+<li>Data persists between restarts</li>
+<li>Still simple setup</li>
+<li>Good for single-server deployments</li>
+</ul>
+<h3 id="phase-3-production-scale"><a class="anchor" href="#phase-3-production-scale">#</a> Phase 3: Production Scale</h3>
+<p><strong>Tools:</strong> Qdrant, Weaviate, Chroma, or Pinecone</p>
+<p><strong>Migration steps:</strong></p>
+<ol>
+<li>Export vectors and metadata from embedded-vector-db</li>
+<li>Import into production vector store</li>
+<li>Update search code (minimal changes if API similar)</li>
+<li>Deploy with proper monitoring</li>
+</ol>
+<p><strong>New capabilities:</strong></p>
+<ul>
+<li>Distributed architecture</li>
+<li>High availability</li>
+<li>Advanced features (filtering, hybrid search)</li>
+<li>Better performance at scale</li>
+</ul>
+<hr>
+<h2 id="summary"><a class="anchor" href="#summary">#</a> Summary</h2>
+<h3 id="what-we-learned"><a class="anchor" href="#what-we-learned">#</a> What We Learned</h3>
+<p><strong>Vector stores enable:</strong></p>
+<ul>
+<li>✅ Semantic search (meaning-based, not just keywords)</li>
+<li>✅ Efficient similarity search at scale</li>
+<li>✅ Foundation for RAG systems</li>
+<li>✅ Rich metadata filtering</li>
+</ul>
+<p><strong>In-memory stores are ideal for:</strong></p>
+<ul>
+<li>Development and prototyping</li>
+<li>Testing and evaluation  </li>
+<li>Small datasets</li>
+<li>Learning vector search concepts</li>
+</ul>
+<p><strong>Key concepts:</strong></p>
+<ol>
+<li><strong>Embeddings</strong> convert text to vectors</li>
+<li><strong>HNSW</strong> provides fast approximate search</li>
+<li><strong>Namespaces</strong> organize different collections</li>
+<li><strong>Metadata</strong> adds context and enables filtering</li>
+<li><strong>CRUD operations</strong> manage the database</li>
+</ol>
+<h3 id="when-to-use-what"><a class="anchor" href="#when-to-use-what">#</a> When to Use What</h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Recommended Solution</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Learning &amp; prototyping</td>
+<td>embedded-vector-db (in-memory)</td>
+</tr>
+<tr>
+<td>Small production (&lt;10K docs)</td>
+<td>LanceDB or embedded-vector-db with persistence</td>
+</tr>
+<tr>
+<td>Medium production (10K-1M docs)</td>
+<td>Qdrant or Chroma (self-hosted)</td>
+</tr>
+<tr>
+<td>Large production (&gt;1M docs)</td>
+<td>Pinecone, Weaviate Cloud (managed)</td>
+</tr>
+<tr>
+<td>Specialized needs</td>
+<td>Milvus, Vespa (advanced features)</td>
+</tr>
+</tbody></table>
+<h3 id="next-steps-in-rag-journey"><a class="anchor" href="#next-steps-in-rag-journey">#</a> Next Steps in RAG Journey</h3>
+<ol>
+<li><strong>Current:</strong> In-memory vector store basics ✓</li>
+<li><strong>Next:</strong> Advanced search algorithms and optimization</li>
+</ol>
+<p><strong>The foundation you built:</strong></p>
+<ul>
+<li>Understanding vector search principles</li>
+<li>Hands-on experience with embeddings</li>
+<li>CRUD operations on vector stores</li>
+</ul>
+<p>This in-memory vector store is your training ground. The concepts you learned apply to all vector databases, making it easy to scale to production when ready.</p>
+
+<h2 id="code-walkthrough"><a class="anchor" href="#code-walkthrough">#</a> Code walkthrough</h2>
+<p>A detailed explanation of how to build and use an in-memory vector store for semantic search, covering the implementation and seven comprehensive examples.</p>
+<h2 id="overview"><a class="anchor" href="#overview">#</a> Overview</h2>
+<p>This example demonstrates:</p>
+<ul>
+<li>How to initialize an in-memory vector database</li>
+<li>How to add documents with embeddings</li>
+<li>How to perform similarity search</li>
+<li>How to filter results using metadata</li>
+<li>CRUD operations (Create, Read, Update, Delete)</li>
+<li>Performance characteristics</li>
+<li>Understanding similarity scores</li>
+</ul>
+<p><strong>Vector Database:</strong> <code>embedded-vector-db</code> (beta)</p>
+<ul>
+<li>Namespace-based API for data isolation</li>
+<li>Built on hnswlib-node for fast kNN search</li>
+<li>In-memory storage (no persistence in these examples)</li>
+<li>Full CRUD support</li>
+</ul>
+<hr>
+<h2 id="setup-and-configuration"><a class="anchor" href="#setup-and-configuration">#</a> Setup and Configuration</h2>
+<h3 id="imports"><a class="anchor" href="#imports">#</a> Imports</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { fileURLToPath } from &quot;url&quot;;
+import path from &quot;path&quot;;
+import { VectorDB } from &quot;embedded-vector-db&quot;;
+import { getLlama } from &quot;node-llama-cpp&quot;;
+import { Document } from &quot;../../../src/index.js&quot;;
+import { OutputHelper } from &quot;../../../helpers/output-helper.js&quot;;
+import chalk from &quot;chalk&quot;;</code></pre>
+      </div>
+    <p><strong>What&#39;s imported:</strong></p>
+<ul>
+<li><strong><code>VectorDB</code></strong>: The embedded vector database class from the npm package</li>
+<li><strong><code>getLlama</code> and node-llama-cpp</strong>: For loading embedding models</li>
+<li><strong><code>Document</code></strong>: Wrapper class for text content with metadata</li>
+<li><strong><code>OutputHelper</code></strong>: Utility for formatted console output</li>
+<li><strong><code>chalk</code></strong>: Terminal color formatting</li>
+</ul>
+<h3 id="configuration-constants"><a class="anchor" href="#configuration-constants">#</a> Configuration Constants</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const MODEL_PATH = path.join(__dirname, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;models&quot;, &quot;bge-small-en-v1.5.Q8_0.gguf&quot;);
+const DIM = 384;
+const MAX_ELEMENTS = 10000;
+const NS = &quot;memory&quot;;</code></pre>
+      </div>
+    <p><strong>Configuration explained:</strong></p>
+<ul>
+<li><strong><code>MODEL_PATH</code></strong>: Path to BGE-small embedding model (384 dimensions)</li>
+<li><strong><code>DIM</code></strong>: Vector dimensions must match the embedding model</li>
+<li><strong><code>MAX_ELEMENTS</code></strong>: Maximum capacity of the vector store</li>
+<li><strong><code>NS</code></strong>: Namespace name for organizing vectors</li>
+</ul>
+<p><strong>Why namespaces?</strong></p>
+<ul>
+<li>Isolate different collections of data</li>
+<li>Same database can store multiple datasets</li>
+<li>Example: &quot;products&quot;, &quot;documentation&quot;, &quot;chat-history&quot;</li>
+</ul>
+<hr>
+<h2 id="core-functions"><a class="anchor" href="#core-functions">#</a> Core Functions</h2>
+<h3 id="initialize-embedding-model"><a class="anchor" href="#initialize-embedding-model">#</a> Initialize Embedding Model</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function initializeEmbeddingModel() {
+    const llama = await getLlama({ logLevel: &quot;error&quot; });
+    const model = await llama.loadModel({ modelPath: MODEL_PATH });
+    return await model.createEmbeddingContext();
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Loads the BGE embedding model and creates a context for generating embeddings.</p>
+<p><strong>Step-by-step:</strong></p>
+<ol>
+<li>Get Llama instance (handles native binaries)</li>
+<li>Load the GGUF model file</li>
+<li>Create embedding context (ready to generate embeddings)</li>
+</ol>
+<p><strong>Why separate function?</strong></p>
+<ul>
+<li>Model loading is expensive (done once)</li>
+<li>Reusable across examples</li>
+<li>Clean separation of concerns</li>
+</ul>
+<h3 id="create-sample-documents"><a class="anchor" href="#create-sample-documents">#</a> Create Sample Documents</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function createSampleDocuments() {
+    return [
+        new Document(&quot;Python is a high-level programming language known for its simplicity.&quot;, {
+            id: &quot;doc_1&quot;,
+            category: &quot;programming&quot;,
+            language: &quot;python&quot;,
+            difficulty: &quot;beginner&quot;,
+        }),
+        // ... more documents
+    ];
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Creates a set of test documents with rich metadata.</p>
+<p><strong>Document structure:</strong></p>
+<ul>
+<li><strong>Content</strong>: The text to be embedded and searched</li>
+<li><strong>Metadata</strong>: Structured data for filtering and organization<ul>
+<li><code>id</code>: Unique identifier</li>
+<li><code>category</code>: Grouping field (programming, ai, devops, etc.)</li>
+<li><code>language</code>, <code>topic</code>, <code>difficulty</code>: Custom fields</li>
+</ul>
+</li>
+</ul>
+<p><strong>Why metadata matters:</strong></p>
+<ul>
+<li>Filter search results by category</li>
+<li>Organize documents logically</li>
+<li>Add context to search results</li>
+</ul>
+<h3 id="id-tracker-helper"><a class="anchor" href="#id-tracker-helper">#</a> ID Tracker Helper</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function createIdTracker() {
+    const ids = new Set();
+    return {
+        add(id) { ids.add(id); },
+        delete(id) { ids.delete(id); },
+        has(id) { return ids.has(id); },
+        count() { return ids.size; },
+        clear() { ids.clear(); },
+    };
+}
+const idTracker = createIdTracker();</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Tracks inserted document IDs for counting and verification.</p>
+<p><strong>Why needed:</strong></p>
+<ul>
+<li><code>embedded-vector-db</code> is in beta, may not expose size APIs</li>
+<li>Simple Set-based tracker provides reliable count</li>
+<li>Helps demonstrate CRUD operations clearly</li>
+</ul>
+<h3 id="document-cache-helper"><a class="anchor" href="#document-cache-helper">#</a> Document Cache Helper</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const documentCache = new Map();</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Simple in-memory cache for retrieving documents by ID.</p>
+<p><strong>Why needed:</strong></p>
+<ul>
+<li><code>embedded-vector-db</code> doesn&#39;t have a built-in <code>get()</code> method for retrieving by ID</li>
+<li>Cache stores full document metadata for quick retrieval</li>
+<li>Enables examples to demonstrate document retrieval patterns</li>
+<li>Maintained alongside the vector store during CRUD operations</li>
+</ul>
+<h3 id="add-documents-to-store"><a class="anchor" href="#add-documents-to-store">#</a> Add Documents to Store</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function addDocumentsToStore(vectorStore, embeddingContext, documents) {
+    for (const doc of documents) {
+        const embedding = await embeddingContext.getEmbeddingFor(doc.pageContent);
+        const metadata = {
+            content: doc.pageContent,
+            ...doc.metadata,
+        };
+        await vectorStore.insert(
+            NS,
+            doc.metadata.id,
+            Array.from(embedding.vector),
+            metadata
+        );
+        idTracker.add(doc.metadata.id);
+        documentCache.set(doc.metadata.id, { id: doc.metadata.id, metadata });
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Embeds documents and inserts them into the vector store.</p>
+<p><strong>Step-by-step:</strong></p>
+<ol>
+<li><strong>Generate embedding</strong>: Convert text to 384-dimensional vector</li>
+<li><strong>Insert into store</strong>: Store vector with ID and metadata</li>
+<li><strong>Track ID</strong>: Record that this document was added</li>
+<li><strong>Cache document</strong>: Store in documentCache for later retrieval by ID</li>
+</ol>
+<p><strong>VectorDB.insert() parameters:</strong></p>
+<ul>
+<li><code>namespace</code>: Data isolation (using &quot;memory&quot;)</li>
+<li><code>id</code>: Unique identifier for retrieval</li>
+<li><code>vector</code>: The embedding as array of numbers</li>
+<li><code>metadata</code>: All metadata including the original content</li>
+</ul>
+<p><strong>Important:</strong> Store the original content in metadata so you can retrieve it later!</p>
+<h3 id="search-vector-store"><a class="anchor" href="#search-vector-store">#</a> Search Vector Store</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function searchVectorStore(vectorStore, embeddingContext, query, k = 3) {
+    const queryEmbedding = await embeddingContext.getEmbeddingFor(query);
+    return await vectorStore.search(NS, Array.from(queryEmbedding.vector), k);
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong> Performs semantic similarity search.</p>
+<p><strong>How it works:</strong></p>
+<ol>
+<li><strong>Embed the query</strong>: Convert search text to vector (same model!)</li>
+<li><strong>Search</strong>: Find k nearest neighbors using cosine similarity</li>
+<li><strong>Return results</strong>: Array of matches with scores and metadata</li>
+</ol>
+<p><strong>Key insight:</strong> Query and documents use the same embedding space, enabling semantic matching.</p>
+<hr>
+<h2 id="example-1-basic-vector-store-setup"><a class="anchor" href="#example-1-basic-vector-store-setup">#</a> Example 1: Basic Vector Store Setup</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example1() {
+    const vectorStore = new VectorDB({
+        dim: DIM,
+        maxElements: MAX_ELEMENTS,
+    });
+    
+    const context = await initializeEmbeddingModel();
+    const documents = createSampleDocuments();
+    await addDocumentsToStore(vectorStore, context, documents);
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Creating a VectorDB instance</li>
+<li>Loading the embedding model</li>
+<li>Adding documents with embeddings</li>
+</ul>
+<p><strong>Step-by-step:</strong></p>
+<p><strong>Step 1: Create VectorDB</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const vectorStore = new VectorDB({
+    dim: DIM,
+    maxElements: MAX_ELEMENTS,
+});</code></pre>
+      </div>
+    <ul>
+<li>Creates in-memory HNSW index</li>
+<li>Must specify dimensions (384 for BGE-small)</li>
+<li>Sets maximum capacity (10,000 vectors)</li>
+</ul>
+<p><strong>Step 2: Initialize embeddings</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const context = await initializeEmbeddingModel();</code></pre>
+      </div>
+    <ul>
+<li>Loads BGE-small model (~150MB)</li>
+<li>Returns embedding context ready to use</li>
+</ul>
+<p><strong>Step 3: Add documents</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await addDocumentsToStore(vectorStore, context, documents);</code></pre>
+      </div>
+    <ul>
+<li>Embeds each document (~50ms per document)</li>
+<li>Inserts vectors into HNSW index</li>
+<li>Stores metadata for retrieval</li>
+</ul>
+<p><strong>Result:</strong> Vector store ready with 10 documents, searchable by semantic similarity.</p>
+<hr>
+<h2 id="example-2-basic-similarity-search"><a class="anchor" href="#example-2-basic-similarity-search">#</a> Example 2: Basic Similarity Search</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example2() {
+    // Setup (same as example1)
+    const vectorStore = new VectorDB({ dim: DIM, maxElements: MAX_ELEMENTS });
+    const context = await initializeEmbeddingModel();
+    const documents = createSampleDocuments();
+    await addDocumentsToStore(vectorStore, context, documents);
+    
+    const queries = [
+        &quot;How do I learn programming?&quot;,
+        &quot;Tell me about artificial intelligence&quot;,
+        &quot;Container deployment tools&quot;,
+    ];
+    
+    for (const query of queries) {
+        const results = await searchVectorStore(vectorStore, context, query, 3);
+        // Display results...
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> Semantic search finds relevant documents even without exact keyword matches.</p>
+<p><strong>How search works:</strong></p>
+<p><strong>Query 1: &quot;How do I learn programming?&quot;</strong></p>
+<ul>
+<li>Doesn&#39;t contain exact keywords from documents</li>
+<li>Finds documents about Python, JavaScript, TypeScript</li>
+<li><strong>Why?</strong> Embedding captures the concept of &quot;learning programming&quot;</li>
+</ul>
+<p><strong>Query 2: &quot;Tell me about artificial intelligence&quot;</strong></p>
+<ul>
+<li>Matches documents about machine learning, neural networks, NLP</li>
+<li><strong>Why?</strong> AI-related concepts cluster together in embedding space</li>
+</ul>
+<p><strong>Query 3: &quot;Container deployment tools&quot;</strong></p>
+<ul>
+<li>Finds Docker and Kubernetes documents</li>
+<li><strong>Why?</strong> DevOps and containerization are semantically related</li>
+</ul>
+<p><strong>Result structure:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    id: &quot;doc_1&quot;,
+    similarity: 0.7234,  // Similarity score (0-1, higher is better)
+    metadata: {
+        content: &quot;...&quot;,
+        category: &quot;programming&quot;,
+        // ... other metadata
+    }
+}</code></pre>
+      </div>
+    <p><strong>Key insight:</strong> Vector search finds semantically similar documents, not just keyword matches!</p>
+<hr>
+<h2 id="example-3-filtering-with-metadata"><a class="anchor" href="#example-3-filtering-with-metadata">#</a> Example 3: Filtering with Metadata</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example3() {
+    // Setup...
+    const query = &quot;programming concepts&quot;;
+    
+    // Search without filter
+    const allResults = await searchVectorStore(vectorStore, context, query, 5);
+    
+    // Filter by metadata
+    const filteredResults = allResults
+        .filter((r) =&gt; r.metadata.category === &quot;programming&quot;)
+        .slice(0, 5);
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> Combining semantic search with metadata filtering.</p>
+<p><strong>Approach shown:</strong></p>
+<ol>
+<li>Search returns top matches by similarity</li>
+<li>Client-side filter by metadata field</li>
+<li>Take first N filtered results</li>
+</ol>
+<p><strong>Example output:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Without Filter (All Results):
+1. [0.7234] programming: Python is a high-level...
+2. [0.6891] ai: Machine learning models require...
+3. [0.6543] programming: JavaScript is essential...
+4. [0.6234] programming: React is a popular...
+5. [0.5987] ai: Neural networks are inspired...
+
+With Filter (Only &quot;programming&quot; category):
+1. [0.7234] programming: Python is a high-level...
+2. [0.6543] programming: JavaScript is essential...
+3. [0.6234] programming: React is a popular...</code></pre>
+      </div>
+    <p><strong>Use cases for filtering:</strong></p>
+<ul>
+<li>Restrict search to specific document types</li>
+<li>Filter by date, author, source</li>
+<li>Combine with difficulty level, tags, etc.</li>
+</ul>
+<p><strong>Note:</strong> <code>embedded-vector-db</code> also supports server-side filtering via the <code>metadataFilter</code> parameter in search(), but this example shows explicit filtering for clarity.</p>
+<hr>
+<h2 id="example-4-performance-comparison"><a class="anchor" href="#example-4-performance-comparison">#</a> Example 4: Performance Comparison</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example4() {
+    // Create larger dataset
+    const largeDataset = [];
+    for (let i = 0; i &lt; 10; i++) {
+        baseDocuments.forEach((doc, idx) =&gt; {
+            largeDataset.push(new Document(doc.pageContent, {
+                ...doc.metadata,
+                id: `doc_${i}_${idx}`,
+                batch: i,
+            }));
+        });
+    }
+    
+    // Measure add time
+    const addStart = Date.now();
+    await addDocumentsToStore(vectorStore, context, largeDataset);
+    const addTime = Date.now() - addStart;
+    
+    // Test search with different k values
+    const kValues = [1, 5, 10, 20];
+    for (const k of kValues) {
+        const searchStart = Date.now();
+        const results = await searchVectorStore(vectorStore, context, query, k);
+        const searchTime = Date.now() - searchStart;
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> Performance characteristics of in-memory vector search.</p>
+<p><strong>Results insights:</strong></p>
+<ul>
+<li><strong>Adding 100 documents</strong>: ~5-10 seconds (mostly embedding time)</li>
+<li><strong>Average per document</strong>: ~50-100ms (embedding generation dominates)</li>
+<li><strong>Search performance</strong>: Very fast (&lt; 50ms even for large k)</li>
+</ul>
+<p><strong>Performance breakdown:</strong></p>
+<ul>
+<li><strong>Embedding generation</strong>: 40-80ms per document</li>
+<li><strong>Vector insertion</strong>: &lt; 1ms per document</li>
+<li><strong>Search query embedding</strong>: 40-80ms</li>
+<li><strong>kNN search</strong>: &lt; 10ms for 100 documents</li>
+</ul>
+<p><strong>Key takeaway:</strong> HNSW is extremely fast for search, but embedding generation is the bottleneck.</p>
+<hr>
+<h2 id="example-5-retrieving-documents-by-id"><a class="anchor" href="#example-5-retrieving-documents-by-id">#</a> Example 5: Retrieving Documents by ID</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example5() {
+    // Setup...
+    const idsToRetrieve = [&quot;doc_1&quot;, &quot;doc_5&quot;, &quot;doc_10&quot;];
+    
+    for (const id of idsToRetrieve) {
+        const doc = documentCache.get(id);
+        if (doc) {
+            console.log(`ID: ${id}`);
+            console.log(`Content: ${doc.metadata.content}`);
+            console.log(`Category: ${doc.metadata.category}`);
+            console.log(`Difficulty: ${doc.metadata.difficulty || &quot;N/A&quot;}`);
+        } else {
+            console.log(`• Not found: ${id}`);
+        }
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> Direct document retrieval by ID using the document cache.</p>
+<p><strong>Why use documentCache:</strong></p>
+<ul>
+<li><code>embedded-vector-db</code> doesn&#39;t have a built-in <code>get()</code> method</li>
+<li>Cache provides instant retrieval without searching</li>
+<li>Maintained alongside vector store during CRUD operations</li>
+<li>Simple pattern for small to medium datasets</li>
+</ul>
+<p><strong>When to retrieve by ID:</strong></p>
+<ul>
+<li>After similarity search returns IDs, fetch full details</li>
+<li>Retrieve specific documents for display</li>
+<li>Check if a document exists</li>
+<li>Review existing entries before updates</li>
+</ul>
+<p><strong>Cached object structure:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    id: &quot;doc_1&quot;,
+    metadata: {
+        content: &quot;Python is a high-level...&quot;,
+        id: &quot;doc_1&quot;,
+        category: &quot;programming&quot;,
+        language: &quot;python&quot;,
+        difficulty: &quot;beginner&quot;
+    }
+}</code></pre>
+      </div>
+    <p><strong>Workflow example:</strong></p>
+<ol>
+<li>Search: Find top 10 similar documents</li>
+<li>Get IDs: Extract IDs from results</li>
+<li>Retrieve: Fetch from cache using documentCache.get(id)</li>
+<li>Display: Show to user with full metadata</li>
+</ol>
+<hr>
+<h2 id="example-6-updating-and-deleting-documents"><a class="anchor" href="#example-6-updating-and-deleting-documents">#</a> Example 6: Updating and Deleting Documents</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example6() {
+    // Setup with 3 documents
+    const documents = createSampleDocuments().slice(0, 3);
+    await addDocumentsToStore(vectorStore, context, documents);
+    
+    // Delete a document
+    await vectorStore.delete(NS, &quot;doc_2&quot;);
+    idTracker.delete(&quot;doc_2&quot;);
+    documentCache.delete(&quot;doc_2&quot;);
+    
+    // Add a new document
+    const newDoc = new Document(&quot;GraphQL is a query language for APIs.&quot;, {
+        id: &quot;doc_11&quot;,
+        category: &quot;programming&quot;,
+        topic: &quot;api&quot;,
+    });
+    
+    {
+        const embedding = await context.getEmbeddingFor(newDoc.pageContent);
+        const metadata = {
+            content: newDoc.pageContent,
+            ...newDoc.metadata,
+        };
+        await vectorStore.insert(NS, newDoc.metadata.id, Array.from(embedding.vector), metadata);
+        idTracker.add(newDoc.metadata.id);
+        documentCache.set(newDoc.metadata.id, { id: newDoc.metadata.id, metadata });
+    }
+    
+    // Update existing document
+    const updatedDoc = new Document(
+        &quot;Python 3.12 is the latest version with improved performance.&quot;,
+        {
+            id: &quot;doc_1&quot;,
+            category: &quot;programming&quot;,
+            language: &quot;python&quot;,
+            difficulty: &quot;beginner&quot;,
+            version: &quot;3.12&quot;,
+        }
+    );
+    
+    {
+        const updatedEmbedding = await context.getEmbeddingFor(updatedDoc.pageContent);
+        const metadata = {
+            content: updatedDoc.pageContent,
+            ...updatedDoc.metadata,
+        };
+        await vectorStore.update(NS, updatedDoc.metadata.id, Array.from(updatedEmbedding.vector), metadata);
+        documentCache.set(updatedDoc.metadata.id, { id: updatedDoc.metadata.id, metadata });
+    }
+    
+    // Verify changes
+    const doc1 = documentCache.get(&quot;doc_1&quot;);
+    console.log(`Updated document content: ${doc1.metadata.content}`);
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> Full CRUD operations on the vector store with proper cache management.</p>
+<p><strong>Delete operation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.delete(NS, &quot;doc_2&quot;);
+idTracker.delete(&quot;doc_2&quot;);
+documentCache.delete(&quot;doc_2&quot;);</code></pre>
+      </div>
+    <ul>
+<li>Removes vector from index</li>
+<li>Updates ID tracker</li>
+<li>Removes from document cache</li>
+<li>Frees up space (added to internal free list)</li>
+</ul>
+<p><strong>Insert operation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const metadata = { content: newDoc.pageContent, ...newDoc.metadata };
+await vectorStore.insert(NS, id, vector, metadata);
+idTracker.add(id);
+documentCache.set(id, { id, metadata });</code></pre>
+      </div>
+    <ul>
+<li>Must provide new unique ID</li>
+<li>Throws error if ID already exists</li>
+<li>Stores vector and metadata in vector store</li>
+<li>Updates tracker and cache</li>
+</ul>
+<p><strong>Update operation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const metadata = { content: updatedDoc.pageContent, ...updatedDoc.metadata };
+await vectorStore.update(NS, id, newVector, metadata);
+documentCache.set(id, { id, metadata });</code></pre>
+      </div>
+    <ul>
+<li>Replaces existing vector and metadata</li>
+<li>Generates new embedding if content changed</li>
+<li>Updates document cache with new metadata</li>
+<li>Maintains same ID</li>
+</ul>
+<p><strong>Why re-embed on update?</strong></p>
+<ul>
+<li>If content changes, embedding must change</li>
+<li>Ensures search results stay accurate</li>
+<li>Old embedding wouldn&#39;t match new content</li>
+</ul>
+<p><strong>Cache management is critical:</strong></p>
+<ul>
+<li>Keep cache in sync with vector store</li>
+<li>Update cache on every insert, update, or delete</li>
+<li>Ensures documentCache.get() returns current data</li>
+</ul>
+<p><strong>CRUD summary:</strong></p>
+<ul>
+<li><strong>Create</strong>: <code>insert()</code> + cache.set()</li>
+<li><strong>Read</strong>: <code>search()</code> or cache.get()</li>
+<li><strong>Update</strong>: <code>update()</code> + cache.set()</li>
+<li><strong>Delete</strong>: <code>delete()</code> + cache.delete()</li>
+</ul>
+<hr>
+<h2 id="example-7-understanding-similarity-scores"><a class="anchor" href="#example-7-understanding-similarity-scores">#</a> Example 7: Understanding Similarity Scores</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example7() {
+    const testCases = [
+        { query: &quot;Python programming&quot;, description: &quot;Very specific match&quot; },
+        { query: &quot;coding and software&quot;, description: &quot;Broad programming topic&quot; },
+        { query: &quot;containers and deployment&quot;, description: &quot;DevOps related&quot; },
+    ];
+    
+    for (const tc of testCases) {
+        const results = await searchVectorStore(vectorStore, context, tc.query, 5);
+        
+        results.forEach((result) =&gt; {
+            const score = Math.max(0, Math.min(1, result.similarity));
+            const scoreBar = &quot;█&quot;.repeat(Math.round(score * 30));
+            const color = score &gt; 0.6 ? green : score &gt; 0.4 ? yellow : gray;
+        });
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong> How to interpret similarity scores.</p>
+<p><strong>Score interpretation:</strong></p>
+<ul>
+<li><strong>&gt; 0.6</strong>: High similarity - very relevant match</li>
+<li><strong>0.4–0.6</strong>: Medium similarity - somewhat relevant</li>
+<li><strong>&lt; 0.4</strong>: Low similarity - less relevant</li>
+</ul>
+<p><strong>Factors affecting scores:</strong></p>
+<ul>
+<li><strong>Query specificity</strong>: Specific queries get higher scores</li>
+<li><strong>Document length</strong>: Longer documents may score differently</li>
+<li><strong>Semantic overlap</strong>: More related concepts = higher scores</li>
+</ul>
+<p><strong>Example results:</strong></p>
+<p><strong>Query: &quot;Python programming&quot; (very specific)</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. 0.8234 ███████████████████████████ Python is a high-level...
+2. 0.6891 █████████████████████ JavaScript is essential...
+3. 0.5432 ████████████████ TypeScript adds static typing...</code></pre>
+      </div>
+    <p><strong>Query: &quot;coding and software&quot; (broad)</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. 0.6234 ███████████████████ Python is a high-level...
+2. 0.5987 ██████████████████ JavaScript is essential...
+3. 0.5543 ████████████████ React is a popular...</code></pre>
+      </div>
+    <p><strong>Key insights:</strong></p>
+<ul>
+<li>More specific queries yield higher similarity scores</li>
+<li>Broad queries spread scores more evenly</li>
+<li>Threshold depends on your use case</li>
+</ul>
+<p><strong>Setting thresholds:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const RELEVANCE_THRESHOLD = 0.5;
+const relevantResults = results.filter(r =&gt; r.similarity &gt; RELEVANCE_THRESHOLD);</code></pre>
+      </div>
+    <hr>
+<h2 id="configuration-options-reference"><a class="anchor" href="#configuration-options-reference">#</a> Configuration Options Reference</h2>
+<h3 id="vectordb-initialization"><a class="anchor" href="#vectordb-initialization">#</a> VectorDB Initialization</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">new VectorDB({
+    dim: number,              // Required: vector dimensions
+    maxElements: number,      // Required: maximum capacity
+})</code></pre>
+      </div>
+    <p><strong>Important notes:</strong></p>
+<ul>
+<li><code>dim</code> must match your embedding model</li>
+<li><code>maxElements</code> is permanent (can&#39;t be changed after creation)</li>
+<li>In-memory only (data lost when process ends)</li>
+</ul>
+<h3 id="insert-parameters"><a class="anchor" href="#insert-parameters">#</a> Insert Parameters</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.insert(
+    namespace,     // string: namespace for isolation
+    id,           // string: unique identifier
+    vector,       // number[]: embedding array
+    metadata      // object: any JSON-serializable data
+);</code></pre>
+      </div>
+    <h3 id="search-parameters"><a class="anchor" href="#search-parameters">#</a> Search Parameters</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.search(
+    namespace,         // string: which namespace to search
+    queryVector,       // number[]: query embedding
+    k,                // number: how many results to return
+    metadataFilter    // object (optional): filter by metadata
+);</code></pre>
+      </div>
+    <p><strong>With metadata filter:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.search(NS, queryVector, 5, {
+    category: &quot;programming&quot;,
+    difficulty: &quot;beginner&quot;
+});</code></pre>
+      </div>
+    <p>Returns only documents matching ALL filter criteria.</p>
+<hr>
+<h2 id="key-concepts-summary"><a class="anchor" href="#key-concepts-summary">#</a> Key Concepts Summary</h2>
+<h3 id="1-embeddings-enable-semantic-search"><a class="anchor" href="#1-embeddings-enable-semantic-search">#</a> 1. Embeddings Enable Semantic Search</h3>
+<p><strong>Traditional keyword search:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;learn programming&quot;
+Matches: Documents containing &quot;learn&quot; AND/OR &quot;programming&quot;</code></pre>
+      </div>
+    <p><strong>Semantic vector search:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;learn programming&quot; → embedding → [0.23, -0.45, ...]
+Finds: Documents with similar embeddings
+- &quot;Python is beginner-friendly&quot; (no keyword match!)
+- &quot;JavaScript tutorial for beginners&quot;
+- &quot;Introduction to coding&quot;</code></pre>
+      </div>
+    <h3 id="2-namespaces-provide-isolation"><a class="anchor" href="#2-namespaces-provide-isolation">#</a> 2. Namespaces Provide Isolation</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Different collections in one database
+await db.insert(&quot;products&quot;, &quot;p1&quot;, vector, {...});
+await db.insert(&quot;users&quot;, &quot;u1&quot;, vector, {...});
+await db.insert(&quot;docs&quot;, &quot;d1&quot;, vector, {...});
+
+// Search only products
+await db.search(&quot;products&quot;, queryVector, 5);</code></pre>
+      </div>
+    <h3 id="3-metadata-adds-context"><a class="anchor" href="#3-metadata-adds-context">#</a> 3. Metadata Adds Context</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Store rich metadata
+{
+    content: &quot;Document text&quot;,
+    id: &quot;doc_1&quot;,
+    category: &quot;programming&quot;,
+    author: &quot;John Doe&quot;,
+    date: &quot;2024-01-15&quot;,
+    tags: [&quot;python&quot;, &quot;tutorial&quot;],
+    views: 1234
+}
+
+// Filter and organize
+results.filter(r =&gt; r.metadata.date &gt; &quot;2024-01-01&quot;)</code></pre>
+      </div>
+    <h3 id="4-hnsw-is-fast"><a class="anchor" href="#4-hnsw-is-fast">#</a> 4. HNSW Is Fast</h3>
+<p><strong>Hierarchical Navigable Small World (HNSW):</strong></p>
+<ul>
+<li>Approximate nearest neighbor search</li>
+<li>Very fast (&lt; 10ms for thousands of vectors)</li>
+<li>Good recall (finds most relevant results)</li>
+<li>Trade-off: Approximate, not exact</li>
+</ul>
+<hr>
+<h2 id="when-to-use-in-memory-vector-stores"><a class="anchor" href="#when-to-use-in-memory-vector-stores">#</a> When to Use In-Memory Vector Stores</h2>
+<h3 id="-good-for"><a class="anchor" href="#-good-for">#</a> ✅ Good For:</h3>
+<ol>
+<li><p><strong>Development and prototyping</strong></p>
+<ul>
+<li>Fast iteration</li>
+<li>No setup required</li>
+<li>Easy debugging</li>
+</ul>
+</li>
+<li><p><strong>Small datasets (&lt; 10,000 documents)</strong></p>
+<ul>
+<li>Fits in memory</li>
+<li>Fast operations</li>
+<li>Simple management</li>
+</ul>
+</li>
+<li><p><strong>Testing and evaluation</strong></p>
+<ul>
+<li>Quick setup/teardown</li>
+<li>Reproducible tests</li>
+<li>No external dependencies</li>
+</ul>
+</li>
+<li><p><strong>Short-lived processes</strong></p>
+<ul>
+<li>Scripts and batch jobs</li>
+<li>One-time analysis</li>
+<li>Temporary workloads</li>
+</ul>
+</li>
+</ol>
+<h3 id="-not-good-for"><a class="anchor" href="#-not-good-for">#</a> ❌ Not Good For:</h3>
+<ol>
+<li><p><strong>Production applications</strong></p>
+<ul>
+<li>Data lost on restart if not saved explicitly</li>
+<li>No durability guarantees</li>
+<li>Limited scalability</li>
+</ul>
+</li>
+<li><p><strong>Large datasets (&gt; 10,000 documents)</strong></p>
+<ul>
+<li>High memory usage</li>
+<li>Slower initialization</li>
+<li>Risk of OOM errors</li>
+</ul>
+</li>
+<li><p><strong>Multi-user applications</strong></p>
+<ul>
+<li>No concurrent access control</li>
+<li>Limited to single process</li>
+<li>No distribution</li>
+</ul>
+</li>
+<li><p><strong>Long-running services</strong></p>
+<ul>
+<li>Must rebuild on restart</li>
+<li>No persistence</li>
+<li>Memory leaks over time</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="comparison-in-memory-vs-persistent"><a class="anchor" href="#comparison-in-memory-vs-persistent">#</a> Comparison: In-Memory vs Persistent</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>In-Memory</th>
+<th>Persistent (LanceDB, etc.)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Setup</strong></td>
+<td>Instant</td>
+<td>Requires installation</td>
+</tr>
+<tr>
+<td><strong>Speed</strong></td>
+<td>Very fast</td>
+<td>Fast</td>
+</tr>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>Filesystem</td>
+<td>Full persistence</td>
+</tr>
+<tr>
+<td><strong>Capacity</strong></td>
+<td>Limited by RAM</td>
+<td>Limited by disk</td>
+</tr>
+<tr>
+<td><strong>Use case</strong></td>
+<td>Dev/testing</td>
+<td>Production</td>
+</tr>
+<tr>
+<td><strong>Cost</strong></td>
+<td>Free</td>
+<td>May have costs</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="summary"><a class="anchor" href="#summary">#</a> Summary</h2>
+<h3 id="what-we-built"><a class="anchor" href="#what-we-built">#</a> What We Built</h3>
+<p>Seven examples demonstrating:</p>
+<ol>
+<li>✅ Basic vector store setup</li>
+<li>✅ Semantic similarity search</li>
+<li>✅ Metadata filtering</li>
+<li>✅ Performance characteristics</li>
+<li>✅ Document retrieval by ID</li>
+<li>✅ CRUD operations</li>
+<li>✅ Similarity score interpretation</li>
+</ol>
+<h3 id="key-takeaways"><a class="anchor" href="#key-takeaways">#</a> Key Takeaways</h3>
+<ul>
+<li><strong>Semantic search</strong> finds related content, not just keywords</li>
+<li><strong>Embeddings</strong> capture meaning in vector space</li>
+<li><strong>Metadata</strong> enables filtering and organization</li>
+<li><strong>HNSW</strong> provides fast approximate search</li>
+<li><strong>In-memory</strong> is perfect for development</li>
+<li><strong>CRUD operations</strong> work like traditional databases</li>
+</ul>
+<h3 id="best-practices"><a class="anchor" href="#best-practices">#</a> Best Practices</h3>
+<ol>
+<li><strong>Always store content in metadata</strong> for retrieval</li>
+<li><strong>Use namespaces</strong> to isolate different collections</li>
+<li><strong>Track IDs</strong> for verification and counting</li>
+<li><strong>Set relevance thresholds</strong> based on your use case</li>
+<li><strong>Re-embed on update</strong> to maintain accuracy</li>
+</ol>
+<h3 id="next-steps"><a class="anchor" href="#next-steps">#</a> Next Steps</h3>
+<ul>
+<li><strong>02_nearest_neighbor_search</strong>: Advanced search algorithms</li>
+</ul>
+<p>The in-memory vector store you built is the foundation for RAG systems. Next, you&#39;ll add persistence and scale to production workloads!</p>
+
+
+    <nav class="paginate">
+      <span></span>
+      <a class="next" href="./02_nearest_neighbor_search.html"><span>Next →</span><b>02_nearest_neighbor_search</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#c05621", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#c05621", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

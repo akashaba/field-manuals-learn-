@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Latent Diffusion &amp; Stable Diffusion — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/07-latent-diffusion-stable-diffusion/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#architecture-variants">Architecture variants</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-running-flux-12b-on-an-8gb-consumer-gpu">Production note: running Flux-12B on an 8GB consumer GPU</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Latent Diffusion &amp; Stable Diffusion</h1>
+    <p class="lesson-sub">Pixel-space diffusion on 512×512 images is a computational war crime. Rombach et al. (2022) noticed that you do not need all 786k dimensions to generate an image — you need enough to capture semantic structure, and a separate decoder for the rest. Run diffusion inside a VAE&#39;s latent space. That one idea is Stable Diffusion.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 02 (VAE), Phase 8 · 06 (DDPM), Phase 7 · 09 (ViT)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="30.9" y="33.4" width="30.5" height="30.5" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(195 46.2 48.7)"/>
+        <rect x="26.1" y="129.1" width="29.3" height="29.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(178 40.7 143.8)"/>
+        <rect x="21.3" y="124.8" width="28.0" height="28.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(160 35.3 138.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Latent Diffusion &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Stable Diffusion</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Pixel-space diffusion at 512² means the U-Net runs on tensors of shape <code>[B, 3, 512, 512]</code>. Each sampling step is ~100 GFLOPS for a 500M-param U-Net. Fifty steps is 5 TFLOPS per image. Train on a billion images and the compute bill is absurd.</p>
+<p>Most of those FLOPs go to pushing perceptually unimportant details through the net — the high-frequency texture that a lossy VAE could compress away. Rombach&#39;s idea: train a VAE once (the <em>first stage</em>), freeze it, and run diffusion entirely in the 4-channel 64×64 latent space (the <em>second stage</em>). Same U-Net. 1/16th the pixels. ~64x fewer FLOPs for comparable quality.</p>
+<p>This is the Stable Diffusion recipe. SD 1.x / 2.x used an 860M U-Net over <code>64×64×4</code> latents, SDXL used a 2.6B U-Net over <code>128×128×4</code>, SD3 swapped the U-Net for a Diffusion Transformer (DiT) with flow matching. Flux.1-dev (Black Forest Labs, 2024) ships a 12B-param DiT-MMDiT. All run on the same two-stage substrate.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/07-latent-diffusion-stable-diffusion/assets/latent-diffusion.svg" alt="Latent diffusion: VAE compression + diffusion in latent space" loading="lazy" /></figure></p>
+<p><strong>Two stages, separately trained.</strong></p>
+<ol>
+<li><p><strong>Stage 1 — VAE.</strong> Encoder <code>E(x) → z</code>, decoder <code>D(z) → x</code>. Target compression: 8× downsample in each spatial axis + adjust channels so total latent size is ~1/16th of pixel count. Loss = reconstruction (L1 + LPIPS perceptual) + KL (small weight so <code>z</code> isn&#39;t forced too Gaussian, because we do not need exact sampling from <code>z</code>). Often trained with an adversarial loss so decoded images are sharp.</p>
+</li>
+<li><p><strong>Stage 2 — diffusion on <code>z</code>.</strong> Treat <code>z = E(x_real)</code> as the data. Train a U-Net (or DiT) to denoise <code>z_t</code>. At inference: sample <code>z_0</code> via diffusion, then <code>x = D(z_0)</code>.</p>
+</li>
+</ol>
+<p><strong>Text conditioning.</strong> Two additional components. A frozen text encoder (CLIP-L for SD 1.x, CLIP-L+OpenCLIP-G for SD 2/XL, T5-XXL for SD3 and Flux). A cross-attention injection: every U-Net block takes <code>[Q = image features, K = V = text tokens]</code> and mixes them in. The tokens are the only way text influences the image.</p>
+<p><strong>The loss function is identical to Lesson 06.</strong> Same DDPM / flow matching MSE on noise. You just swap the data domain.</p>
+<h2 id="architecture-variants"><a class="anchor" href="#architecture-variants">#</a> Architecture variants</h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Year</th>
+<th>Backbone</th>
+<th>Latent shape</th>
+<th>Text encoder</th>
+<th>Params</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SD 1.5</td>
+<td>2022</td>
+<td>U-Net</td>
+<td>64×64×4</td>
+<td>CLIP-L (77 tokens)</td>
+<td>860M</td>
+</tr>
+<tr>
+<td>SD 2.1</td>
+<td>2022</td>
+<td>U-Net</td>
+<td>64×64×4</td>
+<td>OpenCLIP-H</td>
+<td>865M</td>
+</tr>
+<tr>
+<td>SDXL</td>
+<td>2023</td>
+<td>U-Net + refiner</td>
+<td>128×128×4</td>
+<td>CLIP-L + OpenCLIP-G</td>
+<td>2.6B + 6.6B</td>
+</tr>
+<tr>
+<td>SDXL-Turbo</td>
+<td>2023</td>
+<td>Distilled</td>
+<td>128×128×4</td>
+<td>same</td>
+<td>1-4 step sampling</td>
+</tr>
+<tr>
+<td>SD3</td>
+<td>2024</td>
+<td>MMDiT (multimodal DiT)</td>
+<td>128×128×16</td>
+<td>T5-XXL + CLIP-L + CLIP-G</td>
+<td>2B / 8B</td>
+</tr>
+<tr>
+<td>Flux.1-dev</td>
+<td>2024</td>
+<td>MMDiT</td>
+<td>128×128×16</td>
+<td>T5-XXL + CLIP-L</td>
+<td>12B</td>
+</tr>
+<tr>
+<td>Flux.1-schnell</td>
+<td>2024</td>
+<td>MMDiT distilled</td>
+<td>128×128×16</td>
+<td>T5-XXL + CLIP-L</td>
+<td>12B, 1-4 step</td>
+</tr>
+</tbody></table>
+<p>The trend: replace U-Net with DiT (transformer over latent patches), scale the text encoder (T5 beats CLIP for prompt adherence), increase latent channels (4 → 16 gives more detail headroom).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">noise-schedule</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> stacks a toy 1-D &quot;VAE&quot; (identity encoder + decoder, for demonstration; a real VAE would be a conv net) on top of the DDPM from Lesson 06 and adds class conditioning with classifier-free guidance. It shows that the same diffusion loss works whether you run on raw 1-D values or on encoded values — the key insight.</p>
+<h3 id="step-1-encoderdecoder"><a class="anchor" href="#step-1-encoderdecoder">#</a> Step 1: encoder/decoder</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def encode(x):    return x * 0.5          # toy &quot;compression&quot; to smaller scale
+def decode(z):    return z * 2.0</code></pre>
+      </div>
+    <p>A real VAE has trained weights. For pedagogy, this linear map is enough to show that diffusion operates on <code>z</code> without caring about the original data space.</p>
+<h3 id="step-2-diffusion-in-z-space"><a class="anchor" href="#step-2-diffusion-in-z-space">#</a> Step 2: diffusion in <code>z</code>-space</h3>
+<p>Same DDPM as Lesson 06. The data the net sees is <code>z = E(x)</code>. After sampling <code>z_0</code>, decode with <code>D(z_0)</code>.</p>
+<h3 id="step-3-classifier-free-guidance"><a class="anchor" href="#step-3-classifier-free-guidance">#</a> Step 3: classifier-free guidance</h3>
+<p>During training, drop the class label 10% of the time (replace with a null token). At inference, compute both <code>ε_cond</code> and <code>ε_uncond</code>, then:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">eps_cfg = (1 + w) * eps_cond - w * eps_uncond</code></pre>
+      </div>
+    <p><code>w = 0</code> = no guidance (full diversity), <code>w = 3</code> = default, <code>w = 7+</code> = saturated / over-sharp.</p>
+<h3 id="step-4-text-conditioning-concept-not-code"><a class="anchor" href="#step-4-text-conditioning-concept-not-code">#</a> Step 4: text conditioning (concept, not code)</h3>
+<p>Replace the class label with a frozen text encoder output. Feed the text embedding to the U-Net via cross-attention:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">h = h + CrossAttention(Q=h, K=text_embed, V=text_embed)</code></pre>
+      </div>
+    <p>This is the only substantive difference between a class-conditional diffusion model and Stable Diffusion.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>VAE-scale mismatch.</strong> SD 1.x VAEs have a scaling constant (<code>scaling_factor ≈ 0.18215</code>) applied after encoding. Forgetting this makes the U-Net train on latents with wildly wrong variance. Every checkpoint ships one.</li>
+<li><strong>Text encoder silently wrong.</strong> SD3 needs T5-XXL with &gt;=128 tokens, and the fallback to CLIP-only is lossy. Always check <code>use_t5=True</code> or prompt fidelity craters.</li>
+<li><strong>Mixing latent spaces.</strong> SDXL, SD3, Flux all use different VAEs. A LoRA trained on SDXL latents will not work on SD3. Hugging Face diffusers 0.30+ refuses to load mismatched checkpoints.</li>
+<li><strong>CFG too high.</strong> <code>w &gt; 10</code> produces saturated, oily images and over-fits the prompt at the cost of diversity. The sweet spot is <code>w = 3-7</code>.</li>
+<li><strong>Negative prompts leaking.</strong> Empty negative prompt becomes the null token; a filled negative prompt becomes the <code>ε_uncond</code>. These are not the same; some pipelines silently default to the null.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production stacks in 2026:</p>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Recommended backbone</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Narrow domain, paired data, training a model from scratch</td>
+<td>SDXL fine-tune (LoRA / full) — fastest to ship</td>
+</tr>
+<tr>
+<td>Open-domain text-to-image, open weights</td>
+<td>Flux.1-dev (12B, Apache / non-commercial) or SD3.5-Large</td>
+</tr>
+<tr>
+<td>Fastest inference, open weights</td>
+<td>Flux.1-schnell (1-4 step, Apache) or SDXL-Lightning</td>
+</tr>
+<tr>
+<td>Best prompt adherence, hosted</td>
+<td>GPT-Image / DALL-E 3 (still), Midjourney v7, Imagen 4</td>
+</tr>
+<tr>
+<td>Edit workflows</td>
+<td>Flux.1-Kontext (Dec 2024) — natively accepts image + text</td>
+</tr>
+<tr>
+<td>Research, baseline</td>
+<td>SD 1.5 — ancient but well-studied</td>
+</tr>
+</tbody></table>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-sd-prompter.md</code>. Skill takes a text prompt + target style and outputs: model + checkpoint, CFG scale, sampler, negative prompt, resolution, optional ControlNet/IP-Adapter combo, and a per-step QA checklist.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code> with guidance <code>w ∈ {0, 1, 3, 7, 15}</code>. Record mean sample by class. At what <code>w</code> do the class means diverge past the real data means?</li>
+<li><strong>Medium.</strong> Swap the toy linear encoder for a tanh-MLP encoder/decoder pair with a reconstruction loss. Retrain diffusion on the new latents. Does sample quality change?</li>
+<li><strong>Hard.</strong> Set up a real Stable Diffusion inference with diffusers: load <code>sdxl-base</code>, run 30 Euler steps with CFG=7, time it. Now switch to <code>sdxl-turbo</code> with 4 steps and CFG=0. Same subject, different quality — describe what changed and why.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>First stage</td>
+<td>&quot;The VAE&quot;</td>
+<td>Trained encoder/decoder pair; compresses 512² to 64².</td>
+</tr>
+<tr>
+<td>Second stage</td>
+<td>&quot;The U-Net&quot;</td>
+<td>Diffusion model over the latent space.</td>
+</tr>
+<tr>
+<td>CFG</td>
+<td>&quot;Guidance scale&quot;</td>
+<td><code>(1+w)·ε_cond - w·ε_uncond</code>; tunes conditioning strength.</td>
+</tr>
+<tr>
+<td>Null token</td>
+<td>&quot;Empty prompt embed&quot;</td>
+<td>Unconditional embed used for <code>ε_uncond</code>.</td>
+</tr>
+<tr>
+<td>Cross-attention</td>
+<td>&quot;How text gets in&quot;</td>
+<td>Each U-Net block attends to text tokens as K and V.</td>
+</tr>
+<tr>
+<td>DiT</td>
+<td>&quot;Diffusion Transformer&quot;</td>
+<td>Replace U-Net with a transformer over latent patches; scales better.</td>
+</tr>
+<tr>
+<td>MMDiT</td>
+<td>&quot;Multi-modal DiT&quot;</td>
+<td>SD3&#39;s architecture: text and image streams with joint attention.</td>
+</tr>
+<tr>
+<td>VAE scaling factor</td>
+<td>&quot;Magic number&quot;</td>
+<td>Divides latents by ~5.4 so diffusion operates in unit-variance space.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-running-flux-12b-on-an-8gb-consumer-gpu"><a class="anchor" href="#production-note-running-flux-12b-on-an-8gb-consumer-gpu">#</a> Production note: running Flux-12B on an 8GB consumer GPU</h2>
+<p>the reference Flux integration is the canonical &quot;I have a consumer GPU, can I ship this?&quot; recipe. The trick is the same three-knob recipe production inference literature lists applied to a diffusion DiT:</p>
+<ol>
+<li><strong>Staggered loading.</strong> Flux has three networks that never need to coexist in VRAM: T5-XXL text encoder (~10 GB in fp32), CLIP-L (small), the 12B MMDiT, and the VAE. Encode the prompt first, <em>delete</em> the encoders, load the DiT, denoise, <em>delete</em> the DiT, load the VAE, decode. Consumer 8GB GPUs only fit one stage at a time.</li>
+<li><strong>4-bit quantization via bitsandbytes.</strong> <code>BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)</code> on both the T5 encoder and the DiT. Cuts memory 8×, quality drop is imperceptible for text-to-image per Aritra&#39;s benchmarks (linked in the notebook).</li>
+<li><strong>CPU offload.</strong> <code>pipe.enable_model_cpu_offload()</code> auto-swaps modules between CPU and GPU as each forward pass advances. Adds 10-20% latency but makes the pipeline run at all.</li>
+</ol>
+<p>The memory accounting is: <code>10 GB T5 / 8 = 1.25 GB</code> quantized, <code>12 B params × 0.5 bytes = ~6 GB</code> quantized DiT, plus activations. In stas00&#39;s terms this is the extreme-end of TP=1 inference — no model parallelism, maximum quantization. For production you&#39;d run TP=2 or TP=4 on H100s; for a single dev laptop, this is the recipe.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2112.10752">Rombach et al. (2022). High-Resolution Image Synthesis with Latent Diffusion Models</a> — Stable Diffusion.</li>
+<li><a href="https://arxiv.org/abs/2307.01952">Podell et al. (2023). SDXL: Improving Latent Diffusion Models for High-Resolution Image Synthesis</a> — SDXL.</li>
+<li><a href="https://arxiv.org/abs/2212.09748">Peebles &amp; Xie (2023). Scalable Diffusion Models with Transformers (DiT)</a> — DiT.</li>
+<li><a href="https://arxiv.org/abs/2403.03206">Esser et al. (2024). Scaling Rectified Flow Transformers for High-Resolution Image Synthesis</a> — SD3, MMDiT.</li>
+<li><a href="https://arxiv.org/abs/2207.12598">Ho &amp; Salimans (2022). Classifier-Free Diffusion Guidance</a> — CFG.</li>
+<li><a href="https://blackforestlabs.ai/announcing-black-forest-labs/">Labs (2024). Flux.1 — Black Forest Labs announcement</a> — Flux.1 family.</li>
+<li><a href="https://huggingface.co/docs/diffusers/index">Hugging Face Diffusers docs</a> — reference implementation for every checkpoint above.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-diffusion-ddpm-from-scratch.html"><span>← Previous</span><b>diffusion ddpm from scratch</b></a>
+      <a class="next" href="./08-controlnet-lora-conditioning.html"><span>Next →</span><b>controlnet lora conditioning</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

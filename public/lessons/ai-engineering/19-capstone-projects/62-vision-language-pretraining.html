@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision-Language Pretraining — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/62-vision-language-pretraining/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#tests">Tests</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Vision-Language Pretraining</h1>
+    <p class="lesson-sub">The encoder, projection, and decoder are wired. Now train them together. Two objectives drive learning: a contrastive image-text loss (InfoNCE) that pulls matching pairs together in the joint embedding space, and a language modeling loss that asks the decoder to caption each image. Combined, they teach the network both to find the right image for a caption and to write a caption for the image.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (Track B foundations)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 62">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.3,77.2 L65.9,50.8 L83.5,77.2 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.5" y="44.7" width="33.9" height="33.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(242 60.5 61.7)"/>
+        <rect x="38.7" y="40.5" width="32.7" height="32.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(224 55.1 56.8)"/>
+        <rect x="34.0" y="36.2" width="31.4" height="31.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(207 49.6 51.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">62</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Vision-Language</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Pretraining</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement InfoNCE contrastive loss across a batch of image-caption pairs.</li>
+<li>Compose contrastive loss with autoregressive language modeling loss.</li>
+<li>Synthesize a 200-pair mock image-caption corpus with no real dataset download.</li>
+<li>Run a 50-step demo training loop and observe both losses decreasing.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A vision-language model needs two skills. It must rank: given a caption, find the right image among many. It must generate: given an image, write a caption. Pretraining the model on one skill alone gives you half a system. CLIP nailed ranking but cannot caption. GPT-4V can caption but uses a separate retrieval head for ranking. Multi-objective pretraining gets both in one pass.</p>
+<p>InfoNCE handles the ranking half. For a batch of N pairs, the model treats the N matching pairs as positives and the <code>N^2 - N</code> mismatched pairs as negatives, then runs a cross-entropy loss on the resulting <code>(N, N)</code> similarity matrix. The LM loss handles the generation half: standard next-token prediction conditioned on the image. Both losses are differentiable and can share the encoder, projector, and decoder weights.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+  Batch[batch of N image-caption pairs] --&gt; Enc[vision encoder]
+  Batch --&gt; Tok[tokenize captions]
+  Enc --&gt; Pool[CLS pool + projection]
+  Tok --&gt; TxtEnc[text encoder mean pool]
+  Pool --&gt; ImgEmb[image embeddings N x D]
+  TxtEnc --&gt; TxtEmb[text embeddings N x D]
+  ImgEmb --&gt; Sim[similarity matrix N x N]
+  TxtEmb --&gt; Sim
+  Sim --&gt; CL[InfoNCE bidirectional]
+  Enc --&gt; Dec[cross-attention decoder]
+  Tok --&gt; Dec
+  Dec --&gt; LM[language modeling cross-entropy]
+  CL --&gt; Total[contrastive + LM]
+  LM --&gt; Total</pre></div><h3 id="infonce-in-one-paragraph"><a class="anchor" href="#infonce-in-one-paragraph">#</a> InfoNCE in one paragraph</h3>
+<p>Stack the N image embeddings as rows and the N text embeddings as rows. L2-normalize both. Compute the <code>N x N</code> matrix <code>S = I T^T / tau</code> where <code>tau</code> is a learned temperature. The diagonal entries are the matching pairs; off-diagonal entries are negatives. Apply cross-entropy with the target <code>argmax</code> running down the diagonal: row <code>i</code> should have its highest entry in column <code>i</code>. Do the same symmetrically along columns. The total is the average of the two. This is the CLIP loss in eight lines.</p>
+<h3 id="temperature-matters"><a class="anchor" href="#temperature-matters">#</a> Temperature matters</h3>
+<p>The temperature <code>tau</code> controls how peaked the softmax is. Too small (e.g. <code>tau = 0.01</code>) and the gradient comes only from the very hardest negative, training is noisy. Too large and the softmax flattens and gradient vanishes. CLIP learns <code>tau</code> as a parameter; the demo here does the same.</p>
+<h3 id="language-modeling-loss"><a class="anchor" href="#language-modeling-loss">#</a> Language modeling loss</h3>
+<p>The decoder consumes image memory tokens via cross-attention and predicts the next text token at every position. Loss is standard cross-entropy with the next-position target. Padding positions are masked out of the loss.</p>
+<h3 id="combining-the-losses"><a class="anchor" href="#combining-the-losses">#</a> Combining the losses</h3>
+<p><code>total = contrastive + lm_weight * lm</code> where <code>lm_weight</code> is a scalar (often 1.0). The two losses share gradients into the encoder and projection; only the decoder receives LM-loss gradient. This is the multi-task recipe that CoCa, BLIP, and SigLIP-style models all use, with various weightings.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Loss surface</th>
+<th>Affects</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>InfoNCE</td>
+<td>Pair ranking in the joint space</td>
+<td>Encoder + projection + text head</td>
+</tr>
+<tr>
+<td>LM</td>
+<td>Token prediction conditioned on image</td>
+<td>Encoder + projection + decoder</td>
+</tr>
+<tr>
+<td>Combined</td>
+<td>Multi-task</td>
+<td>Whole stack</td>
+</tr>
+</tbody></table>
+<h3 id="why-50-steps-is-enough-for-a-demo"><a class="anchor" href="#why-50-steps-is-enough-for-a-demo">#</a> Why 50 steps is enough for a demo</h3>
+<p>The mock corpus is a synthetic 200-pair set with random images and random caption ids. After 50 SGD steps with batch size 16, both losses drop visibly even if the absolute values stay above what a real-data model would achieve. The point of the demo is to confirm the gradient plumbing works end to end and that adding the LM loss does not destabilize the contrastive objective.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-infonce-diagonal</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>MultimodalModel</code>, combining a small ViT encoder, the MLP projector, a tiny text-side encoder (mean-pool over embedded ids), and the cross-attention decoder from lesson 61.</li>
+<li><code>info_nce_loss(image_emb, text_emb, temperature)</code>, the bidirectional CLIP-style contrastive loss.</li>
+<li><code>lm_loss(logits, target_ids, padding_id)</code>, masked next-token cross-entropy.</li>
+<li><code>make_mock_corpus(seed, n_pairs)</code>, returning 200 deterministic (image, caption_ids) pairs.</li>
+<li>A training loop running 50 steps with batch size 16, Adam optimizer, and a learned log-temperature parameter. Both losses are printed every 5 steps.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: contrastive loss drops from about <code>ln(16) = 2.77</code> toward 2.4; LM loss drops from a random-uniform baseline of <code>ln(512) ≈ 6.24</code> toward about 4.7. Both decreases prove the gradient is wired correctly. Real models train for millions of steps; the dynamics are the same.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>This is the same loss recipe shipped in:</p>
+<ul>
+<li><strong>CLIP (2021).</strong> Image-text contrastive only, with a separate frozen-encoder caption probe.</li>
+<li><strong>CoCa (2022).</strong> Image-text contrastive plus image-captioning LM loss in one model. The exact pattern this lesson builds.</li>
+<li><strong>BLIP (2022) and BLIP-2.</strong> Contrastive plus LM plus image-text matching head. Three losses combined.</li>
+<li><strong>SigLIP (2023).</strong> Switches InfoNCE for a sigmoid pair loss; same contrastive role, different functional form.</li>
+<li><strong>LLaVA family.</strong> Two-stage training where stage one is alignment (cosine on a frozen LM) and stage two adds LM loss with an unfrozen LM. Lesson 60 maps to stage one; this lesson maps to stage two.</li>
+</ul>
+<h2 id="tests"><a class="anchor" href="#tests">#</a> Tests</h2>
+<p><code>code/test_main.py</code> covers:</p>
+<ul>
+<li>InfoNCE loss is symmetric across image/text rows</li>
+<li>InfoNCE loss returns 0 when the similarity matrix is a perfect diagonal of large positive numbers</li>
+<li>LM loss correctly masks padding positions</li>
+<li>model forward pass produces both losses without errors</li>
+<li>5-step training loop reduces the combined loss</li>
+</ul>
+<p>Run them:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 -m unittest code/test_main.py</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Replace InfoNCE with SigLIP-style sigmoid pair loss and compare convergence on the mock corpus.</p>
+</li>
+<li><p>Add a hard-negative mining step: every other batch, select the hardest off-diagonal pair from the previous batch and append it. Train and inspect whether contrastive loss drops faster.</p>
+</li>
+<li><p>Add an image-text matching binary head on top of the joint embedding (true/false: do these match?) for a third loss, replicating BLIP&#39;s three-head setup.</p>
+</li>
+<li><p>Replace the mock corpus with caption-id sequences drawn from a Markov chain whose transition matrix is conditioned on image hash. The captioning loss should drop further because there is actual learnable signal.</p>
+</li>
+<li><p>Train the same model with <code>lm_weight = 0</code> and again with <code>lm_weight = 1</code>. Compare contrastive loss; the LM loss should not regress the ranking objective.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>InfoNCE</td>
+<td>Noise contrastive estimation: cross-entropy on a similarity matrix</td>
+</tr>
+<tr>
+<td>Temperature</td>
+<td>Scalar that controls how peaked the contrastive softmax is</td>
+</tr>
+<tr>
+<td>Hard negative</td>
+<td>An off-diagonal pair the model finds confusing, useful for sampling</td>
+</tr>
+<tr>
+<td>LM loss</td>
+<td>Standard next-token cross-entropy on the captioning side</td>
+</tr>
+<tr>
+<td>Joint embedding space</td>
+<td>The shared space where image and text vectors live after projection</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>CLIP paper for the original contrastive recipe.</li>
+<li>CoCa paper for contrastive plus captioning in one model.</li>
+<li>SigLIP paper for the sigmoid pair-loss variant and why it scales better.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./61-cross-attention-fusion.html"><span>← Previous</span><b>cross attention fusion</b></a>
+      <a class="next" href="./63-multimodal-eval.html"><span>Next →</span><b>multimodal eval</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

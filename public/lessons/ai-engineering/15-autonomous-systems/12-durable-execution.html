@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Long-Running Background Agents: Durable Execution — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/15-autonomous-systems/12-durable-execution/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Autonomous Systems</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Autonomous Systems</div>
+    <h1 class="lesson-title">Long-Running Background Agents: Durable Execution</h1>
+    <p class="lesson-sub">Production long-horizon agents do not run in `while True`. Every LLM call becomes an activity with checkpoint, retry, and replay. Temporal&#39;s OpenAI Agents SDK integration went GA March 2026. Claude Code Routines (Anthropic) runs scheduled Claude Code invocations without a persistent local process. Sessions pause on human-input, survive deploys, and resume from the latest checkpoint keyed by `thread_id`. Behind the new ergonomics sits an old pattern — workflow orchestration — with one new input: LLM calls as non-deterministic activities that must be deterministically replayed on recovery.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, minimal durable-execution state machine)</b></div><div><span>Prerequisites</span><b>Phase 15 · 10 (Permission modes), Phase 15 · 01 (Long-horizon agents)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Autonomous Systems 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="107.2" cy="104.2" r="9.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="101.8" cy="99.2" r="8.8" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.1,99.2 L96.3,86.9 L104.6,99.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.4,93.9 L90.9,82.6 L98.5,93.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.7" y="118.9" width="26.2" height="26.2" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.8 132.0)"/>
+        <circle cx="22.4" cy="127.1" r="12.5" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AUTONOMOUS SYSTEMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Long-Running</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Background Agents…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Consider an agent that runs for four hours. It calls three tools, prompts the user twice, and makes forty LLM calls. Halfway through, the host it is running on reboots. What happens?</p>
+<ul>
+<li>In a naive <code>while True</code> loop: everything is lost. The run restarts from scratch. The three tool calls (with real side effects) execute again. The user is prompted again for things they already approved. Forty LLM calls are re-billed.</li>
+<li>With durable execution: the run resumes from the most recent checkpoint. Already-completed activities are not re-executed; their results are replayed from the durable log. The user does not re-approve things they already approved. The LLM calls already made are not re-billed.</li>
+</ul>
+<p>This is the same pattern workflow engines have shipped for a decade (Temporal, Cadence, Uber&#39;s Cherami). What&#39;s new is that LLM calls are now a kind of activity — non-deterministic, expensive, with side effects — and they fit this pattern cleanly.</p>
+<p>The running theme of the lesson: long-horizon reliability decays (METR observes a &quot;35-minute degradation&quot; — success rate drops roughly quadratically with horizon). Durable execution enables runs that are longer than the reliability profile supports, which is a new way to fail safely if the design is right and unsafely if the design is wrong.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="activities-workflows-and-replay"><a class="anchor" href="#activities-workflows-and-replay">#</a> Activities, workflows, and replay</h3>
+<ul>
+<li><strong>Workflow</strong>: deterministic orchestration code. Defines the sequence of activities, the branches, the waits. Must be deterministic so it can be replayed from the event log without surprising divergence.</li>
+<li><strong>Activity</strong>: a non-deterministic, potentially failing unit of work. LLM call, tool call, file write, HTTP request. Each activity is logged with its inputs and (once complete) its outputs.</li>
+<li><strong>Event log</strong>: the durable backing store. Every activity start, complete, fail, retry, and every workflow decision is recorded.</li>
+<li><strong>Replay</strong>: on recovery, the workflow code re-runs from the start; every activity that already completed returns its logged result without re-executing. Only activities that had not completed are actually run.</li>
+</ul>
+<p>This is the same shape as React re-rendering against a virtual DOM, or Git rebuilding a working tree from commits. Determinism in the orchestrator is what makes durability cheap.</p>
+<h3 id="why-llm-calls-fit-the-pattern"><a class="anchor" href="#why-llm-calls-fit-the-pattern">#</a> Why LLM calls fit the pattern</h3>
+<p>LLM calls are:</p>
+<ul>
+<li>Non-deterministic (temperature &gt; 0; even temperature 0 drifts across model versions).</li>
+<li>Expensive (money and latency).</li>
+<li>Potentially failing (rate limits, timeouts).</li>
+<li>Side-effectful (if they invoke tools).</li>
+</ul>
+<p>This is exactly the activity profile. Wrapping every LLM call as an activity gives you retry with exponential backoff, checkpointing across restarts, and a replayable trace for debugging.</p>
+<h3 id="checkpoints-keyed-by-thread_id"><a class="anchor" href="#checkpoints-keyed-by-thread_id">#</a> Checkpoints keyed by <code>thread_id</code></h3>
+<p>LangGraph, Microsoft Agent Framework, Cloudflare Durable Objects, and Claude Code Routines all converged on the same API shape: a <code>thread_id</code> (or equivalent) identifies the session; each state transition persists to a backend (PostgreSQL default, SQLite for dev, Redis for cache); resume reads the latest checkpoint.</p>
+<p>The backend choice matters:</p>
+<ul>
+<li><strong>PostgreSQL</strong>: durable, queryable, survives deploys. Default for LangGraph.</li>
+<li><strong>SQLite</strong>: local-dev only; loses data across hosts.</li>
+<li><strong>Redis</strong>: fast but ephemeral unless AOF/snapshot configured.</li>
+<li><strong>Cloudflare Durable Objects</strong>: transparently distributed; scoped by a unique key; survives for hours to weeks.</li>
+</ul>
+<h3 id="human-input-as-a-first-class-state"><a class="anchor" href="#human-input-as-a-first-class-state">#</a> Human-input as a first-class state</h3>
+<p>Propose-then-commit (Lesson 15) requires a durable &quot;waiting on human&quot; state. The workflow pauses, the external queue holds the pending request, and an approval resumes from exactly that point. Without durability this is best-effort; with it, an overnight approval arrives and the workflow picks up in the morning.</p>
+<h3 id="the-35-minute-degradation"><a class="anchor" href="#the-35-minute-degradation">#</a> The 35-minute degradation</h3>
+<p>METR observed that every agent class measured shows reliability decay beyond ~35 minutes of continuous operation. Doubling the task duration roughly quadruples the failure rate. Durable execution does not fix this; it lets you run longer than the reliability profile supports. The safe pattern is to combine durability with checkpoints that require fresh HITL on re-entry, and with budget kill switches (Lesson 13) that cap total compute regardless of wall-clock time.</p>
+<h3 id="when-durable-execution-is-the-wrong-answer"><a class="anchor" href="#when-durable-execution-is-the-wrong-answer">#</a> When durable execution is the wrong answer</h3>
+<ul>
+<li>Runs shorter than a few minutes with no human input. Overhead &gt; benefit.</li>
+<li>Strictly read-only information retrieval.</li>
+<li>Tasks where correctness requires end-to-end within one context window (some reasoning tasks; some one-shot generation).</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">memory-consolidation</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> implements a minimal durable-execution engine in stdlib Python. It supports:</p>
+<ul>
+<li><code>@activity</code> decorator that logs inputs and outputs to a JSON event log.</li>
+<li>A workflow function that sequences activities.</li>
+<li>A <code>run_or_replay(workflow, event_log)</code> function that replays completed activities without re-executing them.</li>
+</ul>
+<p>The driver simulates a three-activity workflow, crashes halfway through, and shows (a) a naive retry re-executing everything versus (b) a replay running only the missing activity.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-durable-execution-review.md</code> reviews a proposed long-running agent deployment for correct durable-execution shape: activities, determinism, checkpoint backend, human-input state, and HITL-on-resume policy.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code>. Observe the difference in activity-execution count between naive retry and replay. Change the crash point and show the replay count changes accordingly.</p>
+</li>
+<li><p>Convert the toy engine to use <code>thread_id</code> explicitly. Simulate two concurrent sessions sharing the engine and confirm their event logs do not collide.</p>
+</li>
+<li><p>Take one activity in the toy engine. Introduce a non-determinism (a wall-clock timestamp inside a workflow decision). Demonstrate the divergence on replay. Explain how real engines handle this (side-effect registration, <code>Workflow.now()</code> APIs).</p>
+</li>
+<li><p>Read the LangChain &quot;Runtime behind production deep agents&quot; post. List every state that the runtime persists and name which failure mode each covers.</p>
+</li>
+<li><p>Design a checkpoint policy for a 6-hour autonomous coding task. Where do you checkpoint? What does resume-on-crash look like? What requires fresh HITL?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Workflow</td>
+<td>&quot;Agent&#39;s script&quot;</td>
+<td>Deterministic orchestration code; replayable from event log</td>
+</tr>
+<tr>
+<td>Activity</td>
+<td>&quot;A step&quot;</td>
+<td>Non-deterministic unit (LLM call, tool call); logged before and after</td>
+</tr>
+<tr>
+<td>Event log</td>
+<td>&quot;The backing store&quot;</td>
+<td>Durable record of every state transition</td>
+</tr>
+<tr>
+<td>Replay</td>
+<td>&quot;Resume&quot;</td>
+<td>Re-run workflow; completed activities return logged results without re-execution</td>
+</tr>
+<tr>
+<td>Checkpoint</td>
+<td>&quot;Save point&quot;</td>
+<td>Persisted state keyed by thread_id; latest-wins on resume</td>
+</tr>
+<tr>
+<td>thread_id</td>
+<td>&quot;Session key&quot;</td>
+<td>Identifier that scopes durable state</td>
+</tr>
+<tr>
+<td>35-minute degradation</td>
+<td>&quot;Reliability decay&quot;</td>
+<td>METR: success rate drops ~quadratically with horizon</td>
+</tr>
+<tr>
+<td>Non-determinism</td>
+<td>&quot;Drift on replay&quot;</td>
+<td>Wall clock, random, LLM output; must be registered as side effect</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://code.claude.com/docs/en/agent-sdk/agent-loop">Anthropic — Claude Code Agent SDK: agent loop</a> — budget, turns, and resume semantics.</li>
+<li><a href="https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop">Microsoft — Agent Framework: human-in-the-loop and checkpointing</a> — RequestInfoEvent shape.</li>
+<li><a href="https://www.langchain.com/conceptual-guides/runtime-behind-production-deep-agents">LangChain — The Runtime Behind Production Deep Agents</a> — concrete runtime requirements.</li>
+<li><a href="https://trigger.dev">OpenAI Agents SDK + Temporal integration (Trigger.dev announcement)</a> — activity shape for LLM calls.</li>
+<li><a href="https://www.anthropic.com/research/measuring-agent-autonomy">Anthropic — Measuring agent autonomy in practice</a> — the 35-minute degradation reference.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-browser-agents.html"><span>← Previous</span><b>browser agents</b></a>
+      <a class="next" href="./13-cost-governors.html"><span>Next →</span><b>cost governors</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

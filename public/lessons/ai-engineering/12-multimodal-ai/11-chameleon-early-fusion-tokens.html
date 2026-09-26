@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chameleon and Early-Fusion Token-Only Multimodal Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/11-chameleon-early-fusion-tokens/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Chameleon and Early-Fusion Token-Only Multimodal Models</h1>
+    <p class="lesson-sub">Every VLM we have seen so far keeps images and text separate. Visual tokens come from a vision encoder, flow into a projector, then meet text inside the LLM. The vision and text vocabularies never overlap. Chameleon (Meta, May 2024) asked: what if they did? Train a VQ-VAE that turns an image into a sequence of discrete tokens from a shared vocabulary. Every multimodal document is now one sequence — text tokens and image tokens interleaved, a single autoregressive loss. Side effect: the model can generate mixed-modality outputs — alternating text and image tokens in a single inference call. This lesson reads the early-fusion thesis and builds a toy version end to end.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, VQ-VAE tokenizer + interleaved decoder)</b></div><div><span>Prerequisites</span><b>Phase 12 · 05, Phase 8 (Generative AI)</b></div><div><span>Time</span><b>~180 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="18.3" y="122.2" width="27.2" height="27.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(149 31.9 135.8)"/>
+        <rect x="13.6" y="117.9" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.5 130.8)"/>
+        <circle cx="21.1" cy="125.9" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chameleon and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Early-Fusion…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why a shared vocabulary + single loss changes what the model can do.</li>
+<li>Describe how a VQ-VAE tokenizes an image into a discrete sequence compatible with a transformer&#39;s next-token objective.</li>
+<li>Name Chameleon&#39;s training-stability tricks: QK-Norm, dropout placement, LayerNorm ordering.</li>
+<li>Compare Chameleon vs BLIP-2&#39;s Q-Former approach and describe when each is the right choice.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Adapter-based VLMs (LLaVA, BLIP-2, Qwen-VL) treat text and image as two different things. A text token goes through <code>embed(text_token)</code>; an image goes through <code>visual_encoder(image) → projector → ... pseudo_tokens</code>. The model has two input paths that merge partway in.</p>
+<p>Three consequences:</p>
+<ol>
+<li>The LLM can only consume images, not emit them. Output is text only.</li>
+<li>Mixed-modality documents (alternating paragraphs and images, as in an article) are awkward — you either parse the multimodal input outside the model or chain generations.</li>
+<li>Distributional mismatch. Visual tokens and text tokens live in different regions of the hidden space, creating subtle alignment issues.</li>
+</ol>
+<p>Chameleon rejects the premise: images are just sequences of discrete tokens from a shared vocabulary. Train the model on interleaved documents, one loss, one autoregressive decoder, and you unlock mixed-modality generation for free.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="vq-vae-as-image-tokenizer"><a class="anchor" href="#vq-vae-as-image-tokenizer">#</a> VQ-VAE as image tokenizer</h3>
+<p>The tokenizer is a vector-quantized variational autoencoder. The architecture:</p>
+<ul>
+<li>Encoder: CNN + ViT that maps image to a spatial feature map, say 32x32 features of dim 256.</li>
+<li>Codebook: a learned vocabulary of K vectors (Chameleon uses 8192), also dim 256.</li>
+<li>Quantization: for each spatial feature, look up the nearest codebook entry by L2 distance. Replace the continuous feature with the integer index.</li>
+<li>Decoder: CNN that takes quantized features back to pixels.</li>
+</ul>
+<p>Training: VAE reconstruction loss + commitment loss + codebook loss. The codebook indices form a discrete alphabet for images.</p>
+<p>For Chameleon: one image becomes 32*32 = 1024 tokens drawn from a vocabulary of 8192. Concatenate with text tokens (from the LLM&#39;s BPE vocabulary, say 32000). Final vocabulary: 40192. The transformer sees one sequence, one loss.</p>
+<h3 id="the-shared-vocabulary"><a class="anchor" href="#the-shared-vocabulary">#</a> The shared vocabulary</h3>
+<p>Chameleon&#39;s vocabulary combines text tokens, image tokens, and modality separators. Each token has a single ID. The input embedding layer maps every ID to a D-dim hidden vector. The output projection maps hidden back to vocab logits. Softmax picks the next token, whatever modality.</p>
+<p>Separators matter: <code>&lt;image&gt;</code> and <code>&lt;/image&gt;</code> tags bracket the image-token sequence. At generation time, if the model emits <code>&lt;image&gt;</code>, downstream software knows the next 1024 tokens are VQ indices to send to the decoder for pixel rendering.</p>
+<h3 id="mixed-modality-generation"><a class="anchor" href="#mixed-modality-generation">#</a> Mixed-modality generation</h3>
+<p>Inference is next-token prediction in the shared vocabulary. Example prompt: &quot;Draw a cat and describe it.&quot; Chameleon emits:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&lt;image&gt; 4821 1029 2891 ... (1024 image tokens) &lt;/image&gt;
+The cat is orange, sitting on a windowsill...</code></pre>
+      </div>
+    <p>The model picks the order autonomously — it may produce image then text, text then image, or interleave. Same decoder, same loss.</p>
+<p>Compare to adapter VLMs where generation is text-only. Chameleon reopens the question of model output modalities.</p>
+<h3 id="training-stability-qk-norm-dropout-layernorm-ordering"><a class="anchor" href="#training-stability-qk-norm-dropout-layernorm-ordering">#</a> Training stability — QK-Norm, dropout, LayerNorm ordering</h3>
+<p>Early-fusion training is unstable at scale. Chameleon&#39;s paper documents three tricks:</p>
+<ul>
+<li>QK-Norm. Apply LayerNorm to the query and key projections inside attention, before the dot product. Prevents logit magnitude explosion at depth. Used by multiple post-2024 large models.</li>
+<li>Dropout placement. Dropout after every residual-add, not just after attention and MLP. More regularization required when gradients from image tokens can dominate.</li>
+<li>LayerNorm ordering. Pre-LN on the residual branch (standard), plus an extra LN on the skip connection of the last block. Stabilizes final-layer gradient flow.</li>
+</ul>
+<p>Without these tricks, 34B-param Chameleon training diverged at multiple checkpoints. With them, it converges. The training recipe is as much of the contribution as the architecture.</p>
+<h3 id="the-tokenizers-reconstruction-ceiling"><a class="anchor" href="#the-tokenizers-reconstruction-ceiling">#</a> The tokenizer&#39;s reconstruction ceiling</h3>
+<p>VQ-VAE is lossy. At 8192 codebook entries and 1024 tokens per 512x512 image, reconstruction PSNR caps around 26-28 dB. This is enough for recognizable image gen but visibly worse than continuous-space diffusion (Stable Diffusion 3 achieves 32+ dB).</p>
+<p>The tokenizer is the bottleneck. Better tokenizers (MAGVIT-v2, IBQ, SBER-MoVQGAN) lift the ceiling. Emu3 (Lesson 12.12) achieves SDXL-quality generation via a better tokenizer alone.</p>
+<h3 id="chameleon-vs-blip-2-llava"><a class="anchor" href="#chameleon-vs-blip-2-llava">#</a> Chameleon vs BLIP-2 / LLaVA</h3>
+<p>Chameleon (early fusion, shared vocab):</p>
+<ul>
+<li>One loss, one decoder.</li>
+<li>Generates mixed-modality output.</li>
+<li>Tokenizer is the quality ceiling.</li>
+<li>Expensive: VQ-VAE decoder per generated image on inference path.</li>
+</ul>
+<p>BLIP-2 / LLaVA (late fusion, separate towers):</p>
+<ul>
+<li>Vision in, text out only.</li>
+<li>Reuses pretrained LLM.</li>
+<li>No tokenizer bottleneck for understanding.</li>
+<li>Cheap: single forward pass.</li>
+</ul>
+<p>Pick by task. If you need image generation, Chameleon family. If you only need understanding, adapter-VLM is simpler and reuses more pretrained compute.</p>
+<h3 id="fuyu-and-anygpt"><a class="anchor" href="#fuyu-and-anygpt">#</a> Fuyu and AnyGPT</h3>
+<p>Fuyu (Adept, 2023) is a related approach: skip the separate vision encoder entirely, feed raw image patches through the LLM&#39;s input projection as if they were tokens, no tokenizer. Simpler than Chameleon, loses the shared-vocab output generation.</p>
+<p>AnyGPT (Zhan et al., 2024) extends Chameleon to four modalities: text, image, speech, music. Same VQ-VAE trick for each, shared transformer. Any-to-any generation. Covered more in Lesson 12.16.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">vq-codebook</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> builds a toy end-to-end early-fusion model:</p>
+<ul>
+<li>A tiny VQ-VAE-style quantizer that maps 8x8 patches to codebook indices (K=16).</li>
+<li>A shared vocabulary of (text ids 0..31) + (image ids 32..47) + (separators 48, 49).</li>
+<li>A toy autoregressive decoder (bigram table) trained on synthetic captions + image-token sequences.</li>
+<li>Sampling loop that emits alternating text + image tokens given a prompt.</li>
+</ul>
+<p>The code intentionally keeps the transformer tiny (bigrams) so you can trace the signal flow end to end.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-tokenizer-vs-adapter-picker.md</code>. Given a product spec (understand only vs understand + generate, required image quality, cost budget), it picks between Chameleon-family (early fusion) and LLaVA-family (late fusion) and justifies with quantitative rules of thumb.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Chameleon uses K=8192 codebook entries and 1024 tokens per 512x512 image. Estimate the compression ratio vs a 24-bit RGB image. Is it lossy? How lossy?</p>
+</li>
+<li><p>A 4K image (3840x2160) at the same VQ-VAE density produces how many image tokens? Can a Chameleon-style model generate a 4K image in one inference call? What breaks first — context, tokenizer quality, or KV cache?</p>
+</li>
+<li><p>Implement QK-Norm in pure Python. Given a 64-dim query and key, show the dot product before and after LayerNorm. Why is magnitude control important at depth?</p>
+</li>
+<li><p>Read Chameleon Section 2.3 on training stability. Describe the exact failure mode the paper observed at 34B without QK-Norm. What was the &quot;norm explosion&quot; signature?</p>
+</li>
+<li><p>Extend the toy decoder to emit a mixed-modality response given a text-only prompt. Measure how often the model picks image-first vs text-first given training-data distribution 60% text-first / 40% image-first.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Early fusion</td>
+<td>&quot;Unified tokens&quot;</td>
+<td>Images converted to discrete tokens sharing the transformer&#39;s vocabulary from step one</td>
+</tr>
+<tr>
+<td>VQ-VAE</td>
+<td>&quot;Image tokenizer&quot;</td>
+<td>CNN + ViT + codebook that maps images to integer indices the transformer can predict</td>
+</tr>
+<tr>
+<td>Shared vocabulary</td>
+<td>&quot;One dictionary&quot;</td>
+<td>A single token ID space covering text + image + modality separators</td>
+</tr>
+<tr>
+<td>QK-Norm</td>
+<td>&quot;Attention stabilizer&quot;</td>
+<td>LayerNorm applied to query and key before their dot product, prevents norm blowup</td>
+</tr>
+<tr>
+<td>Mixed-modality generation</td>
+<td>&quot;Text + image output&quot;</td>
+<td>Inference that autonomously produces interleaved text and image tokens in one pass</td>
+</tr>
+<tr>
+<td>Codebook size</td>
+<td>&quot;K entries&quot;</td>
+<td>Number of discrete vectors the VQ-VAE can quantize to; trades compression for fidelity</td>
+</tr>
+<tr>
+<td>Tokenizer ceiling</td>
+<td>&quot;Reconstruction limit&quot;</td>
+<td>Best PSNR achievable by decoding VQ tokens; bounds the model&#39;s image quality</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2405.09818">Chameleon Team — Chameleon: Mixed-Modal Early-Fusion Foundation Models (arXiv:2405.09818)</a></li>
+<li><a href="https://arxiv.org/abs/2201.07520">Aghajanyan et al. — CM3 (arXiv:2201.07520)</a></li>
+<li><a href="https://arxiv.org/abs/2309.02591">Yu et al. — CM3Leon (arXiv:2309.02591)</a></li>
+<li><a href="https://arxiv.org/abs/2402.12226">Zhan et al. — AnyGPT (arXiv:2402.12226)</a></li>
+<li><a href="https://www.adept.ai/blog/fuyu-8b">Adept — Fuyu-8B blog (adept.ai)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-internvl3-native-multimodal.html"><span>← Previous</span><b>internvl3 native multimodal</b></a>
+      <a class="next" href="./12-emu3-next-token-for-generation.html"><span>Next →</span><b>emu3 next token for generation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

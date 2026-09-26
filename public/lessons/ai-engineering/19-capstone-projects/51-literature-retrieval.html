@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Literature Retrieval — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/51-literature-retrieval/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-two-retrieval-passes">Why two retrieval passes</a></li><li><a href="#the-paper-shape">The Paper shape</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#bm25-from-scratch">BM25 from scratch</a></li><li><a href="#citation-graph-traversal">Citation graph traversal</a></li><li><a href="#dedup-and-ranking">Dedup and ranking</a></li><li><a href="#mock-corpus">Mock corpus</a></li><li><a href="#what-lessons-52-and-53-read">What lessons 52 and 53 read</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#where-this-slots-in">Where this slots in</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Literature Retrieval</h1>
+    <p class="lesson-sub">A hypothesis is cheap. Knowing whether someone already proved it is the expensive part. Build the retrieval layer that answers that question before the runner spins up a sandbox.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track A lessons 20-29</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 51">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="44.0" y="45.2" width="34.1" height="34.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(244 61.0 62.2)"/>
+        <rect x="39.2" y="40.9" width="32.8" height="32.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(226 55.6 57.3)"/>
+        <rect x="34.4" y="36.6" width="31.5" height="31.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.2 52.4)"/>
+        <rect x="29.7" y="32.3" width="30.2" height="30.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(191 44.8 47.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">51</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Literature Retrieval</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Model a small paper record with the fields the loop will read downstream.</li>
+<li>Build a BM25 index over abstracts with stdlib data structures only.</li>
+<li>Walk a citation graph to surface papers the lexical search missed.</li>
+<li>Deduplicate hits across the lexical and graph passes by stable paper id.</li>
+<li>Wrap two mock external APIs behind a single client so the upstream call site stays the same when real endpoints land.</li>
+</ul>
+<h2 id="why-two-retrieval-passes"><a class="anchor" href="#why-two-retrieval-passes">#</a> Why two retrieval passes</h2>
+<p>A keyword search over abstracts returns papers that share vocabulary with the query. That covers most of the surface. It misses two cases. The first is when the foundational paper uses different vocabulary; for example a query for &quot;sparse attention&quot; misses a paper titled &quot;block selection in transformer routing.&quot; The second is when the relevant paper is a follow up that cites a known anchor; it is more efficient to find the anchor and walk forward than to brute force the abstract pool.</p>
+<p>The lesson builds both passes. BM25 over abstracts catches the lexical hits. A citation graph traversal expands a seed set forward and backward by one or two hops. The union is deduplicated by paper id and ranked by a small combined score.</p>
+<h2 id="the-paper-shape"><a class="anchor" href="#the-paper-shape">#</a> The Paper shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">Paper
+  id          : str           (stable identifier, &quot;p001&quot; for the mock corpus)
+  title       : str
+  abstract    : str
+  year        : int
+  authors     : list[str]
+  references  : list[str]     (paper ids this paper cites)
+  citations   : list[str]     (paper ids that cite this paper)
+  source      : str           (which mock api supplied it, &quot;arxiv&quot; or &quot;s2&quot;)</code></pre>
+      </div>
+    <p>The references and citations fields form the directed citation graph. The two mock APIs return overlapping but not identical fields, so the corpus loader unions them on <code>id</code>.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-citation-hops</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    Q[query string] --&gt; A[arxiv mock client]
+    Q --&gt; S[semantic scholar mock client]
+    A --&gt; L[load corpus]
+    S --&gt; L
+    L --&gt; B[bm25 index]
+    L --&gt; G[citation graph]
+    Q --&gt; B
+    B --&gt; R1[lexical hits]
+    R1 --&gt; H[expand hops 1 to 2]
+    G --&gt; H
+    H --&gt; R2[graph hits]
+    R1 --&gt; M[merge and dedup]
+    R2 --&gt; M
+    M --&gt; O[ranked paper list]</pre></div><p>The retrieval client owns both passes and the merge. The caller hands it a query and gets back a ranked list where each entry carries per paper score fields (<code>bm25_score</code>, <code>graph_distance</code>, <code>recency_score</code>, <code>final_score</code>) that explain the ranking.</p>
+<h2 id="bm25-from-scratch"><a class="anchor" href="#bm25-from-scratch">#</a> BM25 from scratch</h2>
+<p>The implementation is the standard Okapi BM25 with default parameters <code>k1=1.5</code>, <code>b=0.75</code>. The index is two dictionaries: <code>term -&gt; doc_frequency</code> and <code>term -&gt; list of (doc_id, term_count)</code>. The document length is the token count of the abstract. The average document length is computed once at index build time. Scoring a query is a sum over query terms of <code>idf * tf_norm</code> where <code>tf_norm</code> is the standard BM25 length normalised term frequency.</p>
+<p>The tokeniser is <code>lower</code> then split on non alphanumeric. It is not stemmed. A production system would swap in a small stemmer. The interface stays the same.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">idf(t)      = log((N - df + 0.5) / (df + 0.5) + 1.0)
+tf_norm(t)  = (f * (k1 + 1)) / (f + k1 * (1 - b + b * dl / avgdl))
+score(d, q) = sum over t in q of idf(t) * tf_norm(t)</code></pre>
+      </div>
+    <h2 id="citation-graph-traversal"><a class="anchor" href="#citation-graph-traversal">#</a> Citation graph traversal</h2>
+<p>The graph is built once from the corpus. Forward edges go from a paper to its references. Backward edges go from a paper to its citations. The traversal is a breadth first search seeded by the top BM25 hits, capped at two hops.</p>
+<p>Two hops is a deliberate ceiling. One hop is too shallow; the agent often wants the immediate ancestor or descendant. Three hops blows up the result size on a connected graph and tends to drift off topic. The lesson exposes the hop limit as a config knob so a downstream loop can tighten it.</p>
+<h2 id="dedup-and-ranking"><a class="anchor" href="#dedup-and-ranking">#</a> Dedup and ranking</h2>
+<p>The two passes return overlapping sets. The merge keys on paper id. For each paper the final score is a weighted blend.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">final_score = w_bm25 * bm25_score_norm
+            + w_graph * graph_score
+            + w_recency * recency_score</code></pre>
+      </div>
+    <p><code>bm25_score_norm</code> is the BM25 score divided by the maximum BM25 score in the merged set (so the field lives in zero to one). <code>graph_score</code> is one for direct lexical hits, then <code>0.6</code> for one hop, <code>0.3</code> for two hops, zero otherwise. <code>recency_score</code> is a linear ramp from zero at the corpus minimum year to one at the maximum.</p>
+<p>Default weights are <code>0.5</code>, <code>0.3</code>, <code>0.2</code>. The weights are config; a stale topic might tune recency down while a fast moving topic raises it.</p>
+<h2 id="mock-corpus"><a class="anchor" href="#mock-corpus">#</a> Mock corpus</h2>
+<p>The corpus is one hundred papers, generated by <code>build_corpus()</code>. Each paper has a hand written title and abstract on one of five topics: attention sparsity, retrieval augmentation, low rank adapters, dataset distillation, and evaluation harnesses. References and citations are wired so each topic forms a connected sub graph with a few cross topic edges.</p>
+<p>The two mock API clients (<code>ArxivMockClient</code>, <code>SemanticScholarMockClient</code>) read from the same corpus but expose different fields. Arxiv returns title, abstract, year, authors. Semantic Scholar adds references and citations. The retrieval client unions on id; cross client field disagreement handling is deferred to a follow up lesson.</p>
+<h2 id="what-lessons-52-and-53-read"><a class="anchor" href="#what-lessons-52-and-53-read">#</a> What lessons 52 and 53 read</h2>
+<p>The runner in lesson fifty-two reads <code>paper.id</code>, <code>paper.title</code>, and the top three sentences of the abstract as context for the experiment. The evaluator in lesson fifty-three reads <code>paper.year</code> and <code>paper.references</code> to attribute a baseline to a specific paper.</p>
+<p>The retrieval client returns a <code>RetrievalResult</code> with both the ranked list and the per query metrics: hit count, average score, top score, total wall time. The runner logs these so a downstream observability pass can plot quality over time.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>Paper</code>, <code>ArxivMockClient</code>, <code>SemanticScholarMockClient</code>, <code>BM25Index</code>, <code>CitationGraph</code>, <code>RetrievalClient</code>, and a deterministic demo. The mock clients and the corpus are in the same file so the lesson stays portable. The BM25 implementation is one class, sixty lines. The graph traversal is one method.</p>
+<p><code>code/tests/test_retrieval.py</code> covers the lexical path, the graph path, the merge, the dedup, and the empty query.</p>
+<h2 id="where-this-slots-in"><a class="anchor" href="#where-this-slots-in">#</a> Where this slots in</h2>
+<p>Lesson fifty produces a hypothesis. Lesson fifty-one searches the literature to see whether that hypothesis is already settled. Lesson fifty-two runs the experiment if it is not. Lesson fifty-three reads both the retrieval result and the experiment metrics to write the verdict. The retrieval client is the cheapest of the four stages and runs first in the orchestrator.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./50-hypothesis-generator.html"><span>← Previous</span><b>hypothesis generator</b></a>
+      <a class="next" href="./52-experiment-runner.html"><span>Next →</span><b>experiment runner</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

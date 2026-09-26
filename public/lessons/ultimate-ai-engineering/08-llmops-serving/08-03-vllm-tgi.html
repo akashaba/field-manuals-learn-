@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>08.03 — vLLM / TGI (Self-Hosted Inference Engines in Production) — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/08.%20LLMOps%20%26%20Serving/08-03-vllm-tgi.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMOps &amp; Serving</div>
+    <ol class="toc"><li><a href="#1-engine-landscape">1. Engine Landscape</a></li><li><a href="#2-vllm-architecture-operators-view">2. vLLM Architecture (Operator&#39;s View)</a></li><li><a href="#3-sizing-from-gpu-memory-to-concurrency">3. Sizing: From GPU Memory to Concurrency</a></li><li><a href="#4-configuration-reference-long-standing-flags-verify-on-your-version">4. Configuration Reference (long-standing flags; verify on your version)</a></li><li><a href="#5-benchmarking-and-tuning-workflow">5. Benchmarking and Tuning Workflow</a></li><li><a href="#6-kubernetes-deployment">6. Kubernetes Deployment</a></li><li><a href="#7-migrating-from-tgi-to-vllm">7. Migrating from TGI to vLLM</a></li><li><a href="#8-upgrades-and-operations">8. Upgrades and Operations</a></li><li><a href="#9-production-challenges-how-to-solve-them">9. Production Challenges &amp; How to Solve Them</a></li><li><a href="#10-hands-on-projects">10. Hands-On Projects</a></li><li><a href="#11-papers-reading-exact-titles">11. Papers &amp; Reading (exact titles)</a></li><li><a href="#12-essential-tooling">12. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · LLMOps &amp; Serving</div>
+    <h1 class="lesson-title">08.03 — vLLM / TGI (Self-Hosted Inference Engines in Production)</h1>
+    <p class="lesson-sub">**Module 8: LLMOps &amp; Serving** · Subtopic 3 of 5</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — LLMOps &amp; Serving 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="114.2" cy="110.5" r="10.3" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.8" cy="105.6" r="9.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.4" cy="100.7" r="9.0" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="97.9" cy="95.7" r="8.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.8,95.5 L92.5,83.8 L100.3,95.5 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.0,90.2 L87.1,79.5 L94.2,90.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMOPS &amp; SERVING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">08.03 — vLLM / TGI</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(Self-Hosted…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 01.01 §3.2 (KV-cache sizing), <strong>01.02 (required: prefill/decode, PagedAttention, continuous batching, chunked prefill, speculative decoding, parallelism)</strong>, 08.01–08.02, Kubernetes, Prometheus.
+<strong>Outcome:</strong> you can deploy, size, tune, observe, autoscale, and upgrade a production inference engine on Kubernetes; migrate off Hugging Face TGI; and decide between vLLM, SGLang, TensorRT-LLM, and local engines with measured evidence.</p>
+</blockquote>
+<blockquote>
+<p><strong>Status check (September 2026) — read first.</strong></p>
+<ul>
+<li><strong>Hugging Face TGI is in maintenance mode.</strong> The TGI docs state: <em>&quot;text-generation-inference is now in maintenance mode. Going forward, we will accept pull requests for minor bug fixes, documentation improvements and lightweight maintenance tasks.&quot;</em> Hugging Face recommends <strong>vLLM</strong> and <strong>SGLang</strong> (plus llama.cpp and MLX for local use). This subtopic therefore covers TGI mainly as a <strong>migration source</strong>.</li>
+<li><strong>vLLM</strong> moves fast. Its latest release at the time of writing is <strong>v0.30.0 (Sep 22, 2026)</strong>, with a new model-runner generation now the default. Flags, defaults, and metric names change between releases, so <strong>pin versions and read the release notes</strong> before upgrading. The flags below are long-standing ones; verify them with <code>vllm serve --help</code> on your pinned version.</li>
+</ul>
+</blockquote>
+<hr>
+<h2 id="1-engine-landscape"><a class="anchor" href="#1-engine-landscape">#</a> 1. Engine Landscape</h2>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Strengths</th>
+<th>Consider when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>vLLM</strong></td>
+<td>Broadest model and hardware support, PagedAttention, continuous batching, prefix caching, speculative decoding, structured outputs, multi-LoRA, OpenAI-compatible server, large ecosystem (production-stack, llm-d, KServe)</td>
+<td>The default choice for most self-hosted serving</td>
+</tr>
+<tr>
+<td><strong>SGLang</strong></td>
+<td>RadixAttention prefix reuse, fast structured generation, strong multi-turn and agentic throughput</td>
+<td>Heavy prefix sharing, structured outputs, agent workloads</td>
+</tr>
+<tr>
+<td><strong>TensorRT-LLM</strong> (+ Triton / NVIDIA NIM)</td>
+<td>Peak NVIDIA performance, FP8/FP4 kernels, in-flight batching</td>
+<td>Maximum throughput on NVIDIA, with engine-build workflows</td>
+</tr>
+<tr>
+<td><strong>llama.cpp / Ollama / MLX</strong></td>
+<td>CPU, Apple silicon, edge, GGUF quantization</td>
+<td>Local, edge, and developer machines</td>
+</tr>
+<tr>
+<td><strong>TGI</strong></td>
+<td>Mature HF integration (historical)</td>
+<td><strong>Maintenance mode</strong> — migrate to vLLM or SGLang</td>
+</tr>
+</tbody></table>
+<p><strong>Decide with a bake-off on your workload</strong> (Project 3 of 01.02; §5 below). Rankings flip with model architecture, prompt/output lengths, prefix sharing, quantization, and GPU generation.</p>
+<hr>
+<h2 id="2-vllm-architecture-operators-view"><a class="anchor" href="#2-vllm-architecture-operators-view">#</a> 2. vLLM Architecture (Operator&#39;s View)</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> clients ─► OpenAI-compatible API server (FastAPI; /v1/chat/completions, /v1/completions, /v1/embeddings, /health, /metrics)
+              │  tokenisation, chat templates, tool/reasoning parsers, structured-output grammar compilation
+              ▼
+          ENGINE CORE (separate process) ── scheduler: continuous batching, chunked prefill, token budget,
+              │                              preemption, priorities; KV cache manager: paged blocks,
+              │                              prefix-cache hashing, optional offload tiers
+              ▼
+          WORKERS / model runners (one per GPU; TP/PP/DP/EP groups) ── CUDA graphs, attention backends,
+                                                                        quantized kernels, spec-decode drafts</code></pre>
+      </div>
+    <p><strong>Key operational facts:</strong></p>
+<ul>
+<li><strong>Startup is slow:</strong> weight download, loading, CUDA-graph capture, and grammar and kernel warm-up take minutes for large models. Pre-cache the weights (a PVC or a node-local cache) and set generous startup probes.</li>
+<li><strong>Memory is pre-allocated:</strong> <code>--gpu-memory-utilization</code> reserves a fraction of the GPU. What remains after weights and activations becomes the <strong>KV-cache pool</strong>, which determines concurrency.</li>
+<li><strong>The OpenAI-compatible API</strong> lets your gateway (08.01) treat self-hosted models like any provider.</li>
+</ul>
+<hr>
+<h2 id="3-sizing-from-gpu-memory-to-concurrency"><a class="anchor" href="#3-sizing-from-gpu-memory-to-concurrency">#</a> 3. Sizing: From GPU Memory to Concurrency</h2>
+<p>$$
+M_{\text{KV}} \approx u \cdot M_{\text{GPU}} \cdot N_{\text{TP}} - M_{\text{weights}} - M_{\text{activations+graphs}},
+\qquad
+\text{KV tokens} = \frac{M_{\text{KV}}}{2 \cdot L \cdot n_{kv} \cdot d_h \cdot b_{\text{kv}}}
+$$</p>
+<p>$$
+\text{max concurrent sequences} \approx \frac{\text{KV tokens}}{\bar T_{\text{context}}}
+$$</p>
+<p>Here $u$ is <code>--gpu-memory-utilization</code> and $b_{\text{kv}}$ the bytes per KV element (2 for bf16, 1 for an FP8 KV cache). The per-token KV formula comes from 01.01 §3.2.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+
+def vllm_capacity(gpu_mem_gb: float, tp: int, util: float, weights_gb: float, layers: int, kv_heads: int,
+                  head_dim: int, kv_bytes: int = 2, activation_overhead_gb_per_gpu: float = 2.0,
+                  block_size: int = 16, avg_context_tokens: int = 4000) -&gt; dict:
+    usable = util * gpu_mem_gb * tp - weights_gb - activation_overhead_gb_per_gpu * tp
+    if usable &lt;= 0:
+        return {&quot;fits&quot;: False, &quot;reason&quot;: &quot;weights + overhead exceed the memory budget&quot;}
+    per_token = 2 * layers * kv_heads * head_dim * kv_bytes
+    kv_tokens = int(usable * 1e9 // per_token)
+    return {&quot;fits&quot;: True, &quot;kv_cache_gb&quot;: round(usable, 1), &quot;kv_bytes_per_token&quot;: per_token,
+            &quot;kv_tokens&quot;: kv_tokens, &quot;kv_blocks&quot;: kv_tokens // block_size,
+            &quot;max_concurrent_at_avg_ctx&quot;: kv_tokens // avg_context_tokens}</code></pre>
+      </div>
+    <p><em>Example:</em> a 70B-class GQA model (L = 80, 8 KV heads, d_h = 128) in FP8 weights (~70 GB) on 2 × 80 GB GPUs at u = 0.9 leaves ≈ 70 GB of KV after overhead. That is ≈ 214k tokens in bf16 KV, or ≈ 428k with an FP8 KV cache — about 53 vs 107 concurrent 4k-token conversations. <strong>KV dtype and GQA dominate concurrency.</strong></p>
+<hr>
+<h2 id="4-configuration-reference-long-standing-flags-verify-on-your-version"><a class="anchor" href="#4-configuration-reference-long-standing-flags-verify-on-your-version">#</a> 4. Configuration Reference (long-standing flags; verify on your version)</h2>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">vllm serve meta-llama/Llama-3.3-70B-Instruct \
+  --served-model-name legis-70b \
+  --tensor-parallel-size 2 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.90 \
+  --max-num-seqs 128 \
+  --max-num-batched-tokens 8192 \
+  --kv-cache-dtype fp8 \
+  --enable-prefix-caching \
+  --enable-lora --max-loras 4 --max-lora-rank 32 \
+  --lora-modules fiscal=/models/lora/fiscal drafting=/models/lora/drafting \
+  --api-key &quot;$VLLM_API_KEY&quot;</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Controls</th>
+<th>Tuning guidance</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--tensor-parallel-size</code> / <code>--pipeline-parallel-size</code> / <code>--data-parallel-size</code></td>
+<td>Parallelism (01.02 §8)</td>
+<td>Smallest TP that fits weights + enough KV; scale out with replicas or DP</td>
+</tr>
+<tr>
+<td><code>--max-model-len</code></td>
+<td>Maximum context</td>
+<td>Don&#39;t set higher than needed: it bounds the worst-case KV per sequence</td>
+</tr>
+<tr>
+<td><code>--gpu-memory-utilization</code></td>
+<td>Pre-allocated GPU fraction</td>
+<td>0.85–0.95; leave headroom for spikes and other processes</td>
+</tr>
+<tr>
+<td><code>--max-num-seqs</code></td>
+<td>Maximum concurrent sequences</td>
+<td>Higher → throughput ↑, ITL ↑; tune against the SLO</td>
+</tr>
+<tr>
+<td><code>--max-num-batched-tokens</code></td>
+<td>Per-step token budget (chunked prefill)</td>
+<td>Lower → smoother ITL, slower TTFT for long prompts; higher → the reverse</td>
+</tr>
+<tr>
+<td><code>--enable-prefix-caching</code></td>
+<td>KV reuse across requests (a default in recent versions)</td>
+<td>Essential for chat and agents; keep prompt prefixes stable (02.02 §6.2)</td>
+</tr>
+<tr>
+<td><code>--kv-cache-dtype fp8</code></td>
+<td>KV precision</td>
+<td>~2× concurrency; validate quality on long-context evals (08.04)</td>
+</tr>
+<tr>
+<td><code>--quantization</code></td>
+<td>Weight quantization method (often auto-detected from the checkpoint)</td>
+<td>Use pre-quantized checkpoints (08.04)</td>
+</tr>
+<tr>
+<td><code>--speculative-config &#39;{...}&#39;</code></td>
+<td>Speculative decoding (draft model, n-gram, EAGLE-style, MTP)</td>
+<td>Helps at low batch; measure at your production concurrency (01.02 §5)</td>
+</tr>
+<tr>
+<td><code>--enable-lora</code>, <code>--max-loras</code>, <code>--lora-modules</code></td>
+<td>Multi-adapter serving</td>
+<td>Many adapters on one base model; watch the adapter-swap overhead</td>
+</tr>
+<tr>
+<td>Structured-output backend options</td>
+<td>Grammar engine (XGrammar/llguidance/…)</td>
+<td>Pre-warm common schemas (02.04 §7)</td>
+</tr>
+</tbody></table>
+<p>Recent releases add <strong>admission-control</strong> options (e.g. caps on queued requests or tokens) and other scale-out features. Check the release notes for the version you pin.</p>
+<hr>
+<h2 id="5-benchmarking-and-tuning-workflow"><a class="anchor" href="#5-benchmarking-and-tuning-workflow">#</a> 5. Benchmarking and Tuning Workflow</h2>
+<ol>
+<li><strong>Workload model:</strong> the prompt- and output-length distributions from production traces (06.04), the prefix-sharing ratio, and the arrival pattern (Poisson + peaks).</li>
+<li><strong>Benchmark tools:</strong> vLLM&#39;s built-in serving benchmark (<code>vllm bench serve</code> in recent versions), or your 01.02 §9 load tester against the OpenAI endpoint.</li>
+<li><strong>Find the max QPS at the SLO:</strong> binary-search the offered load for each configuration.</li>
+<li><strong>Sweep:</strong> <code>max-num-seqs</code>, <code>max-num-batched-tokens</code>, KV dtype, speculative decoding on/off, TP degree, and quantized vs bf16 weights.</li>
+<li><strong>Quality gate:</strong> every config change affecting numerics (quantization, KV dtype, spec-decode variants) passes the eval suite (06.01).</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def max_qps_at_slo(measure, slo: dict, lo: float = 0.1, hi: float = 100.0, iters: int = 12) -&gt; dict:
+    &quot;&quot;&quot;measure(qps) -&gt; {&#39;p99_ttft_s&#39;, &#39;p99_itl_s&#39;, &#39;error_rate&#39;} from a load-test run. Binary search the offered load.&quot;&quot;&quot;
+    def ok(m):
+        return (m[&quot;p99_ttft_s&quot;] &lt;= slo[&quot;p99_ttft_s&quot;] and m[&quot;p99_itl_s&quot;] &lt;= slo[&quot;p99_itl_s&quot;]
+                and m[&quot;error_rate&quot;] &lt;= slo.get(&quot;error_rate&quot;, 0.001))
+    best = None
+    for _ in range(iters):
+        mid = (lo + hi) / 2
+        m = measure(mid)
+        if ok(m):
+            best, lo = (mid, m), mid
+        else:
+            hi = mid
+    return {&quot;max_qps&quot;: round(best[0], 2) if best else 0.0, &quot;at&quot;: best[1] if best else None}</code></pre>
+      </div>
+    <hr>
+<h2 id="6-kubernetes-deployment"><a class="anchor" href="#6-kubernetes-deployment">#</a> 6. Kubernetes Deployment</h2>
+<h3 id="61-deployment-essentials"><a class="anchor" href="#61-deployment-essentials">#</a> 6.1 Deployment essentials</h3>
+
+      <div class="codeblock" data-lang="yaml">
+        <span class="cb-label">yaml</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-yaml hljs">apiVersion: apps/v1
+kind: Deployment
+metadata: { name: vllm-legis-70b, labels: { app: vllm, model: legis-70b } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: vllm, model: legis-70b } }
+  template:
+    metadata: { labels: { app: vllm, model: legis-70b } }
+    spec:
+      nodeSelector: { gpu.class: h100 }
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.30.0          # PIN the version
+          args: [&quot;meta-llama/Llama-3.3-70B-Instruct&quot;, &quot;--served-model-name&quot;, &quot;legis-70b&quot;,
+                 &quot;--tensor-parallel-size&quot;, &quot;2&quot;, &quot;--max-model-len&quot;, &quot;32768&quot;,
+                 &quot;--gpu-memory-utilization&quot;, &quot;0.90&quot;, &quot;--kv-cache-dtype&quot;, &quot;fp8&quot;]
+          env:
+            - { name: HF_HOME, value: /models/hf }
+            - { name: VLLM_API_KEY, valueFrom: { secretKeyRef: { name: vllm-secrets, key: api-key } } }
+          ports: [{ containerPort: 8000 }]
+          resources: { limits: { nvidia.com/gpu: &quot;2&quot; } }
+          startupProbe:   { httpGet: { path: /health, port: 8000 }, periodSeconds: 10, failureThreshold: 90 }
+          readinessProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 5 }
+          livenessProbe:  { httpGet: { path: /health, port: 8000 }, periodSeconds: 15, failureThreshold: 4 }
+          volumeMounts:
+            - { name: model-cache, mountPath: /models }
+            - { name: shm, mountPath: /dev/shm }
+      volumes:
+        - { name: model-cache, persistentVolumeClaim: { claimName: model-cache-rwx } }
+        - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }</code></pre>
+      </div>
+    <h3 id="62-routing-and-autoscaling"><a class="anchor" href="#62-routing-and-autoscaling">#</a> 6.2 Routing and autoscaling</h3>
+<ul>
+<li><strong>Load balancing:</strong> round-robin wastes prefix caches. Use <strong>prefix- or session-aware routing</strong> so that conversations and shared prefixes hit the replica holding their KV. vLLM&#39;s production-stack router, llm-d&#39;s inference scheduler (Gateway API Inference Extension), and KServe integrations all provide this.</li>
+<li><strong>Autoscale on the queue, not the CPU:</strong> use KEDA or HPA on <code>vllm:num_requests_waiting</code> (or on KV-cache usage) via Prometheus. GPU pods take minutes to become ready, so keep a <strong>warm minimum</strong> and scale ahead of known peaks (session calendars; 08.05).</li>
+<li><strong>Disaggregated prefill/decode</strong> (01.02 §3.4) and KV offload tiers are available through llm-d, production-stack, and vLLM&#39;s KV connectors. Adopt them when long prompts cause ITL interference at scale.</li>
+</ul>
+
+      <div class="codeblock" data-lang="yaml">
+        <span class="cb-label">yaml</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-yaml hljs">apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata: { name: vllm-legis-70b }
+spec:
+  scaleTargetRef: { name: vllm-legis-70b }
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  cooldownPeriod: 600
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(vllm:num_requests_waiting{model_name=&quot;legis-70b&quot;})
+        threshold: &quot;8&quot;</code></pre>
+      </div>
+    <h3 id="63-observability"><a class="anchor" href="#63-observability">#</a> 6.3 Observability</h3>
+<p>vLLM exposes Prometheus metrics at <code>/metrics</code>. Common series include:</p>
+<ul>
+<li>running and waiting requests;</li>
+<li>KV-cache usage;</li>
+<li>prefix-cache queries and hits;</li>
+<li>the TTFT, inter-token-latency, and E2E histograms;</li>
+<li>prompt and generation token counters;</li>
+<li>preemptions.</li>
+</ul>
+<p><strong>Metric names have changed between engine generations</strong>, so build the dashboards from your pinned version&#39;s <code>/metrics</code> output. Alert on the waiting-queue depth, KV usage &gt; 90% with preemptions, TTFT P95, and error rates. Correlate them with gateway traces (06.04).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def parse_prom(text: str) -&gt; dict[str, float]:
+    &quot;&quot;&quot;Minimal Prometheus text parser: sums samples per metric name (ignores labels).&quot;&quot;&quot;
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        if not line or line.startswith(&quot;#&quot;):
+            continue
+        name_labels, _, value = line.rpartition(&quot; &quot;)
+        name = name_labels.split(&quot;{&quot;, 1)[0]
+        try:
+            out[name] = out.get(name, 0.0) + float(value)
+        except ValueError:
+            continue
+    return out
+
+
+def engine_health(metrics: dict[str, float], waiting_key=&quot;vllm:num_requests_waiting&quot;,
+                  kv_key=&quot;vllm:kv_cache_usage_perc&quot;, preempt_key=&quot;vllm:num_preemptions_total&quot;) -&gt; list[str]:
+    alerts = []
+    if metrics.get(waiting_key, 0) &gt; 8:
+        alerts.append(&quot;queue building: scale out or shed load&quot;)
+    if metrics.get(kv_key, 0) &gt; 0.9:
+        alerts.append(&quot;KV cache &gt; 90%: expect preemptions; reduce max-num-seqs/max-model-len or add capacity&quot;)
+    if metrics.get(preempt_key, 0) &gt; 0:
+        alerts.append(&quot;preemptions observed&quot;)
+    return alerts</code></pre>
+      </div>
+    <hr>
+<h2 id="7-migrating-from-tgi-to-vllm"><a class="anchor" href="#7-migrating-from-tgi-to-vllm">#</a> 7. Migrating from TGI to vLLM</h2>
+<table>
+<thead>
+<tr>
+<th>TGI concept / flag</th>
+<th>vLLM equivalent (approximate)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--model-id</code></td>
+<td>positional model argument</td>
+<td>Same HF model IDs</td>
+</tr>
+<tr>
+<td><code>--num-shard</code></td>
+<td><code>--tensor-parallel-size</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--max-input-tokens</code> / <code>--max-total-tokens</code></td>
+<td><code>--max-model-len</code> (total context)</td>
+<td>vLLM bounds the total; validate input limits at the gateway</td>
+</tr>
+<tr>
+<td><code>--max-concurrent-requests</code></td>
+<td><code>--max-num-seqs</code> (+ gateway rate limits)</td>
+<td>Semantics differ: vLLM queues beyond the running set</td>
+</tr>
+<tr>
+<td><code>--max-batch-prefill-tokens</code></td>
+<td><code>--max-num-batched-tokens</code></td>
+<td>Chunked-prefill token budget</td>
+</tr>
+<tr>
+<td><code>--quantize</code></td>
+<td><code>--quantization</code> (or auto from the checkpoint)</td>
+<td>Prefer pre-quantized checkpoints</td>
+</tr>
+<tr>
+<td>Messages API (<code>/v1/chat/completions</code>)</td>
+<td>OpenAI-compatible server</td>
+<td>Check tool-call and reasoning parser settings per model family</td>
+</tr>
+<tr>
+<td>Grammar / JSON guidance</td>
+<td>Structured outputs (JSON Schema, regex, grammar)</td>
+<td>Re-test schemas (02.03 Project 2)</td>
+</tr>
+<tr>
+<td><code>/metrics</code></td>
+<td><code>/metrics</code> (different names)</td>
+<td>Rebuild the dashboards and alerts</td>
+</tr>
+</tbody></table>
+<p><strong>Migration plan:</strong></p>
+<ol>
+<li>Inventory the models, flags, and client features in use (streaming, tools, grammars, LoRA).</li>
+<li>Stand up vLLM in <strong>shadow</strong> (08.05), mirror the traffic, and diff the outputs and latencies.</li>
+<li>Run the quality evals (06.01) and the structured-output conformance suite.</li>
+<li>Canary through the gateway (08.01), then ramp.</li>
+<li>Decommission TGI, keeping a rollback window.</li>
+</ol>
+<hr>
+<h2 id="8-upgrades-and-operations"><a class="anchor" href="#8-upgrades-and-operations">#</a> 8. Upgrades and Operations</h2>
+<ul>
+<li><strong>Pin</strong> the image tag (<code>vllm/vllm-openai:vX.Y.Z</code>), the model revision, and the tokenizer and chat template (01.03 §8).</li>
+<li><strong>Upgrade like a model change:</strong> performance benchmarks + quality evals + structured-output tests + canary. Defaults change (schedulers, attention backends, prefix caching), so re-tune after upgrading.</li>
+<li><strong>Multi-LoRA hygiene:</strong> version the adapters, and load and unload them via the API or configuration with evals per adapter.</li>
+<li><strong>Sleep and wake</strong> (a supported feature) frees GPU memory between bursts or RL phases on shared clusters. Measure the wake latency before relying on it for serving.</li>
+<li><strong>Security:</strong> API keys or mTLS in front of the engine, no public exposure, and network policies (07.02 §7).</li>
+</ul>
+<hr>
+<h2 id="9-production-challenges-how-to-solve-them"><a class="anchor" href="#9-production-challenges-how-to-solve-them">#</a> 9. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>OOM at startup</strong></td>
+<td>CrashLoop on load</td>
+<td>Lower <code>--max-model-len</code> or <code>--gpu-memory-utilization</code>; FP8 weights/KV; more TP</td>
+</tr>
+<tr>
+<td><strong>Preemption storms</strong></td>
+<td>ITL spikes, throughput collapse under load</td>
+<td>Capacity via <code>vllm_capacity</code>; lower <code>max-num-seqs</code>; FP8 KV; admission control at the gateway</td>
+</tr>
+<tr>
+<td><strong>Poor prefix-cache hit rate</strong></td>
+<td>High TTFT despite repeated prompts</td>
+<td>Stable prefixes (02.02 §6.2); prefix-aware routing across replicas</td>
+</tr>
+<tr>
+<td><strong>Slow scale-up</strong></td>
+<td>Queues grow for minutes during spikes</td>
+<td>Warm minimum; predictive scaling; pre-cached weights; a smaller fallback model via the gateway</td>
+</tr>
+<tr>
+<td><strong>Upgrade regressions</strong></td>
+<td>Latency or quality changes after a version bump</td>
+<td>Pinned versions; benchmark + eval gates; canary</td>
+</tr>
+<tr>
+<td><strong>Tool-call / reasoning parsing issues</strong></td>
+<td>Broken tool calls from open models</td>
+<td>Correct per-family parser flags and chat templates; contract tests</td>
+</tr>
+<tr>
+<td><strong>TGI end-of-life risk</strong></td>
+<td>No new features or models</td>
+<td>Migrate per §7</td>
+</tr>
+<tr>
+<td><strong>Opaque performance</strong></td>
+<td>Can&#39;t explain latency</td>
+<td>Engine metrics + gateway traces + Nsight for deep dives</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="10-hands-on-projects"><a class="anchor" href="#10-hands-on-projects">#</a> 10. Hands-On Projects</h2>
+<h3 id="project-1-production-vllm-on-kubernetes-with-queue-based-autoscaling"><a class="anchor" href="#project-1-production-vllm-on-kubernetes-with-queue-based-autoscaling">#</a> Project 1 — Production vLLM on Kubernetes with Queue-Based Autoscaling</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a platform engineer</em>, I want a self-hosted model endpoint for the legislative assistant that meets P95 TTFT &lt; 1 s and P95 ITL &lt; 60 ms at peak, scales with demand, and survives node loss.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Sizing with <code>vllm_capacity</code> for the chosen model and GPUs, validated against the engine&#39;s reported KV capacity (within ±10%).</li>
+<li>A pinned-version Deployment (§6.1) with pre-cached weights, startup/readiness probes, network policies, API-key auth, and PodDisruptionBudgets.</li>
+<li>Prefix-aware routing (production-stack router or llm-d), and KEDA autoscaling on the waiting queue with a warm minimum. Scale-up time measured.</li>
+<li>Dashboards and alerts from <code>/metrics</code>; <code>engine_health</code>-style rules; traces from the gateway.</li>
+<li>A load test at 1.5× the forecast peak with a node-kill chaos test: SLO adherence, preemptions, and recovery time reported.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Choose the model and quantization (08.04); compute the capacity; pick the TP degree.</li>
+<li>Build the manifests and deploy to a GPU node pool; pre-populate the model cache.</li>
+<li>Deploy the router and KEDA; configure the Prometheus scraping.</li>
+<li>Tune <code>max-num-seqs</code> and <code>max-num-batched-tokens</code> with <code>max_qps_at_slo</code> sweeps.</li>
+<li>Run the load and chaos tests; document the runbook.</li>
+</ol>
+<hr>
+<h3 id="project-2-tgi-vllm-migration-with-parity-testing"><a class="anchor" href="#project-2-tgi-vllm-migration-with-parity-testing">#</a> Project 2 — TGI → vLLM Migration with Parity Testing</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the owner of an existing TGI deployment</em>, I want to move to a supported engine without changing client behaviour or degrading quality.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>An inventory of the TGI configuration and the client features used; a mapping document per §7.</li>
+<li>A vLLM deployment in shadow mode mirroring production requests (with redaction), and an output diff report: exact-match rate at temperature 0, judge equivalence for the non-identical outputs, and latency comparison.</li>
+<li>Structured-output and tool-calling conformance tests pass on vLLM.</li>
+<li>A canary rollout at 5% → 50% → 100% via the gateway, with guardrail metrics (06.03), and rollback tested.</li>
+<li>Post-migration: TGI decommissioned, dashboards rebuilt, costs compared.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Document the TGI setup; build the vLLM configuration equivalents.</li>
+<li>Implement traffic mirroring in the gateway; store both outputs.</li>
+<li>Run the diff and judge comparisons; fix configuration mismatches (chat templates, stop tokens, parsers).</li>
+<li>Canary and ramp.</li>
+<li>Decommission and report.</li>
+</ol>
+<hr>
+<h3 id="project-3-multi-lora-serving-for-department-specific-adapters"><a class="anchor" href="#project-3-multi-lora-serving-for-department-specific-adapters">#</a> Project 3 — Multi-LoRA Serving for Department-Specific Adapters</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML engineer</em>, I want one base model to serve several fine-tuned adapters (fiscal notes, bill drafting style, constituent correspondence) with per-adapter quality gates and SLOs, instead of one GPU deployment per fine-tune.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>≥ 3 LoRA adapters (trained in a later fine-tuning module, or public adapters for practice) served with <code>--enable-lora</code>, with the adapters registered by name and version.</li>
+<li>The gateway routes requests to adapters by task. Per-adapter eval suites run in CI, and adapters are promoted only when they pass the gates.</li>
+<li>Load tests with a mixed-adapter workload: throughput and latency vs single-adapter and vs separate deployments; the adapter-swap overhead is quantified.</li>
+<li>Hot adapter updates without restarting the engine (where supported), with a rollback path.</li>
+<li>A cost comparison: multi-LoRA vs dedicated deployments.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Prepare the adapters and their eval sets.</li>
+<li>Configure vLLM with LoRA support; register the adapters.</li>
+<li>Extend the gateway with adapter routing and versioning.</li>
+<li>Run the load tests with mixed traffic; measure.</li>
+<li>Implement the promotion and rollback workflow; report.</li>
+</ol>
+<hr>
+<h2 id="11-papers-reading-exact-titles"><a class="anchor" href="#11-papers-reading-exact-titles">#</a> 11. Papers &amp; Reading (exact titles)</h2>
+<ul>
+<li>Kwon et al., 2023 — <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em></li>
+<li>Yu et al., 2022 — <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em></li>
+<li>Agrawal et al., 2024 — <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em></li>
+<li>Zhong et al., 2024 — <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving</em></li>
+<li>Zheng et al., 2024 — <em>SGLang: Efficient Execution of Structured Language Model Programs</em></li>
+<li>Sheng et al., 2023 — <em>S-LoRA: Serving Thousands of Concurrent LoRA Adapters</em></li>
+<li>Chen et al., 2023 — <em>Punica: Multi-Tenant LoRA Serving</em></li>
+<li>vLLM docs and release notes (pin your version); Hugging Face TGI docs (maintenance-mode notice); llm-d and vLLM production-stack documentation</li>
+</ul>
+<h2 id="12-essential-tooling"><a class="anchor" href="#12-essential-tooling">#</a> 12. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>vLLM</strong> (<code>vllm serve</code>, benchmarks, KV connectors)</td>
+<td>Primary engine</td>
+</tr>
+<tr>
+<td><strong>SGLang</strong>, <strong>TensorRT-LLM / Triton / NIM</strong>, <strong>llama.cpp / Ollama</strong></td>
+<td>Alternatives for specific workloads</td>
+</tr>
+<tr>
+<td><strong>vLLM production-stack</strong>, <strong>llm-d</strong>, <strong>KServe</strong></td>
+<td>Kubernetes serving stacks, routing, disaggregation</td>
+</tr>
+<tr>
+<td><strong>KEDA / HPA + Prometheus Adapter</strong></td>
+<td>Queue-based autoscaling</td>
+</tr>
+<tr>
+<td><strong>Prometheus + Grafana, DCGM exporter</strong></td>
+<td>Engine and GPU metrics</td>
+</tr>
+<tr>
+<td><strong>Nsight Systems</strong></td>
+<td>Deep performance analysis</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-02-caching-latency-cost.html"><span>← Previous</span><b>02 caching latency cost</b></a>
+      <a class="next" href="./08-04-quantization-batching.html"><span>Next →</span><b>04 quantization batching</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

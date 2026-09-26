@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Numerical Stability — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/01-math-foundations/13-numerical-stability/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Math Foundations</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Math Foundations</div>
+    <h1 class="lesson-title">Numerical Stability</h1>
+    <p class="lesson-sub">Floating point is a leaky abstraction. It will bite you during training, and you will not see it coming.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 1, Lessons 01-04</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Math Foundations 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M80.5,90.7 L87.7,80.0 L94.9,90.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.7,85.4 L82.3,75.6 L88.8,85.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.9,80.1 L76.8,71.3 L82.7,80.1 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M66.2,74.8 L71.4,66.9 L76.7,74.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M48.4,77.3 L66.0,50.9 L83.6,77.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MATH FOUNDATIONS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Numerical Stability</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement numerically stable softmax and log-sum-exp using the max-subtraction trick</li>
+<li>Identify overflow, underflow, and catastrophic cancellation in floating-point computations</li>
+<li>Verify analytical gradients against numerical gradients using centered finite differences</li>
+<li>Explain why bfloat16 is preferred over float16 for training and how loss scaling prevents gradient underflow</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your model trains for three hours, then the loss becomes NaN. You add a print statement. The logits are fine at step 9,000. At step 9,001 they are <code>inf</code>. By step 9,002 every gradient is <code>nan</code> and training is dead.</p>
+<p>Or: your model trains to completion but accuracy is 2% worse than the paper claims. You check everything. Architecture matches. Hyperparameters match. Data matches. The problem is that the paper used float32 and you used float16 without the right scaling. Thirty-two bits of accumulated rounding error quietly ate your accuracy.</p>
+<p>Or: you implement cross-entropy loss from scratch. It works on small logits. When logits exceed 100, it returns <code>inf</code>. The softmax overflowed because <code>exp(100)</code> is larger than float32 can represent. Every ML framework handles this with a two-line trick. You did not know the trick existed.</p>
+<p>Numerical stability is not a theoretical concern. It is the difference between a training run that succeeds and one that silently fails. Every serious ML bug you will debug eventually comes down to floating point.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="ieee-754-how-computers-store-real-numbers"><a class="anchor" href="#ieee-754-how-computers-store-real-numbers">#</a> IEEE 754: How Computers Store Real Numbers</h3>
+<p>Computers store real numbers as floating point values following the IEEE 754 standard. A float has three parts: a sign bit, an exponent, and a mantissa (significand).</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Float32 layout (32 bits total):
+[1 sign] [8 exponent] [23 mantissa]
+
+Value = (-1)^sign * 2^(exponent - 127) * 1.mantissa</code></pre>
+      </div>
+    <p>The mantissa determines precision (how many significant digits). The exponent determines range (how large or small a number can be).</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Format     Bits   Exponent  Mantissa  Decimal digits  Range (approx)
+float64    64     11        52        ~15-16          +/- 1.8e308
+float32    32     8         23        ~7-8            +/- 3.4e38
+float16    16     5         10        ~3-4            +/- 65,504
+bfloat16   16     8         7         ~2-3            +/- 3.4e38</code></pre>
+      </div>
+    <p>float32 gives you about 7 decimal digits of precision. That means it can tell apart 1.0000001 and 1.0000002, but not 1.00000001 and 1.00000002. After 7 digits, everything is rounding noise.</p>
+<p>float16 gives you about 3 digits. The largest number it can represent is 65,504. That is disturbingly small for ML where logits, gradients, and activations routinely exceed this.</p>
+<p>bfloat16 is Google&#39;s answer to float16&#39;s range problem. It has the same 8-bit exponent as float32 (same range, up to 3.4e38) but only 7 mantissa bits (less precision than float16). For training neural networks, range matters more than precision, so bfloat16 usually wins.</p>
+<h3 id="why-01-02-03"><a class="anchor" href="#why-01-02-03">#</a> Why 0.1 + 0.2 != 0.3</h3>
+<p>The number 0.1 cannot be represented exactly in binary floating point. In base 2, it is a repeating fraction:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">0.1 in binary = 0.0001100110011001100110011... (repeating forever)</code></pre>
+      </div>
+    <p>Float32 truncates this to 23 bits of mantissa. The stored value is approximately 0.100000001490116. Similarly, 0.2 is stored as approximately 0.200000002980232. Their sum is 0.300000004470348, not 0.3.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">In Python:
+&gt;&gt;&gt; 0.1 + 0.2
+0.30000000000000004
+
+&gt;&gt;&gt; 0.1 + 0.2 == 0.3
+False</code></pre>
+      </div>
+    <p>This matters for ML because:</p>
+<ol>
+<li>Loss comparisons like <code>if loss &lt; threshold</code> can give wrong answers</li>
+<li>Accumulating many small values (gradient updates over thousands of steps) drifts from the true sum</li>
+<li>Checksums and reproducibility tests fail if you compare floats with <code>==</code></li>
+</ol>
+<p>The fix: never compare floats with <code>==</code>. Use <code>abs(a - b) &lt; epsilon</code> or <code>math.isclose()</code>.</p>
+<h3 id="catastrophic-cancellation"><a class="anchor" href="#catastrophic-cancellation">#</a> Catastrophic Cancellation</h3>
+<p>When you subtract two nearly equal floating point numbers, the significant digits cancel and you are left with rounding noise promoted to leading digits.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">a = 1.0000001    (stored as 1.00000011920929 in float32)
+b = 1.0000000    (stored as 1.00000000000000 in float32)
+
+True difference:  0.0000001
+Computed:         0.00000011920929
+
+Relative error: 19.2%</code></pre>
+      </div>
+    <p>That is a 19% relative error from a single subtraction. In ML, this happens whenever you:</p>
+<ul>
+<li>Compute variance of data with a large mean: <code>E[x^2] - E[x]^2</code> when E[x] is large</li>
+<li>Subtract nearly equal log-probabilities</li>
+<li>Compute finite-difference gradients with too-small epsilon</li>
+</ul>
+<p>The fix: rearrange formulas to avoid subtracting large, nearly equal numbers. For variance, use the Welford algorithm or center the data first. For log-probabilities, work in log-space throughout.</p>
+<h3 id="overflow-and-underflow"><a class="anchor" href="#overflow-and-underflow">#</a> Overflow and Underflow</h3>
+<p>Overflow happens when a result is too large to represent. Underflow happens when it is too small (closer to zero than the smallest representable positive number).</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Float32 boundaries:
+  Maximum:  3.4028235e+38
+  Minimum positive (normal): 1.175e-38
+  Minimum positive (denorm): 1.401e-45
+  Overflow:  anything &gt; 3.4e38 becomes inf
+  Underflow: anything &lt; 1.4e-45 becomes 0.0</code></pre>
+      </div>
+    <p>The <code>exp()</code> function is the primary source of overflow in ML:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">exp(88.7)  = 3.40e+38   (barely fits in float32)
+exp(89.0)  = inf         (overflow)
+exp(-87.3) = 1.18e-38   (barely above underflow)
+exp(-104)  = 0.0         (underflow to zero)</code></pre>
+      </div>
+    <p>The <code>log()</code> function hits the other direction:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">log(0.0)   = -inf
+log(-1.0)  = nan
+log(1e-45) = -103.3      (fine)
+log(1e-46) = -inf        (input underflowed to 0, then log(0) = -inf)</code></pre>
+      </div>
+    <p>In ML, <code>exp()</code> appears in softmax, sigmoid, and probability computations. <code>log()</code> appears in cross-entropy, log-likelihoods, and KL divergence. The combination <code>log(exp(x))</code> is a minefield without the right tricks.</p>
+<h3 id="the-log-sum-exp-trick"><a class="anchor" href="#the-log-sum-exp-trick">#</a> The Log-Sum-Exp Trick</h3>
+<p>Computing <code>log(sum(exp(x_i)))</code> directly is numerically dangerous. If any <code>x_i</code> is large, <code>exp(x_i)</code> overflows. If all <code>x_i</code> are very negative, every <code>exp(x_i)</code> underflows to zero and <code>log(0)</code> is <code>-inf</code>.</p>
+<p>The trick: subtract the maximum value before exponentiating.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">log(sum(exp(x_i))) = max(x) + log(sum(exp(x_i - max(x))))</code></pre>
+      </div>
+    <p>Why this works: after subtracting <code>max(x)</code>, the largest exponent is <code>exp(0) = 1</code>. No overflow is possible. At least one term in the sum is 1, so the sum is at least 1, and <code>log(1) = 0</code>. No underflow to <code>-inf</code> is possible.</p>
+<p>Proof:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">log(sum(exp(x_i)))
+= log(sum(exp(x_i - c + c)))                    (add and subtract c)
+= log(sum(exp(x_i - c) * exp(c)))               (exp(a+b) = exp(a)*exp(b))
+= log(exp(c) * sum(exp(x_i - c)))               (factor out exp(c))
+= c + log(sum(exp(x_i - c)))                    (log(a*b) = log(a) + log(b))</code></pre>
+      </div>
+    <p>Set <code>c = max(x)</code> and overflow is eliminated.</p>
+<p>This trick appears everywhere in ML:</p>
+<ul>
+<li>Softmax normalization</li>
+<li>Cross-entropy loss computation</li>
+<li>Log-probability summation in sequence models</li>
+<li>Mixture of Gaussians</li>
+<li>Variational inference</li>
+</ul>
+<h3 id="why-softmax-needs-the-max-subtraction-trick"><a class="anchor" href="#why-softmax-needs-the-max-subtraction-trick">#</a> Why Softmax Needs the Max-Subtraction Trick</h3>
+<p>Softmax converts logits to probabilities:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">softmax(x_i) = exp(x_i) / sum(exp(x_j))</code></pre>
+      </div>
+    <p>Without the trick, logits of [100, 101, 102] cause overflow:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">exp(100) = 2.69e43
+exp(101) = 7.31e43
+exp(102) = 1.99e44
+sum      = 2.99e44
+
+These overflow float32 (max ~3.4e38)? No, 2.69e43 &lt; 3.4e38? Actually:
+exp(88.7) is already at the float32 limit.
+exp(100) = inf in float32.</code></pre>
+      </div>
+    <p>With the trick, subtract max(x) = 102:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">exp(100 - 102) = exp(-2) = 0.135
+exp(101 - 102) = exp(-1) = 0.368
+exp(102 - 102) = exp(0)  = 1.000
+sum = 1.503
+
+softmax = [0.090, 0.245, 0.665]</code></pre>
+      </div>
+    <p>The probabilities are identical. The computation is safe. This is not an optimization. It is a requirement for correctness.</p>
+<h3 id="nan-and-inf-detection-and-prevention"><a class="anchor" href="#nan-and-inf-detection-and-prevention">#</a> NaN and Inf: Detection and Prevention</h3>
+<p><code>nan</code> (Not a Number) and <code>inf</code> (infinity) propagate virally through computation. One <code>nan</code> in a gradient update makes the weight <code>nan</code>, which makes every subsequent output <code>nan</code>. Training is dead within one step.</p>
+<p>How <code>inf</code> appears:</p>
+<ul>
+<li><code>exp()</code> of a large positive number</li>
+<li>Division by zero: <code>1.0 / 0.0</code></li>
+<li><code>float32</code> overflow in accumulations</li>
+</ul>
+<p>How <code>nan</code> appears:</p>
+<ul>
+<li><code>0.0 / 0.0</code></li>
+<li><code>inf - inf</code></li>
+<li><code>inf * 0</code></li>
+<li><code>sqrt()</code> of a negative number</li>
+<li><code>log()</code> of a negative number</li>
+<li>Any arithmetic involving an existing <code>nan</code></li>
+</ul>
+<p>Detection:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+math.isnan(x)       # True if x is nan
+math.isinf(x)       # True if x is +inf or -inf
+math.isfinite(x)    # True if x is neither nan nor inf</code></pre>
+      </div>
+    <p>Prevention strategies:</p>
+<ol>
+<li>Clamp inputs to <code>exp()</code>: <code>exp(clamp(x, -80, 80))</code></li>
+<li>Add epsilon to denominators: <code>x / (y + 1e-8)</code></li>
+<li>Add epsilon inside <code>log()</code>: <code>log(x + 1e-8)</code></li>
+<li>Use stable implementations (log-sum-exp, stable softmax)</li>
+<li>Gradient clipping to prevent weight explosion</li>
+<li>Check for <code>nan</code>/<code>inf</code> after every forward pass during debugging</li>
+</ol>
+<h3 id="numerical-gradient-checking"><a class="anchor" href="#numerical-gradient-checking">#</a> Numerical Gradient Checking</h3>
+<p>Analytical gradients (from backpropagation) can have bugs. Numerical gradient checking verifies them by computing gradients with finite differences.</p>
+<p>The centered difference formula:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">df/dx ~= (f(x + h) - f(x - h)) / (2h)</code></pre>
+      </div>
+    <p>This is O(h^2) accurate, much better than the forward difference <code>(f(x+h) - f(x)) / h</code> which is only O(h).</p>
+<p>Choosing h: too large and the approximation is wrong. Too small and catastrophic cancellation destroys the answer. <code>h = 1e-5</code> to <code>1e-7</code> is typical.</p>
+<p>The check: compute the relative difference between analytical and numerical gradients.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">relative_error = |grad_analytical - grad_numerical| / max(|grad_analytical|, |grad_numerical|, 1e-8)</code></pre>
+      </div>
+    <p>Rules of thumb:</p>
+<ul>
+<li>relative_error &lt; 1e-7: perfect, gradient is correct</li>
+<li>relative_error &lt; 1e-5: acceptable, probably correct</li>
+<li>relative_error &gt; 1e-3: something is wrong</li>
+<li>relative_error &gt; 1: gradient is completely wrong</li>
+</ul>
+<p>Always check gradients when implementing a new layer or loss function. PyTorch provides <code>torch.autograd.gradcheck()</code> for this.</p>
+<h3 id="mixed-precision-training"><a class="anchor" href="#mixed-precision-training">#</a> Mixed Precision Training</h3>
+<p>Modern GPUs have specialized hardware (Tensor Cores) that compute float16 matrix multiplications 2-8x faster than float32. Mixed precision training exploits this:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Maintain float32 master copy of weights
+2. Forward pass in float16 (fast)
+3. Compute loss in float32 (prevents overflow)
+4. Backward pass in float16 (fast)
+5. Scale gradients to float32
+6. Update float32 master weights</code></pre>
+      </div>
+    <p>The problem with pure float16 training: gradients are often very small (1e-8 or smaller). Float16 underflows anything below ~6e-8 to zero. Your model stops learning because all gradient updates are zero.</p>
+<p>The fix is loss scaling:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Multiply loss by a large scale factor (e.g., 1024)
+2. Backward pass computes gradients of (loss * 1024)
+3. All gradients are 1024x larger (pushed above float16 underflow)
+4. Divide gradients by 1024 before updating weights
+5. Net effect: same update, but no underflow</code></pre>
+      </div>
+    <p>Dynamic loss scaling adjusts the scale factor automatically. Start with a large value (65536). If gradients overflow to <code>inf</code>, halve it. If N steps pass without overflow, double it.</p>
+<h3 id="bfloat16-vs-float16-why-bfloat16-wins-for-training"><a class="anchor" href="#bfloat16-vs-float16-why-bfloat16-wins-for-training">#</a> bfloat16 vs float16: Why bfloat16 Wins for Training</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">float16:   [1 sign] [5 exponent]  [10 mantissa]
+bfloat16:  [1 sign] [8 exponent]  [7 mantissa]</code></pre>
+      </div>
+    <p>float16 has more precision (10 mantissa bits vs 7) but limited range (max ~65,504). bfloat16 has less precision but the same range as float32 (max ~3.4e38).</p>
+<p>For training neural networks:</p>
+<ul>
+<li>Activations and logits regularly exceed 65,504 during training spikes. float16 overflows; bfloat16 handles it.</li>
+<li>Loss scaling is required with float16 but usually unnecessary with bfloat16 because its range covers the gradient magnitude spectrum.</li>
+<li>bfloat16 is a simple truncation of float32: drop the bottom 16 bits of the mantissa. Conversion is trivial and lossless in the exponent.</li>
+</ul>
+<p>float16 is preferred for inference where values are bounded and precision matters more. bfloat16 is preferred for training where range matters more. This is why TPUs and modern NVIDIA GPUs (A100, H100) have native bfloat16 support.</p>
+<h3 id="gradient-clipping"><a class="anchor" href="#gradient-clipping">#</a> Gradient Clipping</h3>
+<p>Exploding gradients happen when gradients grow exponentially through many layers (common in RNNs, deep networks, and transformers). A single large gradient can corrupt all weights in one step.</p>
+<p>Two types of clipping:</p>
+<p><strong>Clip by value:</strong> clamp each gradient element independently.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">grad = clamp(grad, -max_val, max_val)</code></pre>
+      </div>
+    <p>Simple but can change the direction of the gradient vector.</p>
+<p><strong>Clip by norm:</strong> scale the entire gradient vector so its norm does not exceed a threshold.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">if ||grad|| &gt; max_norm:
+    grad = grad * (max_norm / ||grad||)</code></pre>
+      </div>
+    <p>Preserves the direction of the gradient. This is what <code>torch.nn.utils.clip_grad_norm_()</code> does. It is the standard choice.</p>
+<p>Typical values: <code>max_norm=1.0</code> for transformers, <code>max_norm=0.5</code> for RL, <code>max_norm=5.0</code> for simpler networks.</p>
+<p>Gradient clipping is not a hack. It is a safety mechanism. Without it, a single outlier batch can produce a gradient large enough to ruin weeks of training.</p>
+<h3 id="normalization-layers-as-numerical-stabilizers"><a class="anchor" href="#normalization-layers-as-numerical-stabilizers">#</a> Normalization Layers as Numerical Stabilizers</h3>
+<p>Batch normalization, layer normalization, and RMS normalization are usually presented as regularizers that help training converge. They are also numerical stabilizers.</p>
+<p>Without normalization, activations can grow or shrink exponentially through layers:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Layer 1: values in [0, 1]
+Layer 5: values in [0, 100]
+Layer 10: values in [0, 10,000]
+Layer 50: values in [0, inf]</code></pre>
+      </div>
+    <p>Normalization recenters and rescales activations at every layer:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">LayerNorm(x) = (x - mean(x)) / (std(x) + epsilon) * gamma + beta</code></pre>
+      </div>
+    <p>The <code>epsilon</code> (typically 1e-5) prevents division by zero when all activations are identical. The learned parameters <code>gamma</code> and <code>beta</code> let the network restore any scale it needs.</p>
+<p>This keeps values in a numerically safe range throughout the network, preventing both overflow in the forward pass and gradient explosion in the backward pass.</p>
+<h3 id="common-ml-numerical-bugs"><a class="anchor" href="#common-ml-numerical-bugs">#</a> Common ML Numerical Bugs</h3>
+<p><strong>Bug: Loss is NaN after a few epochs.</strong>
+Cause: logits grew too large, softmax overflowed. Or learning rate is too high and weights diverged.
+Fix: use stable softmax (max subtraction), reduce learning rate, add gradient clipping.</p>
+<p><strong>Bug: Loss is stuck at log(num_classes).</strong>
+Cause: model outputs are near-uniform probabilities. Often means gradients are vanishing or the model is not learning at all.
+Fix: check that data labels are correct, verify the loss function, check for dead ReLUs.</p>
+<p><strong>Bug: Validation accuracy is lower than expected by 1-3%.</strong>
+Cause: mixed precision without proper loss scaling. Gradient underflow silently zeroes out small updates.
+Fix: enable dynamic loss scaling, or switch to bfloat16.</p>
+<p><strong>Bug: Gradient norms are 0.0 for some layers.</strong>
+Cause: dead ReLU neurons (all inputs negative), or float16 underflow.
+Fix: use LeakyReLU or GELU, use gradient scaling, check weight initialization.</p>
+<p><strong>Bug: Model works on one GPU but gives different results on another.</strong>
+Cause: non-deterministic floating point accumulation order. GPU parallel reductions sum in different orders on different hardware, and floating point addition is not associative.
+Fix: accept small differences (1e-6), or set <code>torch.use_deterministic_algorithms(True)</code> and accept the speed penalty.</p>
+<p><strong>Bug: <code>exp()</code> returns <code>inf</code> in loss computation.</strong>
+Cause: raw logits passed to <code>exp()</code> without the max-subtraction trick.
+Fix: use <code>torch.nn.functional.log_softmax()</code> which implements log-sum-exp internally.</p>
+<p><strong>Bug: Training diverges after switching from float32 to float16.</strong>
+Cause: float16 cannot represent gradient magnitudes below 6e-8 or activations above 65,504.
+Fix: use mixed precision with loss scaling (AMP), or use bfloat16 instead.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">logsumexp-stability</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-demonstrate-floating-point-precision-limits"><a class="anchor" href="#step-1-demonstrate-floating-point-precision-limits">#</a> Step 1: Demonstrate floating point precision limits</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">print(&quot;=== Floating Point Precision ===&quot;)
+print(f&quot;0.1 + 0.2 = {0.1 + 0.2}&quot;)
+print(f&quot;0.1 + 0.2 == 0.3? {0.1 + 0.2 == 0.3}&quot;)
+print(f&quot;Difference: {(0.1 + 0.2) - 0.3:.2e}&quot;)</code></pre>
+      </div>
+    <h3 id="step-2-implement-naive-vs-stable-softmax"><a class="anchor" href="#step-2-implement-naive-vs-stable-softmax">#</a> Step 2: Implement naive vs stable softmax</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+def softmax_naive(logits):
+    exps = [math.exp(z) for z in logits]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+def softmax_stable(logits):
+    max_logit = max(logits)
+    exps = [math.exp(z - max_logit) for z in logits]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+safe_logits = [2.0, 1.0, 0.1]
+print(f&quot;Naive:  {softmax_naive(safe_logits)}&quot;)
+print(f&quot;Stable: {softmax_stable(safe_logits)}&quot;)
+
+dangerous_logits = [100.0, 101.0, 102.0]
+print(f&quot;Stable: {softmax_stable(dangerous_logits)}&quot;)
+# softmax_naive(dangerous_logits) would return [nan, nan, nan]</code></pre>
+      </div>
+    <h3 id="step-3-implement-stable-log-sum-exp"><a class="anchor" href="#step-3-implement-stable-log-sum-exp">#</a> Step 3: Implement stable log-sum-exp</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def logsumexp_naive(values):
+    return math.log(sum(math.exp(v) for v in values))
+
+def logsumexp_stable(values):
+    c = max(values)
+    return c + math.log(sum(math.exp(v - c) for v in values))
+
+safe = [1.0, 2.0, 3.0]
+print(f&quot;Naive:  {logsumexp_naive(safe):.6f}&quot;)
+print(f&quot;Stable: {logsumexp_stable(safe):.6f}&quot;)
+
+large = [500.0, 501.0, 502.0]
+print(f&quot;Stable: {logsumexp_stable(large):.6f}&quot;)
+# logsumexp_naive(large) returns inf</code></pre>
+      </div>
+    <h3 id="step-4-implement-stable-cross-entropy"><a class="anchor" href="#step-4-implement-stable-cross-entropy">#</a> Step 4: Implement stable cross-entropy</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def cross_entropy_naive(true_class, logits):
+    probs = softmax_naive(logits)
+    return -math.log(probs[true_class])
+
+def cross_entropy_stable(true_class, logits):
+    max_logit = max(logits)
+    shifted = [z - max_logit for z in logits]
+    log_sum_exp = math.log(sum(math.exp(s) for s in shifted))
+    log_prob = shifted[true_class] - log_sum_exp
+    return -log_prob
+
+logits = [2.0, 5.0, 1.0]
+true_class = 1
+print(f&quot;Naive:  {cross_entropy_naive(true_class, logits):.6f}&quot;)
+print(f&quot;Stable: {cross_entropy_stable(true_class, logits):.6f}&quot;)</code></pre>
+      </div>
+    <h3 id="step-5-gradient-checking"><a class="anchor" href="#step-5-gradient-checking">#</a> Step 5: Gradient checking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def numerical_gradient(f, x, h=1e-5):
+    grad = []
+    for i in range(len(x)):
+        x_plus = x[:]
+        x_minus = x[:]
+        x_plus[i] += h
+        x_minus[i] -= h
+        grad.append((f(x_plus) - f(x_minus)) / (2 * h))
+    return grad
+
+def check_gradient(analytical, numerical, tolerance=1e-5):
+    for i, (a, n) in enumerate(zip(analytical, numerical)):
+        denom = max(abs(a), abs(n), 1e-8)
+        rel_error = abs(a - n) / denom
+        status = &quot;OK&quot; if rel_error &lt; tolerance else &quot;FAIL&quot;
+        print(f&quot;  param {i}: analytical={a:.8f} numerical={n:.8f} &quot;
+              f&quot;rel_error={rel_error:.2e} [{status}]&quot;)
+
+def f(params):
+    x, y = params
+    return x**2 + 3*x*y + y**3
+
+def f_grad(params):
+    x, y = params
+    return [2*x + 3*y, 3*x + 3*y**2]
+
+point = [2.0, 1.0]
+analytical = f_grad(point)
+numerical = numerical_gradient(f, point)
+check_gradient(analytical, numerical)</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="mixed-precision-simulation"><a class="anchor" href="#mixed-precision-simulation">#</a> Mixed precision simulation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import struct
+
+def float32_to_float16_round(x):
+    packed = struct.pack(&#39;f&#39;, x)
+    f32 = struct.unpack(&#39;f&#39;, packed)[0]
+    packed16 = struct.pack(&#39;e&#39;, f32)
+    return struct.unpack(&#39;e&#39;, packed16)[0]
+
+def simulate_bfloat16(x):
+    packed = struct.pack(&#39;f&#39;, x)
+    as_int = int.from_bytes(packed, &#39;little&#39;)
+    truncated = as_int &amp; 0xFFFF0000
+    repacked = truncated.to_bytes(4, &#39;little&#39;)
+    return struct.unpack(&#39;f&#39;, repacked)[0]</code></pre>
+      </div>
+    <h3 id="gradient-clipping"><a class="anchor" href="#gradient-clipping">#</a> Gradient clipping</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def clip_by_norm(gradients, max_norm):
+    total_norm = math.sqrt(sum(g**2 for g in gradients))
+    if total_norm &gt; max_norm:
+        scale = max_norm / total_norm
+        return [g * scale for g in gradients]
+    return gradients
+
+grads = [10.0, 20.0, 30.0]
+clipped = clip_by_norm(grads, max_norm=5.0)
+print(f&quot;Original norm: {math.sqrt(sum(g**2 for g in grads)):.2f}&quot;)
+print(f&quot;Clipped norm:  {math.sqrt(sum(g**2 for g in clipped)):.2f}&quot;)
+print(f&quot;Direction preserved: {[c/clipped[0] for c in clipped]} == {[g/grads[0] for g in grads]}&quot;)</code></pre>
+      </div>
+    <h3 id="naninf-detection"><a class="anchor" href="#naninf-detection">#</a> NaN/Inf detection</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def check_tensor(name, values):
+    has_nan = any(math.isnan(v) for v in values)
+    has_inf = any(math.isinf(v) for v in values)
+    if has_nan or has_inf:
+        print(f&quot;WARNING {name}: nan={has_nan} inf={has_inf}&quot;)
+        return False
+    return True
+
+check_tensor(&quot;good&quot;, [1.0, 2.0, 3.0])
+check_tensor(&quot;bad&quot;,  [1.0, float(&#39;nan&#39;), 3.0])
+check_tensor(&quot;ugly&quot;, [1.0, float(&#39;inf&#39;), 3.0])</code></pre>
+      </div>
+    <p>See <code>code/numerical.py</code> for complete implementations with all edge cases demonstrated.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>code/numerical.py</code> with stable softmax, log-sum-exp, cross-entropy, gradient checking, and mixed precision simulation</li>
+<li><code>outputs/prompt-numerical-debugger.md</code> for diagnosing NaN/Inf and numerical issues in training</li>
+</ul>
+<p>These stable implementations reappear in Phase 3 when building the training loop and in Phase 4 when implementing attention mechanisms.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p><strong>Catastrophic cancellation.</strong> Compute the variance of [1000000.0, 1000001.0, 1000002.0] using the naive formula <code>E[x^2] - E[x]^2</code> in float32. Then compute it using Welford&#39;s online algorithm. Compare the errors against the true variance (0.6667).</p>
+</li>
+<li><p><strong>Precision hunt.</strong> Find the smallest positive float32 value <code>x</code> such that <code>1.0 + x == 1.0</code> in Python. This is the machine epsilon. Verify it matches <code>numpy.finfo(numpy.float32).eps</code>.</p>
+</li>
+<li><p><strong>Log-sum-exp edge cases.</strong> Test your <code>logsumexp_stable</code> function with: (a) all values equal, (b) one value much larger than the rest, (c) all values very negative (-1000). Verify it gives correct results where the naive version fails.</p>
+</li>
+<li><p><strong>Gradient checking a neural network layer.</strong> Implement a single linear layer <code>y = Wx + b</code> and its analytical backward pass. Use <code>numerical_gradient</code> to verify correctness for a 3x2 weight matrix.</p>
+</li>
+<li><p><strong>Loss scaling experiment.</strong> Simulate training with float16: create random gradients in the range [1e-9, 1e-3], convert to float16, and measure what fraction become zero. Then apply loss scaling (multiply by 1024), convert to float16, scale back, and measure the zero fraction again.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>IEEE 754</td>
+<td>&quot;The float standard&quot;</td>
+<td>International standard defining binary floating point formats, rounding rules, and special values (inf, nan). Every modern CPU and GPU implements it.</td>
+</tr>
+<tr>
+<td>Machine epsilon</td>
+<td>&quot;The precision limit&quot;</td>
+<td>The smallest value e such that 1.0 + e != 1.0 in a given float format. For float32, it is about 1.19e-7.</td>
+</tr>
+<tr>
+<td>Catastrophic cancellation</td>
+<td>&quot;Precision loss from subtraction&quot;</td>
+<td>When subtracting nearly equal floating point numbers, significant digits cancel and rounding noise dominates the result.</td>
+</tr>
+<tr>
+<td>Overflow</td>
+<td>&quot;Number too big&quot;</td>
+<td>A result exceeds the maximum representable value and becomes inf. exp(89) overflows float32.</td>
+</tr>
+<tr>
+<td>Underflow</td>
+<td>&quot;Number too small&quot;</td>
+<td>A result is closer to zero than the smallest representable positive number and becomes 0.0. exp(-104) underflows float32.</td>
+</tr>
+<tr>
+<td>Log-sum-exp trick</td>
+<td>&quot;Subtract the max first&quot;</td>
+<td>Computing log(sum(exp(x))) by factoring out exp(max(x)) to prevent overflow and underflow. Used in softmax, cross-entropy, and log-probability math.</td>
+</tr>
+<tr>
+<td>Stable softmax</td>
+<td>&quot;Softmax that does not explode&quot;</td>
+<td>Subtracting max(logits) before exponentiating. Numerically identical result, no overflow possible.</td>
+</tr>
+<tr>
+<td>Gradient checking</td>
+<td>&quot;Verify your backprop&quot;</td>
+<td>Comparing analytical gradients from backpropagation against numerical gradients from finite differences to catch implementation bugs.</td>
+</tr>
+<tr>
+<td>Mixed precision</td>
+<td>&quot;Float16 forward, float32 backward&quot;</td>
+<td>Using lower-precision floats for speed-critical operations and higher-precision floats for numerically sensitive operations. Typical speedup is 2-3x.</td>
+</tr>
+<tr>
+<td>Loss scaling</td>
+<td>&quot;Prevent gradient underflow&quot;</td>
+<td>Multiplying the loss by a large constant before backprop so gradients stay in float16&#39;s representable range, then dividing by the same constant before weight updates.</td>
+</tr>
+<tr>
+<td>bfloat16</td>
+<td>&quot;Brain floating point&quot;</td>
+<td>Google&#39;s 16-bit format with 8 exponent bits (same range as float32) and 7 mantissa bits (less precision than float16). Preferred for training.</td>
+</tr>
+<tr>
+<td>Gradient clipping</td>
+<td>&quot;Cap the gradient norm&quot;</td>
+<td>Scaling the gradient vector so its norm does not exceed a threshold. Prevents exploding gradients from ruining weights.</td>
+</tr>
+<tr>
+<td>NaN</td>
+<td>&quot;Not a Number&quot;</td>
+<td>Special float value from undefined operations (0/0, inf-inf, sqrt(-1)). Propagates through all subsequent arithmetic.</td>
+</tr>
+<tr>
+<td>Inf</td>
+<td>&quot;Infinity&quot;</td>
+<td>Special float value from overflow or division by zero. Can combine to produce NaN (inf - inf, inf * 0).</td>
+</tr>
+<tr>
+<td>Numerical gradient</td>
+<td>&quot;Brute force derivative&quot;</td>
+<td>Approximating a derivative by evaluating f(x+h) and f(x-h) and dividing by 2h. Slow but reliable for verification.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html">What Every Computer Scientist Should Know About Floating-Point Arithmetic (Goldberg 1991)</a> -- the definitive reference, dense but complete</li>
+<li><a href="https://arxiv.org/abs/1710.03740">Mixed Precision Training (Micikevicius et al., 2018)</a> -- the NVIDIA paper that introduced loss scaling for float16 training</li>
+<li><a href="https://pytorch.org/docs/stable/amp.html">AMP: Automatic Mixed Precision (PyTorch docs)</a> -- practical guide to mixed precision in PyTorch</li>
+<li><a href="https://cloud.google.com/tpu/docs/bfloat16">bfloat16 format (Google Cloud TPU docs)</a> -- why Google chose this format for TPUs</li>
+<li><a href="https://en.wikipedia.org/wiki/Kahan_summation_algorithm">Kahan Summation (Wikipedia)</a> -- algorithm for reducing rounding error in floating point sums</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-tensor-operations.html"><span>← Previous</span><b>tensor operations</b></a>
+      <a class="next" href="./14-norms-and-distances.html"><span>Next →</span><b>norms and distances</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

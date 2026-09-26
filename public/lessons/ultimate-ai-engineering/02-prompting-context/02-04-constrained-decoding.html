@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>02.04 — Constrained Decoding — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/02.%20Prompting%20%26%20Context/02-04-constrained-decoding.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Prompting &amp; Context</div>
+    <ol class="toc"><li><a href="#1-the-problem-formally">1. The Problem, Formally</a></li><li><a href="#2-baseline-check-every-token">2. Baseline: Check Every Token</a></li><li><a href="#3-regular-languages-regex-dfa-token-index">3. Regular Languages: Regex → DFA → Token Index</a></li><li><a href="#4-context-free-grammars-incremental-parsing-token-masks">4. Context-Free Grammars: Incremental Parsing + Token Masks</a></li><li><a href="#5-token-boundary-problems-where-naive-engines-go-wrong">5. Token-Boundary Problems (Where Naive Engines Go Wrong)</a></li><li><a href="#6-distribution-distortion-the-part-most-engineers-miss">6. Distribution Distortion: The Part Most Engineers Miss</a></li><li><a href="#7-performance-engineering">7. Performance Engineering</a></li><li><a href="#8-beyond-syntax-semantic-constraints">8. Beyond Syntax: Semantic Constraints</a></li><li><a href="#9-a-hugging-face-integration-sketch">9. A Hugging Face Integration Sketch</a></li><li><a href="#10-production-challenges-how-to-solve-them">10. Production Challenges &amp; How to Solve Them</a></li><li><a href="#11-hands-on-projects">11. Hands-On Projects</a></li><li><a href="#12-foundational-papers-exact-titles">12. Foundational Papers (exact titles)</a></li><li><a href="#13-essential-tooling">13. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Prompting &amp; Context</div>
+    <h1 class="lesson-title">02.04 — Constrained Decoding</h1>
+    <p class="lesson-sub">**Module 2: Prompting &amp; Context** · Subtopic 4 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Prompting &amp; Context 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M89.2,100.4 L97.6,87.9 L105.9,100.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.4,95.1 L92.2,83.6 L99.9,95.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.7,89.8 L86.7,79.2 L93.8,89.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.9,84.5 L81.3,74.9 L87.7,84.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.1,79.2 L75.9,70.5 L81.7,79.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PROMPTING &amp; CONTEXT</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">02.04 — Constrained</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Decoding</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> automata theory basics (regular expressions, DFAs, context-free grammars, pushdown automata), 01.02 (sampling pipeline, speculative decoding), 01.03 (byte-level BPE, token boundaries), 02.03 (schemas).
+<strong>Outcome:</strong> you can build a constrained-decoding engine from first principles (regex → DFA → token index, and CFG → incremental parser → token mask), reason about its performance and its <strong>distortion of the model&#39;s distribution</strong>, and choose and operate a production backend with confidence.</p>
+</blockquote>
+<blockquote>
+<p><strong>Relationship to earlier material:</strong> 01.02 §6 introduced token masking as a serving feature, and 02.03 uses it through provider APIs. This subtopic opens the engine up.</p>
+</blockquote>
+<hr>
+<h2 id="1-the-problem-formally"><a class="anchor" href="#1-the-problem-formally">#</a> 1. The Problem, Formally</h2>
+<p>Let $\mathcal{L} \subseteq \Sigma^<em>$ be the target language over characters (or bytes): a regex, JSON Schema, SQL grammar, etc. The tokenizer vocabulary is $\mathcal{V}$, where each token $v$ decodes to a string $\mathrm{str}(v) \in \Sigma^</em>$. After generating a string $s$, the <strong>allowed set</strong> is</p>
+<p>$$
+\mathcal{A}(s) = \Big{, v \in \mathcal{V} ;:; s \cdot \mathrm{str}(v) \in \mathrm{Pref}(\mathcal{L}) ,\Big} ;\cup; \big{\texttt{EOS} ;:; s \in \mathcal{L}\big}
+$$</p>
+<p>where $\mathrm{Pref}(\mathcal{L})$ is the set of prefixes of strings in $\mathcal{L}$. For a live prefix (one that can still be completed), the masked sampling step is</p>
+<p>$$
+\tilde p(v \mid s) = \frac{p(v \mid s),\mathbb{1}[v \in \mathcal{A}(s)]}{\sum_{u \in \mathcal{A}(s)} p(u \mid s)}
+$$</p>
+<p>Two engineering problems fall out of this definition:</p>
+<ol>
+<li><strong>Speed.</strong> Computing $\mathcal{A}(s)$ naively means checking $|\mathcal{V}| \approx 10^5$ tokens per step. At 50 tokens/s per sequence and batch 64, that&#39;s hundreds of millions of prefix checks per second. The mask must be ready <em>before</em> the GPU finishes the forward pass (≈ 10–30 ms), or it becomes the bottleneck.</li>
+<li><strong>Faithfulness.</strong> The locally renormalised $\tilde p$ is <strong>not</strong> the model&#39;s distribution conditioned on $\mathcal{L}$ (§6).</li>
+</ol>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/Ultimate-AI-Engineering/main/02.%20Prompting%20%26%20Context/02.%2520Prompting%2520%26%2520Context/images/LLM-02-2.jpg" alt="LLM-02-2" loading="lazy" /></figure></p>
+<hr>
+<h2 id="2-baseline-check-every-token"><a class="anchor" href="#2-baseline-check-every-token">#</a> 2. Baseline: Check Every Token</h2>
+<p>The simplest correct engine checks each token with a <strong>partial-match</strong> oracle. The <code>regex</code> module supports <code>partial=True</code>, which returns a match if the string is a prefix of some match.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import regex
+
+
+def allowed_tokens_naive(pattern: str, prefix: str, vocab: dict[int, str], eos_id: int) -&gt; set[int]:
+    &quot;&quot;&quot;O(|V| * len) per step. Correct, far too slow for serving; use as a test oracle.&quot;&quot;&quot;
+    rx = regex.compile(pattern)
+    allowed = {tid for tid, tok in vocab.items()
+               if tok and rx.fullmatch(prefix + tok, partial=True) is not None}
+    if rx.fullmatch(prefix) is not None:
+        allowed.add(eos_id)
+    return allowed</code></pre>
+      </div>
+    <p>Keep this as the <strong>reference oracle</strong> for property-based tests of any faster engine.</p>
+<hr>
+<h2 id="3-regular-languages-regex-dfa-token-index"><a class="anchor" href="#3-regular-languages-regex-dfa-token-index">#</a> 3. Regular Languages: Regex → DFA → Token Index</h2>
+<h3 id="31-the-key-idea-willard-louf-2023"><a class="anchor" href="#31-the-key-idea-willard-louf-2023">#</a> 3.1 The key idea (Willard &amp; Louf, 2023)</h3>
+<p>Compile the regex to a <strong>DFA</strong> $M = (Q, \Sigma, \delta, q_0, F)$ and remove dead states (states from which no accepting state is reachable). For every state $q$ and every token $v$, run the DFA over the token&#39;s characters:</p>
+<p>$$
+\delta^*(q, v) = \delta(\ldots\delta(\delta(q, c_1), c_2)\ldots, c_n), \qquad \mathrm{str}(v) = c_1 c_2 \ldots c_n
+$$</p>
+<p>Precompute the <strong>token index</strong> $I[q] = {, v \mapsto \delta^<em>(q,v) ;:; \delta^</em>(q, v) \text{ defined and live} }$. At decode time, the mask is a <strong>lookup</strong> $I[q_t]$, and the state update is $q_{t+1} = I[q_t][v_t]$: $O(1)$ per step after an $O(|Q|\cdot|\mathcal{V}|\cdot \bar\ell)$ precompute, where $\bar\ell$ is the mean token length.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> regex  ──(Thompson/Brzozowski)──►  NFA ──(subset construction)──► DFA ──(minimise, prune dead)──► M
+                                                                                                    │
+                                          for q in Q: for v in V: walk δ over str(v)                ▼
+                                                                                     token index I[q] = {v: q&#39;}</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import interegular
+
+
+def compile_regex_index(pattern: str, vocab: dict[int, str]):
+    &quot;&quot;&quot;Build {state: {token_id: next_state}} plus accepting states. Educational, not optimized.&quot;&quot;&quot;
+    fsm = interegular.parse_pattern(pattern).to_fsm()
+
+    # Prune dead states: keep states that can reach an accepting state.
+    rev: dict[int, set[int]] = {q: set() for q in fsm.states}
+    for q, edges in fsm.map.items():
+        for nxt in edges.values():
+            rev.setdefault(nxt, set()).add(q)
+    live, frontier = set(fsm.finals), list(fsm.finals)
+    while frontier:
+        for p in rev.get(frontier.pop(), ()):
+            if p not in live:
+                live.add(p)
+                frontier.append(p)
+
+    def walk(q, text):
+        for ch in text:
+            q = fsm.map.get(q, {}).get(fsm.alphabet[ch])
+            if q is None or q not in live:
+                return None
+        return q
+
+    index = {q: {tid: nq for tid, tok in vocab.items()
+                 if tok and (nq := walk(q, tok)) is not None}
+             for q in fsm.states if q in live}
+    return fsm.initial, index, set(fsm.finals)
+
+
+class RegexConstraint:
+    def __init__(self, pattern: str, vocab: dict[int, str], eos_id: int):
+        self.state, self.index, self.finals = compile_regex_index(pattern, vocab)
+        self.eos_id = eos_id
+
+    def allowed(self) -&gt; set[int]:
+        ids = set(self.index.get(self.state, {}))
+        return ids | {self.eos_id} if self.state in self.finals else ids
+
+    def advance(self, token_id: int) -&gt; None:
+        if token_id != self.eos_id:
+            self.state = self.index[self.state][token_id]</code></pre>
+      </div>
+    <h3 id="32-json-schema-regex"><a class="anchor" href="#32-json-schema-regex">#</a> 3.2 JSON Schema → regex</h3>
+<p>Bounded JSON Schemas (no recursion, no unbounded nesting) compile to regular expressions. For example:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">{&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{&quot;id&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;pattern&quot;:&quot;HB-\\d+&quot;},&quot;n&quot;:{&quot;type&quot;:&quot;integer&quot;}},
+ &quot;required&quot;:[&quot;id&quot;,&quot;n&quot;],&quot;additionalProperties&quot;:false}
+
+  ⟶  \{[ ]?&quot;id&quot;[ ]?:[ ]?&quot;HB-\d+&quot;[ ]?,[ ]?&quot;n&quot;[ ]?:[ ]?(-)?(0|[1-9][0-9]*)[ ]?\}</code></pre>
+      </div>
+    <p><strong>Design decisions hidden in this compilation:</strong></p>
+<ul>
+<li><strong>Whitespace policy.</strong> Allowing arbitrary whitespace (<code>[ \n\t]*</code>) lets the model emit whitespace forever. Some models do exactly that when the constraint is fighting their preferences, which is known as <strong>whitespace runaway</strong>. Fix it by allowing at most one space, or compact JSON only.</li>
+<li><strong>Property order.</strong> Fixed order yields a small DFA. Allowing any order is factorial in the number of properties, so engines fix the order (typically schema order).</li>
+<li><strong>String contents.</strong> <code>&quot;([^&quot;\\\x00-\x1f]|\\[&quot;\\/bfnrtu])*&quot;</code> — unbounded strings are fine in a DFA, but <strong>bounded lengths</strong> (<code>{1,256}</code>) blow up the state count. Enforce long bounds in post-validation instead (02.03 §4).</li>
+<li><strong>Numbers:</strong> integers vs floats vs exponent forms. Numeric <em>ranges</em> are expressible as regexes, but produce large automata.</li>
+</ul>
+<h3 id="33-where-regular-languages-stop"><a class="anchor" href="#33-where-regular-languages-stop">#</a> 3.3 Where regular languages stop</h3>
+<p>Arbitrarily nested JSON, recursive schemas, balanced parentheses, and programming-language syntax are <strong>not regular</strong>. A DFA would need unbounded memory. You can unroll nesting to a fixed depth (the DFA grows exponentially), or move to context-free grammars.</p>
+<hr>
+<h2 id="4-context-free-grammars-incremental-parsing-token-masks"><a class="anchor" href="#4-context-free-grammars-incremental-parsing-token-masks">#</a> 4. Context-Free Grammars: Incremental Parsing + Token Masks</h2>
+<h3 id="41-from-dfa-state-to-parser-state"><a class="anchor" href="#41-from-dfa-state-to-parser-state">#</a> 4.1 From DFA state to parser state</h3>
+<p>For a CFG, the decoder state is a <strong>parser configuration</strong>: an LR stack, a set of Earley items, or a pushdown automaton&#39;s (state, stack). &quot;Is $s\cdot\mathrm{str}(v)$ a viable prefix?&quot; becomes &quot;can the parser consume these characters without error?&quot;</p>
+<p>The central performance problem: <strong>the parser state includes a stack, so you cannot precompute a finite index over all states.</strong> Production engines attack this in several ways:</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Key idea</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>XGrammar</strong> (Dong et al., 2024)</td>
+<td>Split tokens into <strong>context-independent</strong> ones (validity determined by the top of the stack alone; precomputed per grammar position) and <strong>context-dependent</strong> ones (checked at runtime against the full stack). The first group is the vast majority. Uses a persistent stack for cheap branching, and overlaps mask computation with the GPU forward pass</td>
+</tr>
+<tr>
+<td><strong>llguidance</strong></td>
+<td>A lexer (regex-derived, token-indexed like §3) plus an Earley parser over lexemes. Masks are computed lazily by walking a <strong>token trie</strong> with the parser, sharing work across tokens with common prefixes</td>
+</tr>
+<tr>
+<td><strong>SynCode</strong> (Ugare et al., 2024)</td>
+<td>Precomputed &quot;DFA mask store&quot; for terminals, plus LR(1) parser acceptance sequences</td>
+</tr>
+<tr>
+<td><strong>Outlines (CFG mode)</strong>, <strong>llama.cpp GBNF</strong></td>
+<td>Incremental parsers with per-step checks; simpler, slower on large vocabularies</td>
+</tr>
+</tbody></table>
+<h3 id="42-token-trie-mask-computation"><a class="anchor" href="#42-token-trie-mask-computation">#</a> 4.2 Token-trie mask computation</h3>
+<p>Tokens share prefixes (<code>&quot;</code>, <code>&quot;,</code>, <code>&quot;}</code>, <code>&quot;],</code>…). Organise $\mathcal{V}$ as a <strong>trie</strong> of token strings and do a DFS that carries the parser state. When a character is rejected, prune the whole subtree. Each node is visited once, and shared prefixes are parsed once.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> trie:  (root)
+         ├─ &quot;[&quot; ──► accept? ── &quot;[[&quot; ── …
+         ├─ &quot;]&quot; ──► …
+         ├─ &quot;,&quot; ──► …
+         └─ &quot;1&quot; ── &quot;12&quot; ── &quot;123&quot;          one parser step per edge, not per token</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from dataclasses import dataclass, field
+
+State = tuple[int, str]   # (depth, mode) — a counter suffices for one bracket type
+
+
+def step(state: State, ch: str) -&gt; State | None:
+    &quot;&quot;&quot;Incremental recognizer for nested integer lists, e.g. [1,[2,3],[]]. Grammar:
+       L -&gt; &#39;[&#39; (E (&#39;,&#39; E)*)? &#39;]&#39; ;  E -&gt; INT | L ;  INT -&gt; [0-9]+&quot;&quot;&quot;
+    depth, mode = state
+    if mode == &quot;int&quot;:
+        if ch.isdigit():
+            return state
+        mode = &quot;after&quot;                       # integer ended; process ch in &#39;after&#39; mode
+    if mode == &quot;start&quot;:
+        return (1, &quot;open&quot;) if ch == &quot;[&quot; else None
+    if mode in (&quot;open&quot;, &quot;elem&quot;):
+        if ch == &quot;[&quot;:
+            return (depth + 1, &quot;open&quot;)
+        if ch.isdigit():
+            return (depth, &quot;int&quot;)
+        if ch == &quot;]&quot; and mode == &quot;open&quot;:
+            return (depth - 1, &quot;done&quot;) if depth == 1 else (depth - 1, &quot;after&quot;)
+        return None
+    if mode == &quot;after&quot;:
+        if ch == &quot;,&quot;:
+            return (depth, &quot;elem&quot;)
+        if ch == &quot;]&quot;:
+            return (depth - 1, &quot;done&quot;) if depth == 1 else (depth - 1, &quot;after&quot;)
+        return None
+    return None                              # &#39;done&#39;: nothing may follow
+
+
+def accepting(state: State) -&gt; bool:
+    return state[1] == &quot;done&quot;
+
+
+@dataclass
+class TrieNode:
+    children: dict[str, &quot;TrieNode&quot;] = field(default_factory=dict)
+    token_ids: list[int] = field(default_factory=list)
+
+
+def build_trie(vocab: dict[int, str]) -&gt; TrieNode:
+    root = TrieNode()
+    for tid, tok in vocab.items():
+        node = root
+        for ch in tok:
+            node = node.children.setdefault(ch, TrieNode())
+        node.token_ids.append(tid)
+    return root
+
+
+def trie_mask(root: TrieNode, state: State, eos_id: int) -&gt; set[int]:
+    allowed, stack = set(), [(root, state)]
+    while stack:
+        node, st = stack.pop()
+        for ch, child in node.children.items():
+            nst = step(st, ch)
+            if nst is None:
+                continue                      # prune entire subtree
+            allowed.update(child.token_ids)
+            stack.append((child, nst))
+    if accepting(state):
+        allowed.add(eos_id)
+    return allowed</code></pre>
+      </div>
+    <hr>
+<h2 id="5-token-boundary-problems-where-naive-engines-go-wrong"><a class="anchor" href="#5-token-boundary-problems-where-naive-engines-go-wrong">#</a> 5. Token-Boundary Problems (Where Naive Engines Go Wrong)</h2>
+<p>Grammars are defined over characters, but models emit <strong>tokens</strong>, and the two don&#39;t align.</p>
+<ol>
+<li><strong>Tokens spanning grammar symbols.</strong> <code>&quot;,\n  &quot;</code> crosses a comma, whitespace, and a string opener. The engine must walk <em>all</em> the characters of each token (as in §3–4), not map tokens to grammar terminals one-to-one.</li>
+<li><strong>Non-canonical tokenisations.</strong> The mask admits any token sequence whose <em>string</em> is valid, including tokenisations the model rarely saw in training (e.g. <code>&quot;na&quot; + &quot;me&quot;</code> instead of <code>&quot;name&quot;</code>). Once the model is forced onto such a path, its quality degrades. This <strong>token misalignment</strong> was characterised and addressed with subword-aligned constraints in DOMINO (Beurer-Kellner et al., 2024).</li>
+<li><strong>Prompt/output boundary (token healing).</strong> If the prompt ends in the middle of what would normally be one token (e.g. a template ends with <code>{&quot;name&quot;: &quot;</code>), the model&#39;s natural continuation token may start with characters already in the prompt. Engines &quot;heal&quot; by backing up one token and constraining the regeneration (01.03 §8).</li>
+<li><strong>Byte-level tokens and UTF-8.</strong> Byte-level BPE tokens can be <em>partial UTF-8 characters</em>. Engines working over bytes must handle incomplete code points, and must reject byte sequences that can never complete to valid UTF-8 inside a string.</li>
+<li><strong>EOS and special tokens.</strong> EOS is allowed only in accepting states. Other special tokens (tool-call markers, end-of-turn) must be explicitly allowed or blocked according to the chat template.</li>
+</ol>
+<hr>
+<h2 id="6-distribution-distortion-the-part-most-engineers-miss"><a class="anchor" href="#6-distribution-distortion-the-part-most-engineers-miss">#</a> 6. Distribution Distortion: The Part Most Engineers Miss</h2>
+<h3 id="61-local-masking-global-conditioning"><a class="anchor" href="#61-local-masking-global-conditioning">#</a> 6.1 Local masking ≠ global conditioning</h3>
+<p>What we usually <em>want</em> is the model&#39;s distribution <strong>conditioned</strong> on validity:</p>
+<p>$$
+\pi(y) = \frac{p(y),\mathbb{1}[y \in \mathcal{L}]}{Z}, \qquad Z = \sum_{y&#39; \in \mathcal{L}} p(y&#39;)
+$$</p>
+<p>What token masking actually samples from is the <strong>locally renormalised</strong> product:</p>
+<p>$$
+q(y) = \prod_{t=1}^{|y|} \frac{p(y_t \mid y_{&lt;t}),\mathbb{1}[y_t \in \mathcal{A}<em>t]}{Z_t},
+\qquad Z_t = \sum</em>{v \in \mathcal{A}<em>t} p(v \mid y</em>{&lt;t})
+$$</p>
+<p>These two coincide only when every allowed prefix carries the same fraction of its probability mass into $\mathcal{L}$. In general, masking <strong>over-weights prefixes whose continuations the model considered unlikely</strong>, because the renormalisation at later steps &quot;rescues&quot; them. Their ratio is exactly:</p>
+<p>$$
+\frac{\pi(y)}{q(y)} = \frac{\prod_t Z_t}{Z}
+\quad\Longrightarrow\quad
+w(y) = \prod_{t} Z_t \ \text{ is an unnormalised importance weight}
+$$</p>
+<h3 id="62-worked-example-runnable"><a class="anchor" href="#62-worked-example-runnable">#</a> 6.2 Worked example (runnable)</h3>
+<p>A toy LM over ${a, b}$ generates 2 tokens. The model strongly prefers $a$ first, but after $a$ it almost always wants another $a$ — and $aa$ is <strong>forbidden</strong>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from itertools import product
+
+P1 = {&quot;a&quot;: 0.9, &quot;b&quot;: 0.1}                          # p(y1)
+P2 = {&quot;a&quot;: {&quot;a&quot;: 0.99, &quot;b&quot;: 0.01},                 # p(y2 | y1)
+      &quot;b&quot;: {&quot;a&quot;: 0.5, &quot;b&quot;: 0.5}}
+VALID = {&quot;ab&quot;, &quot;ba&quot;, &quot;bb&quot;}                         # &#39;aa&#39; forbidden
+
+p = {x + y: P1[x] * P2[x][y] for x, y in product(&quot;ab&quot;, &quot;ab&quot;)}
+Z = sum(p[s] for s in VALID)
+target = {s: p[s] / Z for s in VALID}              # π: true conditional
+
+def allowed1():                                    # first tokens that can still complete
+    return {x for x in &quot;ab&quot; if any(s[0] == x for s in VALID)}
+
+def allowed2(x):
+    return {y for y in &quot;ab&quot; if x + y in VALID}
+
+q, w = {}, {}
+for x in allowed1():
+    z1 = sum(P1[u] for u in allowed1())
+    for y in allowed2(x):
+        z2 = sum(P2[x][u] for u in allowed2(x))
+        q[x + y] = (P1[x] / z1) * (P2[x][y] / z2)  # masked sampler
+        w[x + y] = z1 * z2                          # importance weight Π Z_t
+
+print({s: round(target[s], 3) for s in sorted(VALID)})  # {&#39;ab&#39;: 0.083, &#39;ba&#39;: 0.459, &#39;bb&#39;: 0.459}
+print({s: round(q[s], 3) for s in sorted(VALID)})       # {&#39;ab&#39;: 0.9,   &#39;ba&#39;: 0.05,  &#39;bb&#39;: 0.05}</code></pre>
+      </div>
+    <p>The masked sampler outputs <code>ab</code> 90% of the time, although the model assigns it only 8% of the valid mass. The model &quot;wanted&quot; <code>a</code>, then was forced into a continuation it considered very unlikely. <strong>In practice</strong> this shows up as outputs that are syntactically valid but semantically odd: truncated strings, default-looking values, or fields filled with whatever tokens happened to survive the mask.</p>
+<h3 id="63-mitigations"><a class="anchor" href="#63-mitigations">#</a> 6.3 Mitigations</h3>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Idea</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Align the prompt with the constraint</strong></td>
+<td>Describe the schema and give examples, so $p$ already puts most of its mass on $\mathcal{L}$ and the $Z_t \approx 1$</td>
+<td>Free; the most important fix in practice</td>
+</tr>
+<tr>
+<td><strong>Rejection sampling</strong></td>
+<td>Sample unconstrained; keep samples in $\mathcal{L}$</td>
+<td>Exact $\pi$; wasteful when $Z$ is small</td>
+</tr>
+<tr>
+<td><strong>Importance resampling / SMC</strong></td>
+<td>Run $N$ masked particles, weight by $\prod_t Z_t$, resample (Loula et al., 2025)</td>
+<td>Asymptotically exact; $N$× compute</td>
+</tr>
+<tr>
+<td><strong>Grammar-Aligned Decoding (ASAp)</strong> (Park et al., 2024)</td>
+<td>Iteratively learn corrections to $Z_t$ from past samples so that sampling converges to $\pi$</td>
+<td>Multiple passes; research-grade</td>
+</tr>
+<tr>
+<td><strong>Two-step: free generation → constrained extraction</strong></td>
+<td>Reason freely, then convert to structure</td>
+<td>Extra call; preserves reasoning quality (02.03 §3.1)</td>
+</tr>
+</tbody></table>
+<p>A useful diagnostic: <strong>log $\sum_t \log Z_t$ per request</strong>. Large negative values mean the constraint fought the model hard. Those outputs deserve extra validation, and they often point to a prompt or schema problem.</p>
+<hr>
+<h2 id="7-performance-engineering"><a class="anchor" href="#7-performance-engineering">#</a> 7. Performance Engineering</h2>
+<h3 id="71-budget"><a class="anchor" href="#71-budget">#</a> 7.1 Budget</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">  GPU forward pass (decode step, batch B) ────────────────────────────  ~10–30 ms
+  CPU: compute masks for B sequences      ────────────                   must finish inside this window
+  apply mask (bitmask → logits, on GPU)   ─                              ~µs with a fused kernel</code></pre>
+      </div>
+    <ul>
+<li><strong>Bitmasks.</strong> Pack $|\mathcal{V}|$ booleans into $\lceil |\mathcal{V}|/32 \rceil$ int32 words (≈ 4 KB for 128k tokens). Copy to the GPU, then apply with a fused kernel that sets masked logits to $-\infty$.</li>
+<li><strong>Overlap.</strong> Compute the masks for step $t+1$ on the CPU while the GPU runs step $t$&#39;s forward pass (XGrammar/llguidance integrations in vLLM and SGLang do this).</li>
+<li><strong>Cache by state.</strong> For DFAs, masks are per-state and fully precomputable. For CFGs, cache by (grammar position, top-of-stack) for context-independent tokens.</li>
+<li><strong>Compile caching.</strong> Grammar compilation (seconds for large schemas) is keyed by the schema hash; cache it across requests and replicas. This is why providers report first-request latency (02.03 §2.1).</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def pack_bitmask(allowed_ids, vocab_size: int) -&gt; np.ndarray:
+    words = np.zeros((vocab_size + 31) // 32, dtype=np.uint32)
+    ids = np.fromiter(allowed_ids, dtype=np.int64)
+    np.bitwise_or.at(words, ids // 32, (np.uint32(1) &lt;&lt; (ids % 32).astype(np.uint32)))
+    return words.view(np.int32)
+
+
+def apply_bitmask(logits: np.ndarray, words: np.ndarray) -&gt; np.ndarray:
+    bits = np.unpackbits(words.view(np.uint8), bitorder=&quot;little&quot;)[: logits.shape[-1]].astype(bool)
+    return np.where(bits, logits, -np.inf)</code></pre>
+      </div>
+    <h3 id="72-jump-forward-decoding"><a class="anchor" href="#72-jump-forward-decoding">#</a> 7.2 Jump-forward decoding</h3>
+<p>When the constraint leaves exactly <strong>one</strong> valid continuation for several characters (e.g. after <code>{&quot;bill_id&quot;: </code> in a fixed-order schema the next characters must be <code>&quot;</code>), the engine can append them <em>without calling the model</em> (SGLang&#39;s compressed FSM). This saves decode steps on boilerplate-heavy schemas.</p>
+<p><strong>Caveat:</strong> the forced <em>string</em> must be retokenized so that the model sees a canonical tokenisation (§5.2), and prefix caching must handle the inserted tokens.</p>
+<h3 id="73-interaction-with-other-serving-features"><a class="anchor" href="#73-interaction-with-other-serving-features">#</a> 7.3 Interaction with other serving features</h3>
+<ul>
+<li><strong>Speculative decoding (01.02 §5):</strong> draft tokens must be validated against the constraint too. Verification applies masks at each drafted position, and grammar state must roll back on rejection.</li>
+<li><strong>Batching:</strong> each sequence carries its own grammar state. Heterogeneous schemas in one batch are normal; mask generation must be per-sequence and parallel (thread pool).</li>
+<li><strong>Beam search and parallel sampling:</strong> fork the grammar state cheaply with persistent (immutable) stacks.</li>
+</ul>
+<hr>
+<h2 id="8-beyond-syntax-semantic-constraints"><a class="anchor" href="#8-beyond-syntax-semantic-constraints">#</a> 8. Beyond Syntax: Semantic Constraints</h2>
+<p>The same masking mechanism can enforce <strong>semantic</strong> validity when you can compute allowed continuations:</p>
+<ul>
+<li><strong>Database-grounded values:</strong> restrict a string field to existing IDs, via a trie of valid values → regex alternation, or a dynamic mask.</li>
+<li><strong>Schema-aware SQL:</strong> allow only real table and column names in identifier positions, with joins validated against foreign keys (PICARD-style incremental parsing, Scholak et al., 2021).</li>
+<li><strong>Type-aware code:</strong> monitor-guided decoding queries a static analyser, such as a language server, for valid member names at <code>.</code> positions (Agrawal et al., 2023).</li>
+<li><strong>Tool arguments:</strong> enum values loaded from live configuration.</li>
+</ul>
+<p>These constraints must be <strong>cheap</strong> (sub-millisecond per step) or precomputed. Otherwise, validate after generation and repair (02.03 §4).</p>
+<hr>
+<h2 id="9-a-hugging-face-integration-sketch"><a class="anchor" href="#9-a-hugging-face-integration-sketch">#</a> 9. A Hugging Face Integration Sketch</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+from transformers import LogitsProcessor
+
+
+class DFALogitsProcessor(LogitsProcessor):
+    &quot;&quot;&quot;Batch-aware regex constraint for transformers.generate (educational).
+
+    `vocab` must map token_id -&gt; the exact decoded string contribution of that token.
+    Build it with care for byte-level tokenizers, e.g.
+      {i: tok.convert_tokens_to_string([t]) for t, i in tok.get_vocab().items()}
+    and drop special tokens except EOS.
+    &quot;&quot;&quot;
+
+    def __init__(self, pattern: str, vocab: dict[int, str], eos_id: int, prompt_len: int):
+        self.q0, self.index, self.finals = compile_regex_index(pattern, vocab)
+        self.eos_id, self.prompt_len = eos_id, prompt_len
+        self.states: list[int] | None = None
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -&gt; torch.FloatTensor:
+        B = input_ids.shape[0]
+        if self.states is None:
+            self.states = [self.q0] * B
+        elif input_ids.shape[1] &gt; self.prompt_len:            # advance on the last sampled token
+            for b in range(B):
+                last = int(input_ids[b, -1])
+                if last != self.eos_id and self.states[b] is not None:
+                    self.states[b] = self.index[self.states[b]].get(last)
+        mask = torch.full_like(scores, float(&quot;-inf&quot;))
+        for b, q in enumerate(self.states):
+            if q is None:                                      # should not happen if masks are applied
+                mask[b, self.eos_id] = 0.0
+                continue
+            ids = list(self.index.get(q, {}))
+            if q in self.finals:
+                ids.append(self.eos_id)
+            mask[b, ids] = 0.0
+        return scores + mask</code></pre>
+      </div>
+    <p>Use this to <em>learn</em> the mechanism. In production, use your engine&#39;s native structured-output support (XGrammar or llguidance in vLLM/SGLang), which handles byte-level tokens, caching, overlap, and batching correctly.</p>
+<hr>
+<h2 id="10-production-challenges-how-to-solve-them"><a class="anchor" href="#10-production-challenges-how-to-solve-them">#</a> 10. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Mask computation bottleneck</strong></td>
+<td>Throughput drops when structured output is on</td>
+<td>Use XGrammar/llguidance; overlap with the forward pass; cache compiled grammars; simplify schemas</td>
+</tr>
+<tr>
+<td><strong>Grammar compile latency</strong></td>
+<td>First request with a new schema is slow</td>
+<td>Precompile on deploy; cache by schema hash across replicas; avoid per-request dynamic schemas</td>
+</tr>
+<tr>
+<td><strong>Whitespace/runaway loops</strong></td>
+<td>Output fills <code>max_tokens</code> with spaces or newlines</td>
+<td>Compact-JSON whitespace policy; bounded whitespace; <code>max_tokens</code> guard</td>
+</tr>
+<tr>
+<td><strong>Semantically odd but valid output</strong></td>
+<td>Default-looking values, truncated strings</td>
+<td>Align the prompt with the schema; log $\sum \log Z_t$; two-step reason→extract; semantic validation</td>
+</tr>
+<tr>
+<td><strong>Unsupported schema keywords</strong></td>
+<td>Silently ignored constraints</td>
+<td>Test the backend with a conformance suite (02.03 Project 2); enforce in post-validation</td>
+</tr>
+<tr>
+<td><strong>Token misalignment</strong></td>
+<td>Degraded quality inside constrained strings</td>
+<td>Engines with canonical/subword-aligned handling; token healing at prompt boundaries</td>
+</tr>
+<tr>
+<td><strong>Speculative decoding conflicts</strong></td>
+<td>Acceptance rate drops or crashes</td>
+<td>Use engine versions that support spec-decode + grammar together; validate drafts under the mask</td>
+</tr>
+<tr>
+<td><strong>Recursion or deep nesting</strong></td>
+<td>Compile failures, exponential DFAs</td>
+<td>CFG backend; cap depth in the schema; flatten</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="11-hands-on-projects"><a class="anchor" href="#11-hands-on-projects">#</a> 11. Hands-On Projects</h2>
+<h3 id="project-1-build-a-regex-constrained-decoding-engine"><a class="anchor" href="#project-1-build-a-regex-constrained-decoding-engine">#</a> Project 1 — Build a Regex-Constrained Decoding Engine</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an inference engineer</em>, I want to implement regex → DFA → token-index constrained decoding myself, so that I understand and can debug production engines.</li>
+<li><em>As a performance engineer</em>, I want measured mask latency vs vocabulary size and DFA size, so that I know when this approach breaks down.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li><code>compile_regex_index</code> works with a real tokenizer (e.g. a ~150k-vocabulary open model), correctly handling byte-level tokens and partial UTF-8. Special tokens are excluded except EOS.</li>
+<li><strong>Property test</strong> (Hypothesis): for 20 regexes × 200 random prefixes, the index-based allowed set equals <code>allowed_tokens_naive</code> (§2).</li>
+<li>Integrated into <code>transformers.generate</code> via a <code>LogitsProcessor</code>: 100% of 500 generations fully match the regex (e.g. dates, IDs, emails, the bounded JSON schemas from §3.2).</li>
+<li>Benchmarks index build time and memory vs regex complexity, per-step mask time (P50/P99), and throughput impact vs unconstrained decoding.</li>
+<li>Implements jump-forward for single-path states and measures the saved decode steps on a boilerplate-heavy JSON schema.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Build the vocabulary-string map carefully. Test that concatenating the decoded strings of a token sequence equals <code>tokenizer.decode</code> of the sequence.</li>
+<li>Implement §3.1 and optimise the build: walk a token trie per DFA state instead of each token separately (shared prefixes).</li>
+<li>Write the Hypothesis tests against the naive oracle.</li>
+<li>Implement the <code>LogitsProcessor</code> (§9) with a bitmask path (§7.1).</li>
+<li>Benchmark with <code>time.perf_counter_ns</code>, and profile with py-spy.</li>
+<li>Add jump-forward: if <code>len(allowed) == 1</code> and it isn&#39;t EOS, append the token without a forward pass. Then compare outputs and speed.</li>
+</ol>
+<hr>
+<h3 id="project-2-grammar-constrained-dslsql-generation-with-semantic-constraints"><a class="anchor" href="#project-2-grammar-constrained-dslsql-generation-with-semantic-constraints">#</a> Project 2 — Grammar-Constrained DSL/SQL Generation with Semantic Constraints</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a data-platform engineer</em>, I want natural-language questions over a legislative database converted into <strong>always-parseable</strong> SQL (or an internal query DSL) that only references real tables and columns, so that the query layer never receives garbage.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A CFG (GBNF, Lark, or the llguidance/XGrammar format) for a safe SQL subset: <code>SELECT</code> only, whitelisted functions, <code>LIMIT</code> required.</li>
+<li>Identifier positions are constrained to the live schema&#39;s table and column names (generated from <code>information_schema</code> at startup).</li>
+<li>Served through vLLM or SGLang with a grammar backend. Latency overhead vs unconstrained generation is reported.</li>
+<li>On ≥ 150 labelled NL→SQL questions: parse rate (target 100%), execution rate, execution accuracy (result-set match), and comparison against unconstrained generation + post-hoc parse + repair.</li>
+<li>The distortion diagnostic ($\sum \log Z_t$ or a proxy) is logged, and low-score cases are analysed.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Load a sample database (e.g. bills, sponsors, committees, votes) into Postgres or SQLite.</li>
+<li>Write the grammar. Generate the identifier alternations from the schema at startup.</li>
+<li>Configure the engine&#39;s structured-output grammar option; verify with a few hand-written prompts.</li>
+<li>Build the NL→SQL prompt with schema descriptions and 3–5 retrieved examples (02.01 §3.1).</li>
+<li>Evaluate constrained vs unconstrained+repair on parse, execution, and accuracy.</li>
+<li>Write up where constraints helped, where they hurt, and why.</li>
+</ol>
+<hr>
+<h3 id="project-3-measuring-and-correcting-constraint-induced-distortion"><a class="anchor" href="#project-3-measuring-and-correcting-constraint-induced-distortion">#</a> Project 3 — Measuring and Correcting Constraint-Induced Distortion</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an applied scientist</em>, I want to quantify how much masked decoding distorts a model&#39;s distribution on realistic constraints, and whether importance-weighted sampling fixes it, so that we know when structured outputs can bias results (e.g. in LLM-based classification or survey simulation).</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Reproduces §6.2 exactly. Then builds a small real-model case: a ~0.5–1B model, a constraint with enumerable outputs (e.g. an enum of 10 multi-token labels, or dates within one month), and exact $\pi$ computed by scoring every valid string&#39;s log-probability.</li>
+<li>Compares against $\pi$: masked sampling, rejection sampling, and importance resampling with $w = \prod_t Z_t$ ($N \in {4, 16, 64}$ particles), measuring KL divergence and total-variation distance from 5,000 samples each.</li>
+<li>Shows how prompt alignment (describing the enum in the prompt) changes the distortion.</li>
+<li>Reports compute cost per method and a recommendation of when correction is worth it.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Implement exact enumeration: for each valid string, tokenise it canonically and sum the token log-probs under the prompt.</li>
+<li>Implement masked sampling with a trie over the valid strings (a regex alternation compiled to an index works too).</li>
+<li>Record $Z_t$ at each step and compute the weights.</li>
+<li>Implement importance resampling: draw $N$ masked samples, then resample one in proportion to $w$.</li>
+<li>Compute the metrics and plot the distributions side by side.</li>
+<li>Write the analysis, including the effect of non-canonical tokenisations admitted by the mask.</li>
+</ol>
+<hr>
+<h2 id="12-foundational-papers-exact-titles"><a class="anchor" href="#12-foundational-papers-exact-titles">#</a> 12. Foundational Papers (exact titles)</h2>
+<p><strong>Core algorithms</strong></p>
+<ul>
+<li>Willard &amp; Louf, 2023 — <em>Efficient Guided Generation for Large Language Models</em></li>
+<li>Dong et al., 2024 — <em>XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models</em></li>
+<li>Koo, Liu &amp; He, 2024 — <em>Automata-based constraints for language model decoding</em></li>
+<li>Ugare et al., 2024 — <em>SynCode: LLM Generation with Grammar Augmentation</em></li>
+<li>Geng et al., 2023 — <em>Grammar-Constrained Decoding for Structured NLP Tasks without Finetuning</em></li>
+<li>Beurer-Kellner, Fischer &amp; Vechev, 2024 — <em>Guiding LLMs The Right Way: Fast, Non-Invasive Constrained Generation</em></li>
+<li>Zheng et al., 2024 — <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (compressed FSM / jump-forward)</li>
+</ul>
+<p><strong>Distribution faithfulness</strong></p>
+<ul>
+<li>Park et al., 2024 — <em>Grammar-Aligned Decoding</em></li>
+<li>Loula et al., 2025 — <em>Syntactic and Semantic Control of Large Language Models via Sequential Monte Carlo</em></li>
+<li>Tam et al., 2024 — <em>Let Me Speak Freely? A Study on the Impact of Format Restrictions on Performance of Large Language Models</em></li>
+</ul>
+<p><strong>Semantic constraints</strong></p>
+<ul>
+<li>Scholak, Schucher &amp; Bahdanau, 2021 — <em>PICARD: Parsing Incrementally for Constrained Auto-Regressive Decoding from Language Models</em></li>
+<li>Poesia et al., 2022 — <em>Synchromesh: Reliable code generation from pre-trained language models</em></li>
+<li>Agrawal et al., 2023 — <em>Monitor-Guided Decoding of Code LMs with Static Analysis of Repository Context</em></li>
+</ul>
+<p><strong>Benchmarks</strong></p>
+<ul>
+<li>Geng et al., 2025 — <em>JSONSchemaBench: A Rigorous Benchmark of Structured Outputs for Language Models</em></li>
+</ul>
+<p><strong>Theory background</strong></p>
+<ul>
+<li>Hopcroft, Motwani &amp; Ullman — <em>Introduction to Automata Theory, Languages, and Computation</em> (textbook)</li>
+<li>Earley, 1970 — <em>An Efficient Context-Free Parsing Algorithm</em></li>
+</ul>
+<h2 id="13-essential-tooling"><a class="anchor" href="#13-essential-tooling">#</a> 13. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>XGrammar</strong></td>
+<td>High-performance CFG/JSON constrained decoding; default backend in several engines</td>
+</tr>
+<tr>
+<td><strong>llguidance</strong> / <strong>Guidance</strong></td>
+<td>Earley-based grammars with lazy trie masks; token healing</td>
+</tr>
+<tr>
+<td><strong>Outlines</strong></td>
+<td>Regex/JSON/CFG structured generation; readable reference implementation</td>
+</tr>
+<tr>
+<td><strong>vLLM / SGLang structured outputs</strong></td>
+<td>Production integration (batching, overlap, spec-decode interplay)</td>
+</tr>
+<tr>
+<td><strong>llama.cpp GBNF</strong></td>
+<td>Grammar-constrained local inference</td>
+</tr>
+<tr>
+<td><strong>lm-format-enforcer</strong>, <strong>SynCode</strong></td>
+<td>Alternative engines to study and compare</td>
+</tr>
+<tr>
+<td><strong>interegular</strong>, <strong>regex</strong> (PyPI), <strong>Lark</strong></td>
+<td>Regex→FSM, partial matching, grammar authoring and parsing</td>
+</tr>
+<tr>
+<td><strong>Hypothesis</strong></td>
+<td>Property tests against a naive oracle</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-03-structured-outputs-schemas.html"><span>← Previous</span><b>03 structured outputs schemas</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

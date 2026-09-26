@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multi-Object Tracking &amp; Video Memory — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/27-multi-object-tracking/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Multi-Object Tracking &amp; Video Memory</h1>
+    <p class="lesson-sub">Tracking is detection plus association. Detect every frame. Match this frame&#39;s detections to last frame&#39;s tracks by ID.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 06 (YOLO Detection), Phase 4 Lesson 08 (Mask R-CNN), Phase 4 Lesson 24 (SAM 3)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 27">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="113.2" cy="109.7" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.8" cy="104.7" r="9.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.4" cy="99.8" r="8.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.7,99.9 L97.0,87.4 L105.3,99.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.9,94.5 L91.6,83.1 L99.2,94.5 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.1,89.2 L86.1,78.7 L93.1,89.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">27</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multi-Object</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Tracking &amp; Video…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish tracking-by-detection from query-based tracking and name the algorithm families (SORT, DeepSORT, ByteTrack, BoT-SORT, SAM 2 memory tracker, SAM 3.1 Object Multiplex)</li>
+<li>Implement IoU + Hungarian assignment from scratch for classic tracking-by-detection</li>
+<li>Explain SAM 2&#39;s memory bank and why it handles occlusion better than IoU-based association</li>
+<li>Read the three tracking metrics (MOTA, IDF1, HOTA) and pick which one matters for a given use case</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A detector tells you where the objects are in a single frame. A tracker tells you which detection in frame <code>t</code> is the same object as a detection in frame <code>t-1</code>. Without that, you cannot count objects crossing a line, follow a ball through an occlusion, or know &quot;car #4 has been in the lane for 8 seconds.&quot;</p>
+<p>Tracking is essential to every video-facing product: sports analytics, surveillance, autonomous driving, medical video analysis, wildlife monitoring, wordmark counting. The core building blocks are shared: a per-frame detector, a motion model (Kalman filter or something richer), an association step (Hungarian algorithm on IoU / cosine / learned features), and a track lifecycle (birth, update, death).</p>
+<p>2026 brought two new patterns: <strong>SAM 2 memory-based tracking</strong> (feature-memory instead of motion-model association) and <strong>SAM 3.1 Object Multiplex</strong> (shared memory for many instances of the same concept). This lesson walks the classical stack first, then the memory-based approach.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="tracking-by-detection"><a class="anchor" href="#tracking-by-detection">#</a> Tracking-by-detection</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    F1[&quot;Frame t&quot;] --&gt; DET[&quot;Detector&quot;] --&gt; D1[&quot;Detections at t&quot;]
+    PREV[&quot;Tracks up to t-1&quot;] --&gt; PREDICT[&quot;Motion predict&lt;br/&gt;(Kalman)&quot;]
+    PREDICT --&gt; PRED[&quot;Predicted tracks at t&quot;]
+    D1 --&gt; ASSOC[&quot;Hungarian assignment&lt;br/&gt;(IoU / cosine / motion)&quot;]
+    PRED --&gt; ASSOC
+    ASSOC --&gt; UPDATE[&quot;Update matched tracks&quot;]
+    ASSOC --&gt; NEW[&quot;Birth new tracks&quot;]
+    ASSOC --&gt; DEAD[&quot;Age unmatched tracks; delete after N&quot;]
+    UPDATE --&gt; NEXT[&quot;Tracks at t&quot;]
+    NEW --&gt; NEXT
+    DEAD --&gt; NEXT
+
+    style DET fill:#dbeafe,stroke:#2563eb
+    style ASSOC fill:#fef3c7,stroke:#d97706
+    style NEXT fill:#dcfce7,stroke:#16a34a</pre></div><p>Every tracker you will encounter in 2026 is a variation on this loop. The differences:</p>
+<ul>
+<li><strong>SORT</strong> (2016): Kalman filter + IoU Hungarian. Simple, fast, no appearance model.</li>
+<li><strong>DeepSORT</strong> (2017): SORT + a CNN-based appearance feature per track (ReID embedding). Handles crossings better.</li>
+<li><strong>ByteTrack</strong> (2021): associates low-confidence detections as a second stage; no appearance features needed but top performer on MOT17.</li>
+<li><strong>BoT-SORT</strong> (2022): Byte + camera motion compensation + ReID.</li>
+<li><strong>StrongSORT / OC-SORT</strong> — ByteTrack descendants with better motion and appearance.</li>
+</ul>
+<h3 id="kalman-filter-in-one-paragraph"><a class="anchor" href="#kalman-filter-in-one-paragraph">#</a> Kalman filter in one paragraph</h3>
+<p>A Kalman filter maintains a per-track state <code>(x, y, w, h, dx, dy, dw, dh)</code> with a covariance. At each frame, <strong>predict</strong> the state using a constant-velocity model, then <strong>update</strong> with the matched detection. The update trusts the detection more when the predict uncertainty is high. This gives smooth trajectories and the ability to continue a track through a short occlusion (1-5 frames).</p>
+<p>Every classical tracker uses a Kalman filter in the motion-prediction step.</p>
+<h3 id="the-hungarian-algorithm"><a class="anchor" href="#the-hungarian-algorithm">#</a> The Hungarian algorithm</h3>
+<p>Given a <code>M x N</code> cost matrix (tracks x detections), find the one-to-one assignment that minimises total cost. Cost is usually <code>1 - IoU(track_bbox, detection_bbox)</code> or negative cosine similarity of appearance features. Runtime is O((M+N)^3); for M, N up to ~1000 it is fast enough in Python via <code>scipy.optimize.linear_sum_assignment</code>.</p>
+<h3 id="bytetracks-key-idea"><a class="anchor" href="#bytetracks-key-idea">#</a> ByteTrack&#39;s key idea</h3>
+<p>Standard trackers drop low-confidence detections (&lt; 0.5). ByteTrack keeps them around as <strong>second-stage candidates</strong>: after matching tracks to high-confidence detections, unmatched tracks try to match low-confidence detections with a slightly looser IoU threshold. Recovers short occlusions, ID switches near crowds.</p>
+<h3 id="sam-2-memory-based-tracking"><a class="anchor" href="#sam-2-memory-based-tracking">#</a> SAM 2 memory-based tracking</h3>
+<p>SAM 2 handles video by keeping a <strong>memory bank</strong> of per-instance spatio-temporal features. Given a prompt (click, box, text) on one frame, it encodes the instance into memory. On subsequent frames, the memory is cross-attended against the new frame&#39;s features, and the decoder produces a mask for the same instance in the new frame.</p>
+<p>No Kalman filter, no Hungarian assignment. The association is implicit in the memory-attention operation.</p>
+<p>Pros:</p>
+<ul>
+<li>Robust to large occlusions (memory carries instance identity across many frames).</li>
+<li>Open-vocabulary when combined with SAM 3&#39;s text prompts.</li>
+<li>Works without a separate motion model.</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>Slower than ByteTrack for many-object tracking.</li>
+<li>Memory bank grows; limits the context window.</li>
+</ul>
+<h3 id="sam-31-object-multiplex"><a class="anchor" href="#sam-31-object-multiplex">#</a> SAM 3.1 Object Multiplex</h3>
+<p>Prior SAM 2 / SAM 3 tracking keeps a separate memory bank per instance. For 50 objects, 50 memory banks. Object Multiplex (March 2026) collapses them into one shared memory with <strong>per-instance query tokens</strong>. Cost scales sub-linearly in number of instances.</p>
+<p>Multiplex is the new default for crowd tracking in 2026: concert crowds, warehouse workers, traffic intersections.</p>
+<h3 id="three-metrics-to-know"><a class="anchor" href="#three-metrics-to-know">#</a> Three metrics to know</h3>
+<ul>
+<li><strong>MOTA (Multi-Object Tracking Accuracy)</strong> — 1 - (FN + FP + ID switches) / GT. Weighted by error type; a single metric that conflates detection and association failures.</li>
+<li><strong>IDF1 (ID F1)</strong> — harmonic mean of ID precision and recall. Focuses specifically on how well each ground-truth track keeps its ID over time. Better than MOTA for ID-switch-sensitive tasks.</li>
+<li><strong>HOTA (Higher Order Tracking Accuracy)</strong> — decomposes into detection accuracy (DetA) and association accuracy (AssA). The community standard since 2020; most comprehensive.</li>
+</ul>
+<p>For surveillance (who is who): IDF1 is what you report. For sports analytics (counting passes): HOTA. For general academic comparison: HOTA.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-track-assoc</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-iou-based-cost-matrix"><a class="anchor" href="#step-1-iou-based-cost-matrix">#</a> Step 1: IoU-based cost matrix</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def bbox_iou(a, b):
+    &quot;&quot;&quot;
+    a, b: (N, 4) arrays of [x1, y1, x2, y2].
+    Returns (N_a, N_b) IoU matrix.
+    &quot;&quot;&quot;
+    ax1, ay1, ax2, ay2 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    bx1, by1, bx2, by2 = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    inter_x1 = np.maximum(ax1[:, None], bx1[None, :])
+    inter_y1 = np.maximum(ay1[:, None], by1[None, :])
+    inter_x2 = np.minimum(ax2[:, None], bx2[None, :])
+    inter_y2 = np.minimum(ay2[:, None], by2[None, :])
+    inter = np.clip(inter_x2 - inter_x1, 0, None) * np.clip(inter_y2 - inter_y1, 0, None)
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    union = area_a[:, None] + area_b[None, :] - inter
+    return inter / np.clip(union, 1e-8, None)</code></pre>
+      </div>
+    <h3 id="step-2-minimal-sort-style-tracker"><a class="anchor" href="#step-2-minimal-sort-style-tracker">#</a> Step 2: Minimal SORT-style tracker</h3>
+<p>Fixed constant-velocity Kalman omitted for brevity — we use a simple IoU association here; in production the Kalman predict is essential. The <code>sort</code> Python package provides the full version.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from scipy.optimize import linear_sum_assignment
+
+
+class Track:
+    def __init__(self, tid, bbox, frame):
+        self.id = tid
+        self.bbox = bbox
+        self.last_frame = frame
+        self.hits = 1
+
+    def update(self, bbox, frame):
+        self.bbox = bbox
+        self.last_frame = frame
+        self.hits += 1
+
+
+class SimpleTracker:
+    def __init__(self, iou_threshold=0.3, max_age=5):
+        self.tracks = []
+        self.next_id = 1
+        self.iou_threshold = iou_threshold
+        self.max_age = max_age
+
+    def step(self, detections, frame):
+        if not self.tracks:
+            for d in detections:
+                self.tracks.append(Track(self.next_id, d, frame))
+                self.next_id += 1
+            return [(t.id, t.bbox) for t in self.tracks]
+
+        track_boxes = np.array([t.bbox for t in self.tracks])
+        det_boxes = np.array(detections) if len(detections) else np.empty((0, 4))
+
+        iou = bbox_iou(track_boxes, det_boxes) if len(det_boxes) else np.zeros((len(track_boxes), 0))
+        cost = 1 - iou
+        cost[iou &lt; self.iou_threshold] = 1e6
+
+        matched_track = set()
+        matched_det = set()
+        if cost.size &gt; 0:
+            row, col = linear_sum_assignment(cost)
+            for r, c in zip(row, col):
+                if cost[r, c] &lt; 1.0:
+                    self.tracks[r].update(det_boxes[c], frame)
+                    matched_track.add(r); matched_det.add(c)
+
+        for i, d in enumerate(det_boxes):
+            if i not in matched_det:
+                self.tracks.append(Track(self.next_id, d, frame))
+                self.next_id += 1
+
+        self.tracks = [t for t in self.tracks if frame - t.last_frame &lt;= self.max_age]
+        return [(t.id, t.bbox) for t in self.tracks]</code></pre>
+      </div>
+    <p>60 lines. Takes per-frame detections, returns per-frame track IDs. Real systems add the Kalman predict, ByteTrack&#39;s second-stage re-match, and appearance features.</p>
+<h3 id="step-3-synthetic-trajectory-test"><a class="anchor" href="#step-3-synthetic-trajectory-test">#</a> Step 3: Synthetic trajectory test</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def synthetic_frames(num_frames=20, num_objects=3, H=240, W=320, seed=0):
+    rng = np.random.default_rng(seed)
+    starts = rng.uniform(20, 200, size=(num_objects, 2))
+    velocities = rng.uniform(-5, 5, size=(num_objects, 2))
+    frames = []
+    for f in range(num_frames):
+        dets = []
+        for i in range(num_objects):
+            cx, cy = starts[i] + f * velocities[i]
+            dets.append([cx - 10, cy - 10, cx + 10, cy + 10])
+        frames.append(dets)
+    return frames
+
+
+tracker = SimpleTracker()
+for f, dets in enumerate(synthetic_frames()):
+    tracks = tracker.step(dets, f)</code></pre>
+      </div>
+    <p>Three objects moving in straight lines should keep their IDs across all 20 frames.</p>
+<h3 id="step-4-id-switch-metric"><a class="anchor" href="#step-4-id-switch-metric">#</a> Step 4: ID-switch metric</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def count_id_switches(tracks_per_frame, gt_per_frame):
+    &quot;&quot;&quot;
+    tracks_per_frame:  list of list of (track_id, bbox)
+    gt_per_frame:      list of list of (gt_id, bbox)
+    Returns number of ID switches.
+    &quot;&quot;&quot;
+    prev_assignment = {}
+    switches = 0
+    for tracks, gts in zip(tracks_per_frame, gt_per_frame):
+        if not tracks or not gts:
+            continue
+        t_boxes = np.array([b for _, b in tracks])
+        g_boxes = np.array([b for _, b in gts])
+        iou = bbox_iou(g_boxes, t_boxes)
+        for g_idx, (gt_id, _) in enumerate(gts):
+            j = iou[g_idx].argmax()
+            if iou[g_idx, j] &gt; 0.5:
+                t_id = tracks[j][0]
+                if gt_id in prev_assignment and prev_assignment[gt_id] != t_id:
+                    switches += 1
+                prev_assignment[gt_id] = t_id
+    return switches</code></pre>
+      </div>
+    <p>This is a simplified IDF1-adjacent metric: count how many times a ground-truth object changes its assigned predicted track ID. Real MOTA / IDF1 / HOTA tooling lives in <code>py-motmetrics</code> and <code>TrackEval</code>.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production trackers in 2026:</p>
+<ul>
+<li><code>ultralytics</code> — YOLOv8 + ByteTrack / BoT-SORT built-in. <code>results = model.track(source, tracker=&quot;bytetrack.yaml&quot;)</code>. The default.</li>
+<li><code>supervision</code> (Roboflow) — ByteTrack wrappers plus annotation utilities.</li>
+<li>SAM 2 / SAM 3.1 — memory-based tracking via <code>processor.track()</code>.</li>
+<li>Custom stack: detector (YOLOv8 / RT-DETR) + <code>sort-tracker</code> / <code>OC-SORT</code> / <code>StrongSORT</code>.</li>
+</ul>
+<p>Picking:</p>
+<ul>
+<li>Pedestrians / cars / boxes at 30+ fps: <strong>ByteTrack with ultralytics</strong>.</li>
+<li>Many instances of one class in a crowd: <strong>SAM 3.1 Object Multiplex</strong>.</li>
+<li>Heavy occlusions with identifiable appearance: <strong>DeepSORT / StrongSORT</strong> (ReID features).</li>
+<li>Sports / complex interactions: <strong>BoT-SORT</strong> or learned trackers (MOTRv3).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-tracker-picker.md</code> — picks SORT / ByteTrack / BoT-SORT / SAM 2 / SAM 3.1 given scene type, occlusion patterns, and latency budget.</li>
+<li><code>outputs/skill-mot-evaluator.md</code> — writes a complete evaluation harness for MOTA / IDF1 / HOTA against ground-truth tracks.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run the synthetic tracker above with 3, 10, and 30 objects. Report ID-switch count in each case. Identify where the simple IoU-only association starts to fail.</li>
+<li><strong>(Medium)</strong> Add a constant-velocity Kalman predict step before association. Show that short (2-3 frame) occlusions no longer cause ID switches.</li>
+<li><strong>(Hard)</strong> Integrate SAM 2&#39;s memory-based tracker (via <code>transformers</code>) as an alternative tracker backend. Run both SimpleTracker and SAM 2 on a 30-second clip of a crowd and compare ID-switch counts, manually labelling ground-truth IDs for 5 salient people.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tracking-by-detection</td>
+<td>&quot;Detect then associate&quot;</td>
+<td>Per-frame detector + Hungarian assignment on IoU / appearance</td>
+</tr>
+<tr>
+<td>Kalman filter</td>
+<td>&quot;Motion predict&quot;</td>
+<td>Linear dynamics + covariance for smooth track predictions and occlusion handling</td>
+</tr>
+<tr>
+<td>Hungarian algorithm</td>
+<td>&quot;Optimal assignment&quot;</td>
+<td>Solves the minimum-cost bipartite matching problem; <code>scipy.optimize.linear_sum_assignment</code></td>
+</tr>
+<tr>
+<td>ByteTrack</td>
+<td>&quot;Low-confidence second pass&quot;</td>
+<td>Re-match unmatched tracks to low-confidence detections to recover short occlusions</td>
+</tr>
+<tr>
+<td>DeepSORT</td>
+<td>&quot;SORT + appearance&quot;</td>
+<td>Adds a ReID feature for cross-frame matching; better for ID preservation</td>
+</tr>
+<tr>
+<td>Memory bank</td>
+<td>&quot;SAM 2 trick&quot;</td>
+<td>Per-instance spatio-temporal features stored across frames; cross-attention replaces explicit association</td>
+</tr>
+<tr>
+<td>Object Multiplex</td>
+<td>&quot;SAM 3.1 shared memory&quot;</td>
+<td>Single shared memory with per-instance queries for fast many-object tracking</td>
+</tr>
+<tr>
+<td>HOTA</td>
+<td>&quot;Modern tracking metric&quot;</td>
+<td>Decomposes into detection and association accuracy; community standard</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1602.00763">SORT (Bewley et al., 2016)</a> — the minimal tracking-by-detection paper</li>
+<li><a href="https://arxiv.org/abs/1703.07402">DeepSORT (Wojke et al., 2017)</a> — adds appearance feature</li>
+<li><a href="https://arxiv.org/abs/2110.06864">ByteTrack (Zhang et al., 2022)</a> — low-confidence second pass</li>
+<li><a href="https://arxiv.org/abs/2206.14651">BoT-SORT (Aharon et al., 2022)</a> — camera motion compensation</li>
+<li><a href="https://arxiv.org/abs/2009.07736">HOTA (Luiten et al., 2020)</a> — decomposed tracking metric</li>
+<li><a href="https://ai.meta.com/sam2/">SAM 2 video segmentation (Meta, 2024)</a> — memory-based tracker</li>
+<li><a href="https://ai.meta.com/blog/segment-anything-model-3/">SAM 3.1 Object Multiplex (Meta, March 2026)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./26-monocular-depth.html"><span>← Previous</span><b>monocular depth</b></a>
+      <a class="next" href="./28-world-models-video-diffusion.html"><span>Next →</span><b>world models video diffusion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Query Preprocessing — RAG from Scratch</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#c05621;--accent-2:#8a3d17;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/rag-from-scratch"><b>RAG from Scratch</b></a>
+  <nav>
+    <a href="/rag-from-scratch">Index</a>
+    <a href="https://github.com/pguso/rag-from-scratch/blob/main/examples/06_retrieval_strategies/02_query_preprocessing/CONCEPT.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/rag-from-scratch">RAG from Scratch</a>
+    </div>
+    <div class="phase-label">Retrieval Strategies</div>
+    <ol class="toc"><li><a href="#what-is-query-preprocessing">What is Query Preprocessing?</a></li><li><a href="#why-do-we-need-it">Why Do We Need It?</a></li><li><a href="#what-is-noise-in-queries">What is &quot;Noise&quot; in Queries?</a></li><li><a href="#preprocessing-techniques">Preprocessing Techniques</a></li><li><a href="#the-recommended-pipeline">The Recommended Pipeline</a></li><li><a href="#visual-summary">Visual Summary</a></li><li><a href="#core-concepts">Core Concepts</a></li><li><a href="#code-walkthrough">Code walkthrough</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">RAG from Scratch · Retrieval Strategies</div>
+    <h1 class="lesson-title">Query Preprocessing</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RAG from Scratch — Retrieval Strategies 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="123.7" cy="119.2" r="11.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="118.3" cy="114.3" r="10.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="112.9" cy="109.4" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.5" cy="104.4" r="9.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.1" cy="99.5" r="8.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.4,99.5 L96.6,87.2 L104.9,99.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="128" lengthAdjust="spacingAndGlyphs">RAG FROM SCRATCH</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">RETRIEVAL STRATEGIES</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Query Preprocessing</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="what-is-query-preprocessing"><a class="anchor" href="#what-is-query-preprocessing">#</a> What is Query Preprocessing?</h2>
+<p>Query preprocessing is <strong>cleaning up user queries</strong> before searching for relevant documents.</p>
+<p>Think of it like preparing ingredients before cooking:</p>
+<ul>
+<li>Wash the vegetables (remove noise)</li>
+<li>Chop everything the same size (normalize format)</li>
+<li>Use fresh ingredients (expand abbreviations)</li>
+</ul>
+<p><strong>Simple Definition:</strong></p>
+<blockquote>
+<p>Query preprocessing transforms messy user input into clean, consistent queries that work better with search.</p>
+</blockquote>
+<hr>
+<h2 id="why-do-we-need-it"><a class="anchor" href="#why-do-we-need-it">#</a> Why Do We Need It?</h2>
+<h3 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h3>
+<p>Users type queries in many different ways:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;What&#39;s ML?&quot;
+&quot;WHAT IS ML!!!&quot;
+&quot;what   is    ml&quot;
+&quot;  What is ML?  &quot;</code></pre>
+      </div>
+    <p><strong>These all mean the same thing</strong>, but computers see them as different!</p>
+<h3 id="without-preprocessing"><a class="anchor" href="#without-preprocessing">#</a> Without Preprocessing</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User 1: &quot;What&#39;s ML?&quot;     → Gets Result A
+User 2: &quot;what is ml&quot;     → Gets Result B  
+User 3: &quot;WHAT IS ML???&quot;  → Gets Result C
+
+❌ Same question, different answers = Bad user experience</code></pre>
+      </div>
+    <h3 id="with-preprocessing"><a class="anchor" href="#with-preprocessing">#</a> With Preprocessing</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User 1: &quot;What&#39;s ML?&quot;     → &quot;what is machine learning&quot; → Result X
+User 2: &quot;what is ml&quot;     → &quot;what is machine learning&quot; → Result X
+User 3: &quot;WHAT IS ML???&quot;  → &quot;what is machine learning&quot; → Result X
+
+✅ Same question, same answer = Good user experience</code></pre>
+      </div>
+    <hr>
+<h2 id="what-is-noise-in-queries"><a class="anchor" href="#what-is-noise-in-queries">#</a> What is &quot;Noise&quot; in Queries?</h2>
+<p><strong>Noise</strong> = anything that doesn&#39;t help find the right answer.</p>
+<h3 id="examples-of-noise"><a class="anchor" href="#examples-of-noise">#</a> Examples of Noise</h3>
+<p><strong>1. Extra Spaces</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;what   is    python&quot;  ← Too many spaces
+&quot;what is python&quot;       ← Clean</code></pre>
+      </div>
+    <p><strong>2. SHOUTING</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;WHAT IS PYTHON!!!&quot;    ← All caps + punctuation
+&quot;what is python&quot;       ← Clean</code></pre>
+      </div>
+    <p><strong>3. Punctuation Overload</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;what&#39;s python???&quot;     ← Too much punctuation
+&quot;what is python&quot;       ← Clean</code></pre>
+      </div>
+    <p><strong>4. Messy Formatting</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;  What   IS   Python???  &quot;  ← Spaces, caps, punctuation
+&quot;what is python&quot;             ← Clean</code></pre>
+      </div>
+    <h3 id="why-noise-is-bad"><a class="anchor" href="#why-noise-is-bad">#</a> Why Noise is Bad</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Noisy Query:   &quot;   WHAT   IS   Python???  &quot;
+                    ↓
+              Embedding Model
+                    ↓
+         [0.234, 0.112, 0.889, ...]  ← Inconsistent embedding
+                    ↓
+              Poor results ❌
+
+
+Clean Query:   &quot;what is python&quot;
+                    ↓
+              Embedding Model
+                    ↓
+         [0.891, 0.234, 0.567, ...]  ← Consistent embedding
+                    ↓
+              Good results ✅</code></pre>
+      </div>
+    <hr>
+<h2 id="preprocessing-techniques"><a class="anchor" href="#preprocessing-techniques">#</a> Preprocessing Techniques</h2>
+<h3 id="1-lowercase-always-use"><a class="anchor" href="#1-lowercase-always-use">#</a> 1. Lowercase (Always Use)</h3>
+<p><strong>What it does:</strong> Converts everything to lowercase</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;PYTHON&quot; → &quot;python&quot;
+&quot;Python&quot; → &quot;python&quot;
+&quot;PyThOn&quot; → &quot;python&quot;</code></pre>
+      </div>
+    <p><strong>Why it helps:</strong></p>
+<p>These should all mean the same thing:</p>
+<ul>
+<li>&quot;Python programming&quot;</li>
+<li>&quot;PYTHON programming&quot;</li>
+<li>&quot;python programming&quot;</li>
+</ul>
+<p>But computers see them as different. Lowercase makes them identical!</p>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Before
+&quot;What is Python?&quot; 
+&quot;WHAT IS PYTHON?&quot;
+
+// After lowercase
+&quot;what is python?&quot;  ← Both the same now!
+&quot;what is python?&quot;</code></pre>
+      </div>
+    <p><strong>Rule of thumb:</strong> Always use lowercase for user queries.</p>
+<hr>
+<h3 id="2-whitespace-normalization-always-use"><a class="anchor" href="#2-whitespace-normalization-always-use">#</a> 2. Whitespace Normalization (Always Use)</h3>
+<p><strong>What it does:</strong> Fixes spacing issues</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;what   is    python&quot;     → &quot;what is python&quot;
+&quot;what\tis\npython&quot;        → &quot;what is python&quot;
+&quot;  what is python  &quot;      → &quot;what is python&quot;</code></pre>
+      </div>
+    <p><strong>Why it helps:</strong></p>
+<p>Extra spaces confuse the system:</p>
+<ul>
+<li>Computer sees: &quot;what␣␣␣is␣␣python&quot;</li>
+<li>Should be: &quot;what␣is␣python&quot;</li>
+</ul>
+<p><strong>How it works:</strong></p>
+<ol>
+<li>Replace all whitespace (spaces, tabs, newlines) with single space</li>
+<li>Remove spaces at start and end</li>
+</ol>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Before
+&quot;   What   IS   Python???  &quot;
+
+// After normalization
+&quot;what is python???&quot;  ← Clean spacing</code></pre>
+      </div>
+    <hr>
+<h3 id="3-query-expansion-recommended"><a class="anchor" href="#3-query-expansion-recommended">#</a> 3. Query Expansion (Recommended)</h3>
+<p><strong>What it does:</strong> Replaces abbreviations with full words</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;ML&quot;  → &quot;machine learning&quot;
+&quot;AI&quot;  → &quot;artificial intelligence&quot;
+&quot;JS&quot;  → &quot;javascript&quot;
+&quot;plz&quot; → &quot;please&quot;</code></pre>
+      </div>
+    <p><strong>Why it helps:</strong></p>
+<p>Users use shortcuts, documents use full terms:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User types:       &quot;Tell me about ML&quot;
+Document says:    &quot;Machine learning is a subset of AI...&quot;
+
+Problem: &quot;ML&quot; doesn&#39;t match &quot;machine learning&quot; well!
+
+Solution: Expand &quot;ML&quot; → &quot;machine learning&quot;</code></pre>
+      </div>
+    <p><strong>Common Expansions:</strong></p>
+<p><strong>Technical:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">ml   → machine learning
+ai   → artificial intelligence
+api  → application programming interface
+js   → javascript
+py   → python</code></pre>
+      </div>
+    <p><strong>Chat-speak:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">plz  → please
+thx  → thanks
+abt  → about
+diff → difference</code></pre>
+      </div>
+    <p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Before
+&quot;tell me abt ML plz&quot;
+
+// After expansion
+&quot;tell me about machine learning please&quot;
+
+// Result: Much better match with documents!</code></pre>
+      </div>
+    <hr>
+<h3 id="4-special-character-removal-use-carefully"><a class="anchor" href="#4-special-character-removal-use-carefully">#</a> 4. Special Character Removal (Use Carefully)</h3>
+<p><strong>What it does:</strong> Removes punctuation and symbols</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;What&#39;s Python???&quot; → &quot;what s python&quot;
+&quot;###ML###&quot;        → &quot;ml&quot;
+&quot;python!!!&quot;       → &quot;python&quot;</code></pre>
+      </div>
+    <p><strong>Why it helps:</strong></p>
+<p>Special characters add noise:</p>
+<ul>
+<li>They don&#39;t change the meaning much</li>
+<li>They make embeddings inconsistent</li>
+<li>Different punctuation = different embeddings</li>
+</ul>
+<p><strong>When it helps:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Excessive noise - removal helps!
+&quot;###python### !!! @@@&quot; → &quot;python&quot;
+✅ Much cleaner</code></pre>
+      </div>
+    <p><strong>When it hurts:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Natural punctuation - removal hurts!
+&quot;What&#39;s machine learning?&quot; → &quot;what s machine learning&quot;
+❌ Created artifact &quot;s&quot;</code></pre>
+      </div>
+    <p><strong>The Solution:</strong></p>
+<p>Expand FIRST, then remove special characters:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// RIGHT ORDER ✅
+&quot;What&#39;s ML&quot;
+  → expand: &quot;what is machine learning&quot;
+  → remove special: &quot;what is machine learning&quot;
+  ← Clean!
+
+// WRONG ORDER ❌
+&quot;What&#39;s ML&quot;
+  → remove special: &quot;what s ml&quot;
+  → expand: &quot;what s machine learning&quot;
+  ← Artifact &quot;s&quot; remains!</code></pre>
+      </div>
+    <hr>
+<h2 id="the-recommended-pipeline"><a class="anchor" href="#the-recommended-pipeline">#</a> The Recommended Pipeline</h2>
+<h3 id="step-by-step-process"><a class="anchor" href="#step-by-step-process">#</a> Step-by-Step Process</h3>
+<p>Here&#39;s the best order to clean queries:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function preprocessQuery(query) {
+    // 1. Lowercase
+    query = query.toLowerCase();
+    
+    // 2. Trim edges
+    query = query.trim();
+    
+    // 3. Fix whitespace
+    query = query.replace(/\s+/g, &#39; &#39;);
+    
+    // 4. Expand abbreviations (BEFORE removing special chars!)
+    query = expandAbbreviations(query);
+    
+    // 5. Remove special characters
+    query = query.replace(/[^a-z0-9\s]/gi, &#39; &#39;);
+    
+    // 6. Fix whitespace again
+    query = query.replace(/\s+/g, &#39; &#39;).trim();
+    
+    return query;
+}</code></pre>
+      </div>
+    <h3 id="real-example"><a class="anchor" href="#real-example">#</a> Real Example</h3>
+<p>Let&#39;s see it in action:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">Input: &quot;   Hey!!! Tell me abt ML plz???  &quot;
+
+Step 1 - Lowercase:
+&quot;   hey!!! tell me abt ml plz???  &quot;
+
+Step 2 - Trim:
+&quot;hey!!! tell me abt ml plz???&quot;
+
+Step 3 - Fix whitespace:
+&quot;hey!!! tell me abt ml plz???&quot;
+
+Step 4 - Expand abbreviations:
+&quot;hey!!! tell me about machine learning please???&quot;
+
+Step 5 - Remove special chars:
+&quot;hey tell me about machine learning please&quot;
+
+Step 6 - Fix whitespace again:
+&quot;hey tell me about machine learning please&quot;
+
+✅ Final: Clean, searchable query!</code></pre>
+      </div>
+    <h3 id="why-this-order"><a class="anchor" href="#why-this-order">#</a> Why This Order?</h3>
+<p><strong>Order matters!</strong> Think of it like cooking:</p>
+<p>❌ <strong>Wrong:</strong> Chop vegetables, then wash them</p>
+<ul>
+<li>Dirt gets inside the cuts!</li>
+</ul>
+<p>✅ <strong>Right:</strong> Wash vegetables, then chop them</p>
+<ul>
+<li>Clean ingredients from start</li>
+</ul>
+<p><strong>In preprocessing:</strong></p>
+<p>❌ <strong>Wrong:</strong> Remove special chars, then expand</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;What&#39;s ML&quot; → &quot;what s ml&quot; → &quot;what s machine learning&quot;
+                            ↑ Artifact remains!</code></pre>
+      </div>
+    <p>✅ <strong>Right:</strong> Expand, then remove special chars</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;What&#39;s ML&quot; → &quot;what is machine learning&quot; → &quot;what is machine learning&quot;
+                                           ↑ Clean!</code></pre>
+      </div>
+    <hr>
+<h2 id="visual-summary"><a class="anchor" href="#visual-summary">#</a> Visual Summary</h2>
+<h3 id="before-and-after"><a class="anchor" href="#before-and-after">#</a> Before and After</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">MESSY INPUT:
+┌─────────────────────────────────────┐
+│ &quot;   WHAT&#39;S   ML???   &quot;              │
+│ &quot;what is ml&quot;                        │
+│ &quot;###Tell me abt ML plz!!!###&quot;       │
+└─────────────────────────────────────┘
+         ↓ PREPROCESSING ↓
+┌─────────────────────────────────────┐
+│ &quot;what is machine learning&quot;          │
+│ &quot;what is machine learning&quot;          │
+│ &quot;tell me about machine learning     │
+│  please&quot;                            │
+└─────────────────────────────────────┘
+CLEAN OUTPUT - CONSISTENT RESULTS!</code></pre>
+      </div>
+    <h3 id="the-impact"><a class="anchor" href="#the-impact">#</a> The Impact</h3>
+<p><strong>Without Preprocessing:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;What&#39;s ML???&quot;
+Embedding: [0.23, 0.45, 0.12, ...]
+Top Result: 78% match ❌</code></pre>
+      </div>
+    <p><strong>With Preprocessing:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;What&#39;s ML???&quot;
+Preprocessed: &quot;what is machine learning&quot;
+Embedding: [0.89, 0.56, 0.78, ...]
+Top Result: 92% match ✅</code></pre>
+      </div>
+    <p><strong>Improvement: 14% better results!</strong></p>
+<h3 id="problem-3-vocabulary-mismatch"><a class="anchor" href="#problem-3-vocabulary-mismatch">#</a> Problem 3: Vocabulary Mismatch</h3>
+<p><strong>The Gap:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User Query:          Document Content:
+&quot;Tell me about ML&quot;   &quot;Machine learning is a subset of AI...&quot;
+&quot;JS frameworks&quot;      &quot;JavaScript libraries for building UIs...&quot;
+&quot;abt APIs plz&quot;       &quot;About application programming interfaces...&quot;</code></pre>
+      </div>
+    <p><strong>Impact:</strong></p>
+<ul>
+<li>User vocabulary ≠ Document vocabulary</li>
+<li>Abbreviations don&#39;t match full terms</li>
+<li>Chat-speak doesn&#39;t match formal writing</li>
+<li>Semantic similarity is obscured by lexical differences</li>
+</ul>
+<h3 id="problem-4-stopword-controversy"><a class="anchor" href="#problem-4-stopword-controversy">#</a> Problem 4: Stopword Controversy</h3>
+<p><strong>Traditional View (TF-IDF, BM25):</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;what is the best way to learn python&quot;
+       ↓ Remove stopwords
+&quot;best way learn python&quot;
+✓ Focus on content words
+✓ Reduce noise</code></pre>
+      </div>
+    <p><strong>Modern View (Neural Embeddings):</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;what is the best way to learn python&quot;
+       ↓ Keep stopwords
+&quot;what is the best way to learn python&quot;
+✓ Context matters: &quot;what is&quot; vs &quot;what&quot;
+✓ Grammar provides semantic clues
+✓ Models trained on natural language</code></pre>
+      </div>
+    <p><strong>The Dilemma:</strong></p>
+<ul>
+<li>Old techniques say remove</li>
+<li>New models say keep</li>
+<li>Impact is model-specific</li>
+<li>Must test empirically</li>
+</ul>
+<hr>
+<h2 id="core-concepts"><a class="anchor" href="#core-concepts">#</a> Core Concepts</h2>
+<h3 id="concept-1-embedding-space-stability"><a class="anchor" href="#concept-1-embedding-space-stability">#</a> Concept 1: Embedding Space Stability</h3>
+<p><strong>Definition:</strong>
+The degree to which semantically identical queries produce similar embeddings.</p>
+<p><strong>Visualization:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Unstable Embedding Space (No Preprocessing):
+┌────────────────────────────────────┐
+│  &quot;python&quot;                          │
+│         ●                          │
+│                                    │
+│                    &quot;Python&quot;        │
+│                           ●        │
+│                                    │
+│  &quot;PYTHON!!!&quot;                       │
+│         ●                          │
+└────────────────────────────────────┘
+Embeddings are scattered despite same meaning
+
+Stable Embedding Space (With Preprocessing):
+┌────────────────────────────────────┐
+│                                    │
+│                                    │
+│          &quot;python&quot; cluster          │
+│                 ●●●                │
+│                                    │
+│                                    │
+└────────────────────────────────────┘
+Embeddings are tightly clustered</code></pre>
+      </div>
+    <p><strong>Why It Matters:</strong></p>
+<ul>
+<li>Predictable retrieval</li>
+<li>Consistent user experience</li>
+<li>Fewer edge cases</li>
+<li>Easier to debug</li>
+</ul>
+<p><strong>How to Measure:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Calculate cosine similarity between query variations
+const queries = [&quot;What is Python?&quot;, &quot;WHAT IS PYTHON&quot;, &quot;what is python&quot;];
+const embeddings = queries.map(q =&gt; embed(preprocess(q)));
+
+// High stability: similarity &gt; 0.99
+// Low stability: similarity &lt; 0.95
+const stability = cosineSimilarity(embeddings[0], embeddings[1]);</code></pre>
+      </div>
+    <h3 id="concept-2-signal-to-noise-ratio"><a class="anchor" href="#concept-2-signal-to-noise-ratio">#</a> Concept 2: Signal-to-Noise Ratio</h3>
+<p><strong>Definition:</strong>
+The ratio of meaningful semantic information to irrelevant surface-level noise in a query.</p>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">SNR = Semantic Information / Total Information
+
+High SNR:   &quot;machine learning algorithms&quot;  (all content)
+Medium SNR: &quot;what is ML?&quot;                  (some noise, some content)
+Low SNR:    &quot;###ML!!!###&quot;                  (mostly noise)</code></pre>
+      </div>
+    <p><strong>Impact on Embeddings:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">High SNR Query:
+[0.23, 0.87, 0.45, ...]  ← Clear semantic signal
+         ↓
+    Good retrieval
+
+Low SNR Query:
+[0.12, 0.09, 0.11, ...]  ← Weak, noisy signal
+         ↓
+    Poor retrieval</code></pre>
+      </div>
+    <p><strong>Preprocessing Goal:</strong>
+Increase SNR by removing noise while preserving signal.</p>
+<h3 id="concept-3-semantic-preservation"><a class="anchor" href="#concept-3-semantic-preservation">#</a> Concept 3: Semantic Preservation</h3>
+<p><strong>Definition:</strong>
+The degree to which preprocessing maintains the original semantic intent of a query.</p>
+<p><strong>The Balance:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Too Little Preprocessing:
+&quot;###What&#39;s ML???###&quot; → Keep all → High noise, low quality
+
+Optimal Preprocessing:
+&quot;###What&#39;s ML???###&quot; → &quot;what is machine learning&quot; → Low noise, high quality
+
+Too Much Preprocessing:
+&quot;###What&#39;s ML???###&quot; → &quot;ml&quot; → Lost context, poor quality</code></pre>
+      </div>
+    <p><strong>Trade-off Curve:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Retrieval Quality
+       ↑
+   100%│     ╱╲
+       │    ╱  ╲
+       │   ╱    ╲
+       │  ╱      ╲___
+       │ ╱           ╲___
+     0%└────────────────────→ Preprocessing Aggressiveness
+       None  Light  Optimal  Aggressive  Extreme</code></pre>
+      </div>
+    <p><strong>Key Insight:</strong>
+More preprocessing isn&#39;t always better. Find the sweet spot for your use case.</p>
+<h3 id="concept-4-domain-adaptation"><a class="anchor" href="#concept-4-domain-adaptation">#</a> Concept 4: Domain Adaptation</h3>
+<p><strong>Definition:</strong>
+Customizing preprocessing to match the vocabulary, style, and conventions of your specific domain.</p>
+<p><strong>Generic Preprocessing:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">expansions = {
+    &#39;ml&#39;: &#39;machine learning&#39;,
+    &#39;ai&#39;: &#39;artificial intelligence&#39;,
+    &#39;api&#39;: &#39;application programming interface&#39;
+}
+// Works for general tech queries</code></pre>
+      </div>
+    <p><strong>Why It Matters:</strong></p>
+<ul>
+<li>Generic preprocessing misses domain-specific patterns</li>
+<li>Domain adaptation improves retrieval by 15-30%</li>
+<li>Users expect domain-appropriate behavior</li>
+</ul>
+<hr>
+<p><strong>Final Thought:</strong></p>
+<p>Query preprocessing is both an art and a science. The art is understanding your users and domain. The science is measuring what works. Master both, and you&#39;ll build RAG systems that delight users with relevant, consistent results.</p>
+
+<h2 id="code-walkthrough"><a class="anchor" href="#code-walkthrough">#</a> Code walkthrough</h2>
+<p>A detailed explanation of implementing query preprocessing techniques to improve RAG retrieval quality through query cleaning, normalization, and expansion.</p>
+<h2 id="overview"><a class="anchor" href="#overview">#</a> Overview</h2>
+<p>This example demonstrates:</p>
+<ul>
+<li>Basic query cleaning (lowercase, trim, whitespace normalization)</li>
+<li>Removing special characters - when it helps and when it hurts</li>
+<li>Stopword removal trade-offs</li>
+<li>Query expansion with abbreviations</li>
+<li>Complete preprocessing pipeline</li>
+<li>Embedding vector stability analysis</li>
+<li>Real-world query handling</li>
+</ul>
+<p><strong>Models Used:</strong></p>
+<ul>
+<li><strong>Embedding</strong>: <code>bge-small-en-v1.5.Q8_0.gguf</code> (384 dimensions)</li>
+<li><strong>LLM</strong>: <code>Qwen3-1.7B-Q8_0.gguf</code> (1.7B parameters)</li>
+</ul>
+<hr>
+<h2 id="why-query-preprocessing"><a class="anchor" href="#why-query-preprocessing">#</a> Why Query Preprocessing?</h2>
+<p><strong>The Problem:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// User queries are messy:
+&quot;   What   IS   Python???  &quot;
+&quot;what&#39;s ML???&quot;
+&quot;Tell me abt JS plz&quot;</code></pre>
+      </div>
+    <p><strong>The Impact:</strong></p>
+<ul>
+<li>Inconsistent embeddings for semantically identical queries</li>
+<li>Special characters add noise to vector representations</li>
+<li>Abbreviations don&#39;t match document phrasing</li>
+<li>Retrieval quality suffers</li>
+</ul>
+<p><strong>The Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const cleaned = preprocessQuery(messyQuery);
+// &quot;what is python&quot;
+// &quot;what is machine learning&quot;
+// &quot;tell me about javascript please&quot;</code></pre>
+      </div>
+    <p>Clean, consistent queries → Better embeddings → Improved retrieval!</p>
+<hr>
+<h2 id="setup-and-configuration"><a class="anchor" href="#setup-and-configuration">#</a> Setup and Configuration</h2>
+<h3 id="imports"><a class="anchor" href="#imports">#</a> Imports</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { fileURLToPath } from &quot;url&quot;;
+import path from &quot;path&quot;;
+import { VectorDB } from &quot;embedded-vector-db&quot;;
+import { getLlama, LlamaChatSession } from &quot;node-llama-cpp&quot;;
+import { Document } from &quot;../../../src/index.js&quot;;
+import { OutputHelper } from &quot;../../../helpers/output-helper.js&quot;;
+import chalk from &quot;chalk&quot;;</code></pre>
+      </div>
+    <p>Same imports as basic retrieval - we&#39;re building on that foundation.</p>
+<h3 id="model-paths"><a class="anchor" href="#model-paths">#</a> Model Paths</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const EMBEDDING_MODEL_PATH = path.join(__dirname, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;models&quot;, &quot;bge-small-en-v1.5.Q8_0.gguf&quot;);
+const LLM_MODEL_PATH = path.join(__dirname, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;models&quot;, &quot;Qwen3-1.7B-Q8_0.gguf&quot;);</code></pre>
+      </div>
+    <p><strong>Fixed</strong>: Model path now matches the download link in the comments!</p>
+<h3 id="stopwords-configuration"><a class="anchor" href="#stopwords-configuration">#</a> Stopwords Configuration</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const STOPWORDS = new Set([
+    &quot;a&quot;, &quot;an&quot;, &quot;and&quot;, &quot;are&quot;, &quot;as&quot;, &quot;at&quot;, &quot;be&quot;, &quot;by&quot;, &quot;for&quot;, &quot;from&quot;,
+    &quot;has&quot;, &quot;he&quot;, &quot;in&quot;, &quot;is&quot;, &quot;it&quot;, &quot;its&quot;, &quot;of&quot;, &quot;on&quot;, &quot;that&quot;, &quot;the&quot;,
+    &quot;to&quot;, &quot;was&quot;, &quot;will&quot;, &quot;with&quot;, &quot;this&quot;, &quot;these&quot;, &quot;those&quot;, &quot;what&quot;,
+    &quot;where&quot;, &quot;when&quot;, &quot;who&quot;, &quot;how&quot;, &quot;can&quot;, &quot;could&quot;, &quot;would&quot;, &quot;should&quot;
+]);</code></pre>
+      </div>
+    <p><strong>Why Set?</strong></p>
+<ul>
+<li>O(1) lookup time</li>
+<li>Perfect for stopword checking</li>
+</ul>
+<p><strong>Note:</strong> Stopword removal is controversial - modern embedding models often handle stopwords well. Test before using!</p>
+<hr>
+<h2 id="query-preprocessing-functions"><a class="anchor" href="#query-preprocessing-functions">#</a> Query Preprocessing Functions</h2>
+<h3 id="1-basic-cleaning"><a class="anchor" href="#1-basic-cleaning">#</a> 1. Basic Cleaning</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function basicClean(query) {
+    return query.toLowerCase().trim();
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Converts to lowercase for consistency</li>
+<li>Removes leading/trailing whitespace</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;  WHAT IS Python?  &quot; → &quot;what is python?&quot;</code></pre>
+      </div>
+    <p><strong>Why lowercase?</strong></p>
+<ul>
+<li>&quot;Python&quot; and &quot;python&quot; should have identical embeddings</li>
+<li>Reduces vocabulary size</li>
+<li>Improves embedding consistency</li>
+</ul>
+<p><strong>Always apply:</strong> This is the minimum preprocessing you should do.</p>
+<h3 id="2-normalize-whitespace"><a class="anchor" href="#2-normalize-whitespace">#</a> 2. Normalize Whitespace</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function normalizeWhitespace(query) {
+    return query.replace(/\s+/g, &#39; &#39;).trim();
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Replaces multiple spaces, tabs, newlines with single space</li>
+<li>Trims result</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;what   is\n\tpython&quot; → &quot;what is python&quot;</code></pre>
+      </div>
+    <p><strong>Regex breakdown:</strong></p>
+<ul>
+<li><code>/\s+/g</code>: Match one or more whitespace characters (space, tab, newline)</li>
+<li><code>g</code>: Global flag - replace all occurrences</li>
+<li><code>&#39; &#39;</code>: Replace with single space</li>
+</ul>
+<p><strong>Why it matters:</strong></p>
+<ul>
+<li>Embedding models may treat multiple spaces inconsistently</li>
+<li>Cleaner input → more stable vectors</li>
+</ul>
+<h3 id="3-remove-special-characters"><a class="anchor" href="#3-remove-special-characters">#</a> 3. Remove Special Characters</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function removeSpecialChars(query) {
+    return query.replace(/[^a-z0-9\s]/gi, &#39; &#39;).replace(/\s+/g, &#39; &#39;).trim();
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Keeps only letters (a-z), numbers (0-9), and spaces</li>
+<li>Removes all punctuation and special characters</li>
+<li>Normalizes resulting whitespace</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;What&#39;s machine-learning??? (explain it!)&quot; → &quot;what s machine learning explain it&quot;</code></pre>
+      </div>
+    <p><strong>Regex breakdown:</strong></p>
+<ul>
+<li><code>/[^a-z0-9\s]/gi</code>: Match any character that&#39;s NOT letter, number, or space<ul>
+<li><code>^</code> inside <code>[]</code>: Negation</li>
+<li><code>g</code>: Global</li>
+<li><code>i</code>: Case-insensitive</li>
+</ul>
+</li>
+<li>Replace with space to avoid joining words</li>
+</ul>
+<p><strong>Trade-off:</strong></p>
+<ul>
+<li>✅ Reduces noise in embeddings</li>
+<li>❌ Loses some semantic information (e.g., &quot;what&#39;s&quot; → &quot;what s&quot;)</li>
+</ul>
+<p><strong>When to use:</strong></p>
+<ul>
+<li>User queries with excessive noise</li>
+<li>When testing shows improvement</li>
+</ul>
+<p><strong>When to skip:</strong></p>
+<ul>
+<li>Clean, well-formatted queries</li>
+<li>When punctuation is semantically important</li>
+</ul>
+<h3 id="4-remove-stopwords"><a class="anchor" href="#4-remove-stopwords">#</a> 4. Remove Stopwords</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function removeStopwords(query) {
+    const words = query.split(&#39; &#39;);
+    const filtered = words.filter(word =&gt; word &amp;&amp; !STOPWORDS.has(word));
+    return filtered.join(&#39; &#39;);
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Splits query into words</li>
+<li>Removes common words like &quot;the&quot;, &quot;is&quot;, &quot;and&quot;</li>
+<li>Rejoins remaining words</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;what is the best way to learn python&quot; → &quot;best way learn python&quot;</code></pre>
+      </div>
+    <p><strong>The Controversy:</strong></p>
+<p><strong>Traditional NLP (TF-IDF, BM25):</strong></p>
+<ul>
+<li>✅ Stopword removal helps</li>
+<li>Reduces noise, focuses on important terms</li>
+</ul>
+<p><strong>Modern Embeddings (BGE, Sentence-BERT):</strong></p>
+<ul>
+<li>❌ Stopword removal often hurts</li>
+<li>Models trained to use all words for context</li>
+<li>&quot;what is X&quot; vs &quot;what X&quot; have different meanings</li>
+</ul>
+<p><strong>Best practice:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Test both approaches with your model and data
+const withStops = preprocessQuery(query, { removeStops: false });
+const withoutStops = preprocessQuery(query, { removeStops: true });
+
+// Measure retrieval quality
+// Use approach that performs better</code></pre>
+      </div>
+    <p><strong>Recommendation:</strong> Keep stopwords for modern embedding models.</p>
+<h3 id="5-query-expansion"><a class="anchor" href="#5-query-expansion">#</a> 5. Query Expansion</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function expandQuery(query) {
+    const expansions = {
+        &#39;ml&#39;: &#39;machine learning&#39;,
+        &#39;ai&#39;: &#39;artificial intelligence&#39;,
+        &#39;js&#39;: &#39;javascript&#39;,
+        &#39;py&#39;: &#39;python&#39;,
+        &#39;db&#39;: &#39;database&#39;,
+        &#39;api&#39;: &#39;application programming interface&#39;,
+        &#39;abt&#39;: &#39;about&#39;,          
+        &#39;plz&#39;: &#39;please&#39;,         
+        &#39;pls&#39;: &#39;please&#39;,         
+        &#39;thx&#39;: &#39;thanks&#39;,         
+        &#39;diff&#39;: &#39;difference&#39;,    
+        &#39;btw&#39;: &#39;between&#39;,        
+        &#39;info&#39;: &#39;information&#39;,   
+        &#39;docs&#39;: &#39;documentation&#39;, 
+        &#39;repo&#39;: &#39;repository&#39;,    
+    };
+    
+    let expanded = query;
+    for (const [abbr, full] of Object.entries(expansions)) {
+        const regex = new RegExp(`\\b${abbr}\\b`, &#39;gi&#39;);
+        expanded = expanded.replace(regex, full);
+    }
+    
+    return expanded;
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Replaces abbreviations with full terms</li>
+<li>Uses word boundaries to avoid partial matches</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">&quot;tell me about ml and ai&quot; → &quot;tell me about machine learning and artificial intelligence&quot;
+&quot;Tell me abt JS plz&quot; → &quot;tell me about javascript please&quot;</code></pre>
+      </div>
+    <p><strong>Regex details:</strong></p>
+<ul>
+<li><code>\\b</code>: Word boundary - ensures &quot;email&quot; doesn&#39;t match &quot;ml&quot;</li>
+<li><code>gi</code>: Case-insensitive, global</li>
+</ul>
+<p><strong>Why it works:</strong></p>
+<ul>
+<li>Documents often use full terms</li>
+<li>&quot;machine learning&quot; in docs rarely abbreviated as &quot;ml&quot;</li>
+<li>Expansion bridges the vocabulary gap</li>
+</ul>
+<p><strong>Building your dictionary:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const expansions = {
+    // Domain-specific abbreviations
+    &#39;cto&#39;: &#39;chief technology officer&#39;,
+    &#39;api&#39;: &#39;application programming interface&#39;,
+    &#39;saas&#39;: &#39;software as a service&#39;,
+    
+    // Company-specific
+    &#39;prd&#39;: &#39;product requirements document&#39;,
+    &#39;okr&#39;: &#39;objectives and key results&#39;,
+    
+    // Common chat-speak
+    &#39;plz&#39;: &#39;please&#39;,
+    &#39;thx&#39;: &#39;thanks&#39;,
+    &#39;abt&#39;: &#39;about&#39;,
+};</code></pre>
+      </div>
+    <p><strong>Pro tip:</strong> Analyze your actual user queries to build this dictionary!</p>
+<h3 id="6-complete-preprocessing-pipeline"><a class="anchor" href="#6-complete-preprocessing-pipeline">#</a> 6. Complete Preprocessing Pipeline</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function preprocessQuery(query, options = {}) {
+    const {
+        lowercase = true,
+        normalizeSpace = true,
+        removeSpecial = true,
+        removeStops = false,
+        expand = false,
+    } = options;
+    
+    let processed = query;
+    
+    if (lowercase) {
+        processed = basicClean(processed);
+    }
+    
+    if (normalizeSpace) {
+        processed = normalizeWhitespace(processed);
+    }
+    
+    if (expand) {
+        processed = expandQuery(processed);
+    }
+    
+    if (removeSpecial) {
+        processed = removeSpecialChars(processed);
+    }
+    
+    if (removeStops) {
+        processed = removeStopwords(processed);
+    }
+    
+    return processed;
+}</code></pre>
+      </div>
+    <p><strong>Processing order:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Lowercase + trim (foundation)
+2. Normalize whitespace (clean up)
+3. Expand abbreviations (BEFORE special chars) ← FIXED!
+4. Remove special chars (reduce noise)
+5. Remove stopwords (optional, last)</code></pre>
+      </div>
+    <p><strong>Usage:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Minimal (recommended default)
+const clean = preprocessQuery(query, {
+    lowercase: true,
+    normalizeSpace: true,
+    removeSpecial: true
+});
+
+// With expansion (recommended for user queries)
+const expanded = preprocessQuery(query, {
+    lowercase: true,
+    normalizeSpace: true,
+    expand: true,        // Do this BEFORE removeSpecial!
+    removeSpecial: true,
+    removeStops: false
+});</code></pre>
+      </div>
+    <hr>
+<h2 id="example-1-impact-of-basic-cleaning"><a class="anchor" href="#example-1-impact-of-basic-cleaning">#</a> Example 1: Impact of Basic Cleaning</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const noisyQuery = &quot;   What   IS   Python???  &quot;;
+const cleanQuery = preprocessQuery(noisyQuery, { 
+    lowercase: true, 
+    normalizeSpace: true, 
+    removeSpecial: true 
+});
+
+// Compare retrieval results
+const noisyResults = await retrieveDocuments(vectorStore, embeddingContext, noisyQuery, 3);
+const cleanResults = await retrieveDocuments(vectorStore, embeddingContext, cleanQuery, 3);</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Even simple cleaning improves similarity scores</li>
+<li>More stable, consistent retrieval</li>
+</ul>
+<p><strong>Expected outcome:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original Query: &quot;   What   IS   Python???  &quot;
+Cleaned Query: &quot;what is python&quot;
+
+Results with Noisy Query:
+  1. [0.8826] Python is a high-level programming language known...
+  2. [0.6618] JavaScript is the primary language for web browser...
+  3. [0.6452] SQL (Structured Query Language) is used for managi...
+
+Results with Cleaned Query:
+  1. [0.9021] Python is a high-level programming language known...
+  2. [0.6754] SQL (Structured Query Language) is used for managi...
+  3. [0.6699] JavaScript is the primary language for web browser...</code></pre>
+      </div>
+    <p><strong>Key insight:</strong> The similarity score improved from 0.8826 to 0.9021 (~2.2% improvement) just from basic cleaning!</p>
+<hr>
+<h2 id="example-2-removing-special-characters-the-full-picture"><a class="anchor" href="#example-2-removing-special-characters-the-full-picture">#</a> Example 2: Removing Special Characters - The Full Picture</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Test Case 1: Natural Query with Contractions
+const query1 = &quot;What&#39;s machine learning??? (explain it!)&quot;;
+const cleaned1 = preprocessQuery(query1, { 
+    lowercase: true, 
+    normalizeSpace: true, 
+    removeSpecial: true 
+});
+
+// Test Case 2: Query with Excessive Noise
+const query2 = &quot;###python### !!! @@@ programming ??? $$$ language @@@&quot;;
+const cleaned2 = preprocessQuery(query2, { 
+    lowercase: true, 
+    normalizeSpace: true, 
+    removeSpecial: true 
+});
+
+// Test Case 3: Query with Meaningful Symbols
+const query3 = &quot;javascript (JS) vs python&quot;;
+const cleaned3 = preprocessQuery(query3, { 
+    lowercase: true, 
+    normalizeSpace: true, 
+    removeSpecial: true 
+});</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Special character removal&#39;s impact varies by context</li>
+<li>Sometimes it helps, sometimes it hurts</li>
+<li>Understanding trade-offs is crucial</li>
+</ul>
+<p><strong>Results:</strong></p>
+<h3 id="test-1-natural-contractions-removal-hurts"><a class="anchor" href="#test-1-natural-contractions-removal-hurts">#</a> Test 1: Natural Contractions (Removal HURTS)</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original: &quot;What&#39;s machine learning??? (explain it!)&quot;
+Cleaned:  &quot;what s machine learning explain it&quot;
+
+Score with special chars:    [0.8652]
+Score without special chars: [0.8287] (worse)
+→ Apostrophe in &#39;What&#39;s&#39; provides useful context</code></pre>
+      </div>
+    <p><strong>Why it hurts:</strong></p>
+<ul>
+<li>&quot;What&#39;s&quot; is a contraction with semantic meaning</li>
+<li>Removing apostrophe creates artifact: &quot;what s&quot;</li>
+<li>Model trained on proper English with contractions</li>
+</ul>
+<h3 id="test-2-excessive-noise-removal-helps"><a class="anchor" href="#test-2-excessive-noise-removal-helps">#</a> Test 2: Excessive Noise (Removal HELPS)</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original: &quot;###python### !!! @@@ programming ??? $$$ language @@@&quot;
+Cleaned:  &quot;python programming language&quot;
+
+Score with special chars:    [0.6234] (estimated)
+Score without special chars: [0.8634] (better!)
+→ Excessive symbols were pure noise</code></pre>
+      </div>
+    <p><strong>Why it helps:</strong></p>
+<ul>
+<li>Symbols like &quot;###&quot;, &quot;@@@&quot;, &quot;$$$&quot; have no semantic value</li>
+<li>Pure distraction for embedding model</li>
+<li>Removal dramatically improves signal-to-noise ratio</li>
+</ul>
+<h3 id="test-3-meaningful-structure-mixed-impact"><a class="anchor" href="#test-3-meaningful-structure-mixed-impact">#</a> Test 3: Meaningful Structure (Mixed Impact)</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original: &quot;javascript (JS) vs python&quot;
+Cleaned:  &quot;javascript js vs python&quot;
+
+Score with special chars:    [0.7834] (estimated)
+Score without special chars: [0.7721]
+→ Parentheses and &#39;vs&#39; provided structure</code></pre>
+      </div>
+    <p><strong>Why it&#39;s mixed:</strong></p>
+<ul>
+<li>Parentheses indicate &quot;(JS)&quot; is equivalent to &quot;javascript&quot;</li>
+<li>&quot;vs&quot; shows comparison relationship</li>
+<li>Removal loses this structural information</li>
+</ul>
+<p><strong>The Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Use query expansion to handle contractions
+const expansions = {
+    &quot;what&#39;s&quot;: &quot;what is&quot;,
+    &quot;ml&quot;: &quot;machine learning&quot;,
+    &quot;js&quot;: &quot;javascript&quot;
+};
+
+// Better pipeline:
+&quot;What&#39;s ml&quot; 
+  → (expand) → &quot;what is machine learning&quot;
+  → (remove special) → &quot;what is machine learning&quot;  ✓ Perfect!</code></pre>
+      </div>
+    <p><strong>Key Insights:</strong></p>
+<p>Special character removal is NOT always beneficial:</p>
+<ul>
+<li><strong>✓ Helps</strong>: When there&#39;s excessive noise (###, @@@, !!!)</li>
+<li><strong>✗ Hurts</strong>: When punctuation adds context (contractions, structure)</li>
+<li><strong>🎯 Solution</strong>: Use query expansion BEFORE removing special chars<ul>
+<li>Example: &#39;What&#39;s&#39; → &#39;What is&#39; → &#39;what is&#39; (preserves meaning)</li>
+</ul>
+</li>
+</ul>
+<p><strong>This is why the preprocessing order fix is so important!</strong></p>
+<hr>
+<h2 id="example-3-stopword-removal-trade-offs"><a class="anchor" href="#example-3-stopword-removal-trade-offs">#</a> Example 3: Stopword Removal Trade-offs</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query = &quot;what is the best way to learn python programming&quot;;
+const withStopwords = preprocessQuery(query, { removeStops: false });
+const withoutStopwords = preprocessQuery(query, { removeStops: true });
+
+// Compare results
+const resultsWithStops = await retrieveDocuments(vectorStore, embeddingContext, withStopwords, 3);
+const resultsWithoutStops = await retrieveDocuments(vectorStore, embeddingContext, withoutStopwords, 3);</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Stopword removal impact varies by model</li>
+<li>Modern models (BGE) often perform better WITH stopwords</li>
+</ul>
+<p><strong>Results:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original Query: &quot;what is the best way to learn python programming&quot;
+With Stopwords: &quot;what is the best way to learn python programming&quot;
+Without Stopwords: &quot;best way learn python programming&quot;
+
+Results WITH Stopwords:
+  1. [0.7636] python
+  2. [0.5699] machine-learning
+  3. [0.5440] sql
+
+Results WITHOUT Stopwords:
+  1. [0.7516] python        ← Slightly worse
+  2. [0.5655] machine-learning
+  3. [0.5232] sql</code></pre>
+      </div>
+    <p><strong>Key insight:</strong> For BGE model, keeping stopwords is better! (0.7636 vs 0.7516)</p>
+<p><strong>Why modern models handle stopwords:</strong></p>
+<ul>
+<li>Trained on natural language with stopwords</li>
+<li>Context from &quot;what is the best&quot; helps understanding</li>
+<li>&quot;best way to learn&quot; has different meaning than &quot;best way learn&quot;</li>
+</ul>
+<p><strong>Recommendation:</strong> Test with your specific model, but default to keeping stopwords.</p>
+<hr>
+<h2 id="example-4-query-expansion-with-abbreviations"><a class="anchor" href="#example-4-query-expansion-with-abbreviations">#</a> Example 4: Query Expansion with Abbreviations</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const abbreviatedQuery = &quot;tell me about ml and ai&quot;;
+const expandedQuery = preprocessQuery(abbreviatedQuery, { 
+    lowercase: true,
+    expand: true 
+});
+
+// Compare retrieval
+const abbrResults = await retrieveDocuments(vectorStore, embeddingContext, abbreviatedQuery, 3);
+const expandedResults = await retrieveDocuments(vectorStore, embeddingContext, expandedQuery, 3);</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Expanding abbreviations improves retrieval</li>
+<li>Matches document phrasing better</li>
+</ul>
+<p><strong>Results:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original Query: &quot;tell me about ml and ai&quot;
+Expanded Query: &quot;tell me about machine learning and artificial intelligence&quot;
+
+Results with Abbreviations:
+  1. [0.7808] machine-learning
+  2. [0.7053] nlp
+  3. [0.6420] neural-networks
+
+Results with Expanded Query:
+  1. [0.8406] machine-learning    ← 7.7% improvement!
+  2. [0.7101] nlp
+  3. [0.6971] neural-networks</code></pre>
+      </div>
+    <p><strong>Why it works:</strong></p>
+<ul>
+<li>Documents typically use full terms</li>
+<li>&quot;ml&quot; is ambiguous (machine learning? milliliter? markup language?)</li>
+<li>Full terms provide clearer semantic signal</li>
+<li>Similarity improved from 0.7808 to 0.8406</li>
+</ul>
+<p><strong>Building good expansion dictionaries:</strong></p>
+<ol>
+<li>Analyze user query logs</li>
+<li>Find common abbreviations</li>
+<li>Map to document terminology</li>
+<li>Test and measure impact</li>
+</ol>
+<hr>
+<h2 id="example-5-complete-preprocessing-pipeline"><a class="anchor" href="#example-5-complete-preprocessing-pipeline">#</a> Example 5: Complete Preprocessing Pipeline</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const messyQuery = &quot;   Hey!!! Can you tell me about JS framework for UI???  &quot;;
+
+// Show each preprocessing step
+let step1 = basicClean(messyQuery);
+console.log(`1. Lowercase &amp; trim: &quot;${step1}&quot;`);
+
+let step2 = normalizeWhitespace(step1);
+console.log(`2. Normalize spaces: &quot;${step2}&quot;`);
+
+let step3 = expandQuery(step2);
+console.log(`3. Expand abbreviations: &quot;${step3}&quot;`);
+
+let step4 = removeSpecialChars(step3);
+console.log(`4. Remove special chars: &quot;${step4}&quot;`);</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Multi-step pipeline handles complex noise</li>
+<li>Each step addresses specific issue</li>
+<li><strong>Order matters!</strong></li>
+</ul>
+<p><strong>Output:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original Query: &quot;   Hey!!! Can you tell me about JS framework for UI???  &quot;
+
+Preprocessing Steps:
+  1. Lowercase &amp; trim: &quot;hey!!! can you tell me about js framework for ui???&quot;
+  2. Normalize spaces: &quot;hey!!! can you tell me about js framework for ui???&quot;
+  3. Expand abbreviations: &quot;hey can you tell me about javascript framework for ui&quot;
+  4. Remove special chars: &quot;hey can you tell me about javascript framework for ui&quot;
+
+Final Processed Query: &quot;hey can you tell me about javascript framework for ui&quot;</code></pre>
+      </div>
+    <p><strong>Key insight:</strong></p>
+<ul>
+<li>Combining multiple steps creates robust preprocessing</li>
+<li><strong>Order matters: expand abbreviations before removing special characters!</strong></li>
+<li>This prevents losing abbreviations when their punctuation is removed</li>
+</ul>
+<hr>
+<h2 id="example-6-embedding-vector-stability"><a class="anchor" href="#example-6-embedding-vector-stability">#</a> Example 6: Embedding Vector Stability</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Same semantic query with different formatting
+const queries = [
+    &quot;what is python&quot;,
+    &quot;What is Python?&quot;,
+    &quot;WHAT IS PYTHON!!!&quot;,
+    &quot;  what   is   python  &quot;,
+    &quot;What&#39;s Python???&quot;,
+];
+
+// Embed each after preprocessing
+const embeddings = [];
+for (const query of queries) {
+    const cleaned = preprocessQuery(query, {
+        lowercase: true,
+        normalizeSpace: true,
+        removeSpecial: true
+    });
+    const embedding = await embeddingContext.getEmbeddingFor(cleaned);
+    embeddings.push(embedding.vector);
+}</code></pre>
+      </div>
+    <p><strong>What it demonstrates:</strong></p>
+<ul>
+<li>Preprocessing ensures consistent embeddings</li>
+<li>Semantically identical queries produce nearly identical vectors</li>
+</ul>
+<p><strong>Results:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Testing embedding stability with different formats:
+
+&quot;what is python&quot; → &quot;what is python&quot;
+&quot;What is Python?&quot; → &quot;what is python&quot;
+&quot;WHAT IS PYTHON!!!&quot; → &quot;what is python&quot;
+&quot;  what   is   python  &quot; → &quot;what is python&quot;
+&quot;What&#39;s Python???&quot; → &quot;what s python&quot;
+
+Embedding Similarity Matrix:
+(All queries should have very similar embeddings after preprocessing)
+
+Query 1: 1.0000 1.0000 1.0000 1.0000 0.9482 
+Query 2: 1.0000 1.0000 1.0000 1.0000 0.9482 
+Query 3: 1.0000 1.0000 1.0000 1.0000 0.9482 
+Query 4: 1.0000 1.0000 1.0000 1.0000 0.9482 
+Query 5: 0.9482 0.9482 0.9482 0.9482 1.0000</code></pre>
+      </div>
+    <p><strong>Key insight:</strong></p>
+<ul>
+<li>First 4 queries: 1.0000 similarity (identical embeddings!)</li>
+<li>Query 5: 0.9482 similarity (slight difference due to &quot;what s&quot; artifact)</li>
+<li>Without preprocessing: 0.85-0.95 similarity (much more variation)</li>
+<li>Consistency → Predictable retrieval</li>
+</ul>
+<p><strong>Why this matters:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// User 1: &quot;What is Python?&quot;
+// User 2: &quot;WHAT IS PYTHON!!!&quot;
+// User 3: &quot;what is python&quot;
+
+// Without preprocessing: Different results for each
+// With preprocessing: Same results for all</code></pre>
+      </div>
+    <p>This improves user experience and system reliability!</p>
+<hr>
+<h2 id="example-7-real-world-query-preprocessing"><a class="anchor" href="#example-7-real-world-query-preprocessing">#</a> Example 7: Real-World Query Preprocessing</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const realWorldQueries = [
+    &quot;how do i use docker????&quot;,
+    &quot;Tell me abt ML algorithms plz&quot;,
+    &quot;What&#39;s the diff between JS and Python??&quot;,
+];
+
+for (const rawQuery of realWorldQueries) {
+    const processed = preprocessQuery(rawQuery, {
+        lowercase: true,
+        normalizeSpace: true,
+        removeSpecial: true,
+        expand: true  // Uses extended dictionary!
+    });
+    
+    const results = await retrieveDocuments(vectorStore, embeddingContext, processed, 2);
+}</code></pre>
+      </div>
+    <p><strong>Results:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Processing: &quot;how do i use docker????&quot;
+Processed: &quot;how do i use docker&quot;
+Top Results:
+  1. [0.8018] docker
+  2. [0.5808] git
+
+Processing: &quot;Tell me abt ML algorithms plz&quot;
+Processed: &quot;tell me about machine learning algorithms please&quot;
+Top Results:
+  1. [0.8382] machine-learning    ← Higher score due to better expansion!
+  2. [0.7067] neural-networks
+
+Processing: &quot;What&#39;s the diff between JS and Python??&quot;
+Processed: &quot;what s the difference between javascript and python&quot;
+Top Results:
+  1. [0.7737] javascript
+  2. [0.7707] python</code></pre>
+      </div>
+    <p><strong>Key insight:</strong></p>
+<ul>
+<li>Real user queries are messy</li>
+<li>Extended abbreviation dictionary handles more variations</li>
+<li>Preprocessing transforms chat-speak into clean, searchable queries</li>
+</ul>
+<hr>
+<h2 id="best-practices"><a class="anchor" href="#best-practices">#</a> Best Practices</h2>
+<h3 id="1-start-with-recommended-pipeline"><a class="anchor" href="#1-start-with-recommended-pipeline">#</a> 1. Start with Recommended Pipeline</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Recommended default for user queries
+const preprocessed = preprocessQuery(query, {
+    lowercase: true,      // Always
+    normalizeSpace: true, // Always
+    expand: true,         // Use extended dictionary
+    removeSpecial: true,  // After expansion
+    removeStops: false    // Keep for modern models
+});</code></pre>
+      </div>
+    <p><strong>Why this order:</strong></p>
+<ol>
+<li>Lowercase: Foundation for consistency</li>
+<li>Normalize whitespace: Clean up messy input</li>
+<li><strong>Expand: BEFORE removing special chars (critical fix!)</strong></li>
+<li>Remove special chars: After expansion preserves abbreviations</li>
+<li>Remove stopwords: Skip for modern models</li>
+</ol>
+<h3 id="2-build-domain-specific-expansion-dictionary"><a class="anchor" href="#2-build-domain-specific-expansion-dictionary">#</a> 2. Build Domain-Specific Expansion Dictionary</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Start with common abbreviations
+const baseExpansions = {
+    &#39;ml&#39;: &#39;machine learning&#39;,
+    &#39;ai&#39;: &#39;artificial intelligence&#39;,
+    // ...
+};
+
+// Add domain-specific terms
+const domainExpansions = {
+    // Your industry
+    &#39;cro&#39;: &#39;conversion rate optimization&#39;,
+    &#39;ltv&#39;: &#39;lifetime value&#39;,
+    
+    // Your company
+    &#39;q4&#39;: &#39;fourth quarter&#39;,
+    &#39;okr&#39;: &#39;objectives and key results&#39;,
+};
+
+const expansions = { ...baseExpansions, ...domainExpansions };</code></pre>
+      </div>
+    <h3 id="3-test-before-deploying"><a class="anchor" href="#3-test-before-deploying">#</a> 3. Test Before Deploying</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// A/B test preprocessing strategies
+async function evaluatePreprocessing() {
+    const testQueries = loadTestQueries();
+    
+    const results = {
+        minimal: await evaluateRetrieval(testQueries, {
+            lowercase: true,
+            normalizeSpace: true
+        }),
+        recommended: await evaluateRetrieval(testQueries, {
+            lowercase: true,
+            normalizeSpace: true,
+            expand: true,
+            removeSpecial: true
+        }),
+        aggressive: await evaluateRetrieval(testQueries, {
+            lowercase: true,
+            normalizeSpace: true,
+            expand: true,
+            removeSpecial: true,
+            removeStops: true
+        })
+    };
+    
+    console.log(&#39;Average Similarity Scores:&#39;);
+    console.log(&#39;Minimal:&#39;, results.minimal.avgSimilarity);
+    console.log(&#39;Recommended:&#39;, results.recommended.avgSimilarity);
+    console.log(&#39;Aggressive:&#39;, results.aggressive.avgSimilarity);
+}</code></pre>
+      </div>
+    <h3 id="4-monitor-in-production"><a class="anchor" href="#4-monitor-in-production">#</a> 4. Monitor in Production</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Log preprocessing impact
+function logPreprocessing(original, processed, results) {
+    console.log({
+        timestamp: new Date().toISOString(),
+        original,
+        processed,
+        changes: {
+            caseChanged: original !== original.toLowerCase(),
+            whitespaceNormalized: /\s{2,}/.test(original),
+            specialCharsRemoved: /[^a-z0-9\s]/i.test(original),
+            expanded: original.toLowerCase() !== processed
+        },
+        topResult: results[0]?.metadata.topic,
+        topSimilarity: results[0]?.similarity,
+        avgSimilarity: results.reduce((sum, r) =&gt; sum + r.similarity, 0) / results.length
+    });
+}</code></pre>
+      </div>
+    <hr>
+<h2 id="summary"><a class="anchor" href="#summary">#</a> Summary</h2>
+<h3 id="key-takeaways"><a class="anchor" href="#key-takeaways">#</a> Key Takeaways</h3>
+<p><strong>Essential preprocessing (in order):</strong></p>
+<ol>
+<li>Lowercase</li>
+<li>Trim</li>
+<li>Normalize whitespace</li>
+<li><strong>Expand abbreviations</strong> ← Do this BEFORE step 5!</li>
+<li>Remove special characters</li>
+<li>(Skip stopword removal for modern models)</li>
+</ol>
+<p><strong>Recommended pipeline:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const processed = preprocessQuery(query, {
+    lowercase: true,
+    normalizeSpace: true,
+    expand: true,         // Before removeSpecial!
+    removeSpecial: true,
+    removeStops: false    // Keep for BGE and similar models
+});</code></pre>
+      </div>
+    <h3 id="impact"><a class="anchor" href="#impact">#</a> Impact</h3>
+<ul>
+<li><strong>Embedding consistency</strong>: ~0.999 similarity for identical semantic queries</li>
+<li><strong>Retrieval improvement</strong>: 5-15% better similarity scores</li>
+<li><strong>User experience</strong>: Same results regardless of formatting</li>
+<li><strong>System reliability</strong>: Predictable, stable behavior</li>
+<li><strong>Performance</strong>: 85% faster with model reuse optimization</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01_basic_retrieval.html"><span>← Previous</span><b>01_basic_retrieval</b></a>
+      <a class="next" href="./03_hybrid_search.html"><span>Next →</span><b>03_hybrid_search</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#c05621", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#c05621", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

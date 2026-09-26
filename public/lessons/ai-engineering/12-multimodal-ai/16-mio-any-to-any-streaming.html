@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MIO and Any-to-Any Streaming Multimodal Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/16-mio-any-to-any-streaming/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">MIO and Any-to-Any Streaming Multimodal Models</h1>
+    <p class="lesson-sub">GPT-4o ships a product most open models cannot replicate: an agent that hears voice, sees video, and speaks back in real time. The open-ecosystem answer by late 2024 was MIO (Wang et al., September 2024). MIO tokenizes text, image, speech, and music, trains one causal transformer over the interleaved sequences, and generates any modality to any modality. AnyGPT (Zhan et al., February 2024) was the proof of concept; MIO is the scale-up; Unified-IO 2 (Allen AI, December 2023) is the cousin with vision + action grounding. This lesson reads the any-to-any pattern — four tokenizers, one transformer, streaming-friendly decode.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, four-modality token allocator + streaming decode loop)</b></div><div><span>Prerequisites</span><b>Phase 12 · 11 (Chameleon), Phase 6 (Speech and Audio)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="34.7" y="36.8" width="31.6" height="31.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.5 52.6)"/>
+        <rect x="29.9" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.0 47.7)"/>
+        <rect x="25.1" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.6 142.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">MIO and Any-to-Any</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Streaming Multimodal…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Design a shared vocabulary that hosts text, image, speech, and music tokens without collisions.</li>
+<li>Compare SEED-Tokenizer (images) and SpeechTokenizer residual-VQ (speech) on compression + reconstruction trade-offs.</li>
+<li>Explain the four-stage curriculum that builds up any-to-any generation.</li>
+<li>Name the three open any-to-any recipes and their main trade-offs: MIO, AnyGPT, Unified-IO 2.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A unified multimodal model is easy to claim and hard to build at scale. Most &quot;any-to-any&quot; systems until 2024 were pipelined: vision model → text representation → speech model → audio. Each hop loses information, adds latency, and complicates training. GPT-4o&#39;s demo video showed a single-model alternative with subsecond response; open systems trailed by months.</p>
+<p>The engineering challenges:</p>
+<ul>
+<li>Tokenizers must exist for every modality, compress losslessly-enough for reconstruction, and produce tokens at rates the transformer can consume.</li>
+<li>A single vocabulary must allocate space for text (32k+), image (16k+), speech (4k+), music (8k+). Forty-thousand-plus entries minimum.</li>
+<li>Training data must cover every input-output pair (text→image, image→speech, speech→image, etc.) or the model must compose.</li>
+<li>Inference must stream output tokens fast enough for conversational latency (&lt;500ms time-to-first-audio-byte).</li>
+</ul>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="four-tokenizers-for-four-modalities"><a class="anchor" href="#four-tokenizers-for-four-modalities">#</a> Four tokenizers for four modalities</h3>
+<p>MIO&#39;s tokenizer stack:</p>
+<ul>
+<li>Text: standard BPE, vocab ~32000.</li>
+<li>Image: SEED-Tokenizer (2023) — quantized VAE with discrete codebook, 4096 entries, 32x32 tokens per image.</li>
+<li>Speech: SpeechTokenizer residual-VQ (2023) — encodes 16kHz waveform into 8 hierarchical codebooks; first level is coarse content, later levels add prosody and speaker identity.</li>
+<li>Music: similar residual-VQ (Meta&#39;s MusicGen / Encodec family), 4-8 codebooks.</li>
+</ul>
+<p>Each modality produces integer tokens. The tokens get disjoint ID ranges in the shared vocabulary:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">text:   0..31999
+image:  32000..36095  (4096 image tokens)
+speech: 36096..40191  (4096 speech base tokens, plus residual layers)
+music:  40192..48383  (8192 music tokens)
+sep:    48384..48390  (&lt;image&gt;, &lt;speech&gt;, &lt;music&gt;, &lt;/...&gt;, etc.)</code></pre>
+      </div>
+    <p>Total: ~48k vocabulary. The input embedding and output projection span all of it.</p>
+<h3 id="streaming-decode"><a class="anchor" href="#streaming-decode">#</a> Streaming decode</h3>
+<p>Speech generation uses residual-VQ. The transformer predicts the base (layer 0) speech tokens; a parallel-decoded residual quantizer predicts the subsequent layers. Each layer 0 token is roughly 50ms of audio at 16kHz.</p>
+<p>The streaming pattern:</p>
+<ol>
+<li>User speaks into mic; real-time audio tokenizer emits speech tokens every 50ms.</li>
+<li>MIO consumes tokens as they arrive (prompt prefill + incremental forward).</li>
+<li>Output tokens stream out as generated; a parallel speech decoder converts them to audio samples with ~50-150ms latency.</li>
+<li>Time-to-first-audio-byte: ~300-500ms in MIO paper, approaching GPT-4o&#39;s ~250ms.</li>
+</ol>
+<p>Mini-Omni (arXiv:2408.16725), GLM-4-Voice (arXiv:2412.02612), and Moshi (arXiv:2410.00037) are complementary streaming speech-LLM designs. Moshi in particular achieves 160ms round-trip on a single GPU.</p>
+<h3 id="four-stage-curriculum"><a class="anchor" href="#four-stage-curriculum">#</a> Four-stage curriculum</h3>
+<p>MIO&#39;s training curriculum:</p>
+<ol>
+<li>Stage 1 — alignment. Large-scale modality-pair corpora: text-image, text-speech, text-music. Each pair uses its own token vocabulary segment. Trains the shared vocabulary.</li>
+<li>Stage 2 — interleaved. Multi-modality interleaved documents (blogs with images + video, podcasts with transcripts, etc.). Trains cross-modality context.</li>
+<li>Stage 3 — speech-enhanced. Extra audio data to lift speech quality without losing text capability.</li>
+<li>Stage 4 — SFT. Instruction tuning across modalities: VQA, captioning, narration, speech-to-speech dialogue.</li>
+</ol>
+<p>Missing a stage degrades specific capabilities: skip stage 2 and the model loses cross-modality context; skip stage 3 and speech is poor.</p>
+<h3 id="chain-of-visual-thought"><a class="anchor" href="#chain-of-visual-thought">#</a> Chain-of-visual-thought</h3>
+<p>MIO introduces chain-of-visual-thought: the model emits intermediate image tokens as a reasoning step. For &quot;is the cat climbing a tree?&quot; the model:</p>
+<ol>
+<li>Emits <code>&lt;image&gt;</code> tokens rendering the scene (from the input image or a sketch).</li>
+<li>Emits text analyzing the sketch.</li>
+<li>Emits the final answer.</li>
+</ol>
+<p>The rendered intermediate image serves as a scratchpad. Benchmarks improve on spatial-reasoning tasks. The idea mirrors chain-of-thought for text reasoning.</p>
+<h3 id="competitors-in-any-to-any"><a class="anchor" href="#competitors-in-any-to-any">#</a> Competitors in any-to-any</h3>
+<ul>
+<li>AnyGPT (arXiv:2402.12226): 4 modalities (text, image, speech, music), similar design.</li>
+<li>Unified-IO 2 (arXiv:2312.17172): adds vision action outputs, depth, normals. More task diversity, smaller scale.</li>
+<li>NExT-GPT (arXiv:2309.05519): LLM + modality-specific diffusion decoders. Not a single-model approach.</li>
+<li>CoDi (arXiv:2305.11846): composable diffusion; any-to-any via shared latent.</li>
+</ul>
+<p>MIO is the closest to pure-token any-to-any. AnyGPT is its conceptual ancestor.</p>
+<h3 id="latency-budget"><a class="anchor" href="#latency-budget">#</a> Latency budget</h3>
+<p>For a conversational product, every component&#39;s latency matters:</p>
+<ul>
+<li>Mic to audio tokens: ~50ms.</li>
+<li>Prefill (audio tokens + history): ~100ms on an 8B model.</li>
+<li>First output token: ~50ms.</li>
+<li>Parallel residual-VQ + speech decoder: ~100-150ms.</li>
+</ul>
+<p>Total time-to-first-audio-byte: ~300ms minimum. GPT-4o claims ~250ms. Moshi claims 160ms. MIO/AnyGPT are in the 400-600ms range per public benchmarks.</p>
+<h3 id="why-any-to-any-stays-hard"><a class="anchor" href="#why-any-to-any-stays-hard">#</a> Why any-to-any stays hard</h3>
+<p>Even in 2026, open any-to-any models trail closed ones on two axes:</p>
+<ul>
+<li>Speech quality. The residual-VQ tokenizer is lossy; conversational speech sounds robotic compared to ElevenLabs-class voices.</li>
+<li>Cross-modality reasoning. Asking the model &quot;sing about what you see&quot; still fails more often than pure-vision tasks.</li>
+</ul>
+<p>These are open research problems. Qwen3-Omni (Lesson 12.20) is the most advanced open attempt in 2025.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">any-to-any-stream</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code>:</p>
+<ul>
+<li>Defines the four-modality vocabulary allocation and prints it.</li>
+<li>Routes a list of multimodal inputs (text, image, audio-clip, music) through the tokenizer router.</li>
+<li>Simulates streaming decode for a text-to-speech response with latency counting.</li>
+<li>Computes the expected time-to-first-audio-byte given encoder, prefill, and decoder latencies.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-any-to-any-pipeline-auditor.md</code>. Given a conversational product spec (modalities in, modalities out, latency target), it audits the MIO-family design choices and computes the latency budget.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Your product accepts speech input and returns speech output. What&#39;s the end-to-end latency budget target? List the components that spend time.</p>
+</li>
+<li><p>SpeechTokenizer residual-VQ uses 8 codebooks. Propose why parallel-decoding the residual levels is necessary (vs sequential) and what latency savings it brings.</p>
+</li>
+<li><p>Your vocabulary has 32k text + 4k image + 4k speech. Add 8k music and ~10 separators. What is the embedding-matrix parameter cost at hidden dim 4096?</p>
+</li>
+<li><p>Chain-of-visual-thought emits an intermediate image. What kinds of questions benefit? What kinds are hurt by the extra tokens?</p>
+</li>
+<li><p>Read Moshi (arXiv:2410.00037). Describe its &quot;inner monologue&quot; technique and compare to MIO&#39;s chain-of-visual-thought.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Any-to-any</td>
+<td>&quot;Multimodal in/out&quot;</td>
+<td>A single model that accepts and emits text, image, speech, and music in any direction</td>
+</tr>
+<tr>
+<td>Residual-VQ</td>
+<td>&quot;Speech tokenizer stack&quot;</td>
+<td>Multi-codebook tokenization where each layer adds information; base layer is content, later layers are prosody</td>
+</tr>
+<tr>
+<td>SEED-Tokenizer</td>
+<td>&quot;Image codes&quot;</td>
+<td>Discrete image tokenizer with 4096-entry codebook used by MIO</td>
+</tr>
+<tr>
+<td>Chain-of-visual-thought</td>
+<td>&quot;Visual scratchpad&quot;</td>
+<td>The model generates an intermediate image as a reasoning step before its final answer</td>
+</tr>
+<tr>
+<td>Time-to-first-audio-byte</td>
+<td>&quot;TTFAB&quot;</td>
+<td>Latency from user voice to first audio output; &lt;500ms for conversational feel</td>
+</tr>
+<tr>
+<td>Four-stage curriculum</td>
+<td>&quot;Training recipe&quot;</td>
+<td>Alignment -&gt; interleaved -&gt; speech-enhanced -&gt; SFT, in that order</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2409.17692">Wang et al. — MIO (arXiv:2409.17692)</a></li>
+<li><a href="https://arxiv.org/abs/2402.12226">Zhan et al. — AnyGPT (arXiv:2402.12226)</a></li>
+<li><a href="https://arxiv.org/abs/2312.17172">Lu et al. — Unified-IO 2 (arXiv:2312.17172)</a></li>
+<li><a href="https://arxiv.org/abs/2309.05519">Wu et al. — NExT-GPT (arXiv:2309.05519)</a></li>
+<li><a href="https://arxiv.org/abs/2305.11846">Tang et al. — CoDi (arXiv:2305.11846)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-janus-pro-decoupled-encoders.html"><span>← Previous</span><b>janus pro decoupled encoders</b></a>
+      <a class="next" href="./17-video-language-temporal-grounding.html"><span>Next →</span><b>video language temporal grounding</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

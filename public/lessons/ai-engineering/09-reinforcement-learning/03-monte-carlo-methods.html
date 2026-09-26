@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monte Carlo Methods — Learning from Complete Episodes — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/03-monte-carlo-methods/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Monte Carlo Methods — Learning from Complete Episodes</h1>
+    <p class="lesson-sub">Dynamic programming needs a model. Monte Carlo needs nothing but episodes. Run the policy, watch the returns, average them. The simplest idea in RL — and the one that unlocks everything downstream.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 9 · 01 (MDPs), Phase 9 · 02 (Dynamic Programming)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M80.1,90.3 L87.2,79.6 L94.4,90.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.3,85.0 L81.8,75.2 L88.3,85.0 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.5,79.7 L76.4,70.9 L82.2,79.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.8,74.4 L71.0,66.5 L76.2,74.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M48.0,76.8 L65.5,50.5 L83.1,76.8 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Monte Carlo Methods</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Learning from…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Dynamic programming is elegant, but it assumes you can query <code>P(s&#39; | s, a)</code> for every state and action. Almost nothing in the real world works that way. A robot cannot analytically compute the distribution over camera pixels after a joint torque. A pricing algorithm cannot integrate over every possible customer reaction. An LLM cannot enumerate all possible continuations after a token.</p>
+<p>You need a method that only needs the ability to <em>sample</em> from the environment. Run the policy. Get a trajectory <code>s_0, a_0, r_1, s_1, a_1, r_2, …, s_T</code>. Use it to estimate values. That is Monte Carlo.</p>
+<p>The shift from DP to MC is philosophically important: we move from <em>known model + exact backup</em> to <em>sampled rollouts + averaged return</em>. The variance jumps, but the applicability explodes. Every RL algorithm after this lesson — TD, Q-learning, REINFORCE, PPO, GRPO — is a Monte Carlo estimator at heart, sometimes with bootstrapping layered on top.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/03-monte-carlo-methods/assets/monte-carlo.svg" alt="Monte Carlo: rollout, compute returns, average; first-visit vs every-visit" loading="lazy" /></figure></p>
+<p><strong>The core idea, in one line:</strong> <code>V^π(s) = E_π[G_t | s_t = s] ≈ (1/N) Σ_i G^{(i)}(s)</code> where <code>G^{(i)}(s)</code> are observed returns following visits to <code>s</code> under policy <code>π</code>.</p>
+<p><strong>First-visit vs every-visit MC.</strong> Given an episode that visits state <code>s</code> multiple times, first-visit MC only counts the return from the first visit; every-visit MC counts all visits. Both are unbiased in the limit. First-visit is simpler to analyze (iid samples). Every-visit uses more data per episode and typically converges faster in practice.</p>
+<p><strong>Incremental mean.</strong> Instead of storing all returns, update the running average:</p>
+<p><code>V_n(s) = V_{n-1}(s) + (1/n) [G_n - V_{n-1}(s)]</code></p>
+<p>Reorganize: <code>V_new = V_old + α · (target - V_old)</code> with <code>α = 1/n</code>. Swap <code>1/n</code> for a constant step-size <code>α ∈ (0, 1)</code> and you get a non-stationary MC estimator that tracks changes in <code>π</code>. That move is the entire jump from MC to TD to every modern RL algorithm.</p>
+<p><strong>Exploration is now a problem.</strong> DP touched every state by enumeration. MC only sees states the policy visits. If <code>π</code> is deterministic, whole regions of the state space never get sampled, and their value estimates stay at zero forever. Three fixes, in historical order:</p>
+<ol>
+<li><strong>Exploring starts.</strong> Start each episode from a random (s, a) pair. Guarantees coverage; unrealistic in practice (you cannot &quot;reset&quot; a robot into an arbitrary state).</li>
+<li><strong>ε-greedy.</strong> Act greedy w.r.t. current Q, but with probability <code>ε</code> pick a random action. All state-action pairs get sampled asymptotically.</li>
+<li><strong>Off-policy MC.</strong> Collect data under a behavior policy <code>μ</code>, learn about target policy <code>π</code> via importance sampling. High variance, but it&#39;s the bridge to replay-buffer methods like DQN.</li>
+</ol>
+<p><strong>Monte Carlo Control.</strong> Evaluate → improve → evaluate, just like policy iteration, but evaluation is sampling-based:</p>
+<ol>
+<li>Run <code>π</code>, get an episode.</li>
+<li>Update <code>Q(s, a)</code> from observed returns.</li>
+<li>Make <code>π</code> ε-greedy w.r.t. <code>Q</code>.</li>
+<li>Repeat.</li>
+</ol>
+<p>Converges to <code>Q*</code> and <code>π*</code> with probability 1 under mild conditions (every pair visited infinitely often, <code>α</code> satisfies Robbins-Monro).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">epsilon-greedy</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-rollout-list-of-s-a-r"><a class="anchor" href="#step-1-rollout-list-of-s-a-r">#</a> Step 1: rollout → list of (s, a, r)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rollout(env, policy, max_steps=200):
+    trajectory = []
+    s = env.reset()
+    for _ in range(max_steps):
+        a = policy(s)
+        s_next, r, done = env.step(s, a)
+        trajectory.append((s, a, r))
+        s = s_next
+        if done:
+            break
+    return trajectory</code></pre>
+      </div>
+    <p>No model, only <code>env.reset()</code> and <code>env.step(s, a)</code>. Same interface as a gym environment but stripped down.</p>
+<h3 id="step-2-compute-returns-reverse-sweep"><a class="anchor" href="#step-2-compute-returns-reverse-sweep">#</a> Step 2: compute returns (reverse sweep)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def returns_from(trajectory, gamma):
+    returns = []
+    G = 0.0
+    for _, _, r in reversed(trajectory):
+        G = r + gamma * G
+        returns.append(G)
+    return list(reversed(returns))</code></pre>
+      </div>
+    <p>One pass, <code>O(T)</code>. The backward recurrence <code>G_t = r_{t+1} + γ G_{t+1}</code> avoids re-summing.</p>
+<h3 id="step-3-first-visit-mc-evaluation"><a class="anchor" href="#step-3-first-visit-mc-evaluation">#</a> Step 3: first-visit MC evaluation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def mc_policy_evaluation(env, policy, episodes, gamma=0.99):
+    V = defaultdict(float)
+    counts = defaultdict(int)
+    for _ in range(episodes):
+        trajectory = rollout(env, policy)
+        returns = returns_from(trajectory, gamma)
+        seen = set()
+        for t, ((s, _, _), G) in enumerate(zip(trajectory, returns)):
+            if s in seen:
+                continue
+            seen.add(s)
+            counts[s] += 1
+            V[s] += (G - V[s]) / counts[s]
+    return V</code></pre>
+      </div>
+    <p>Three lines do the work: mark state as seen on first visit, increment count, update running mean.</p>
+<h3 id="step-4-greedy-mc-control-on-policy"><a class="anchor" href="#step-4-greedy-mc-control-on-policy">#</a> Step 4: ε-greedy MC control (on-policy)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def mc_control(env, episodes, gamma=0.99, epsilon=0.1):
+    Q = defaultdict(lambda: {a: 0.0 for a in ACTIONS})
+    counts = defaultdict(lambda: {a: 0 for a in ACTIONS})
+
+    def policy(s):
+        if random() &lt; epsilon:
+            return choice(ACTIONS)
+        return max(Q[s], key=Q[s].get)
+
+    for _ in range(episodes):
+        trajectory = rollout(env, policy)
+        returns = returns_from(trajectory, gamma)
+        seen = set()
+        for (s, a, _), G in zip(trajectory, returns):
+            if (s, a) in seen:
+                continue
+            seen.add((s, a))
+            counts[s][a] += 1
+            Q[s][a] += (G - Q[s][a]) / counts[s][a]
+    return Q, policy</code></pre>
+      </div>
+    <h3 id="step-5-compare-to-dp-gold-standard"><a class="anchor" href="#step-5-compare-to-dp-gold-standard">#</a> Step 5: compare to DP gold standard</h3>
+<p>Your MC estimate of <code>V^π</code> should agree with the DP result from Lesson 02 as episodes → ∞. In practice: 50,000 episodes on 4×4 GridWorld gets you within <code>~0.1</code> of the DP answer.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Infinite episodes.</strong> MC requires episodes to <em>terminate</em>. If your policy can loop forever, cap <code>max_steps</code> and treat the cap as implicit failure. GridWorld with a random policy routinely times out — that is normal, just make sure you count it correctly.</li>
+<li><strong>Variance.</strong> MC uses full returns. On long episodes, variance is huge — one unlucky reward at the end shifts <code>V(s_0)</code> by the same amount. TD methods (Lesson 04) cut this by bootstrapping.</li>
+<li><strong>State coverage.</strong> Greedy MC on a fresh Q with ties will only ever try one action. You <em>must</em> explore (ε-greedy, exploring starts, UCB).</li>
+<li><strong>Non-stationary policies.</strong> If <code>π</code> changes (as in MC control), old returns are from a different policy. Constant-α MC handles this; sample-average MC does not.</li>
+<li><strong>Off-policy importance sampling.</strong> The weights <code>π(a|s)/μ(a|s)</code> multiply across a trajectory. Variance explodes with horizon. Cap with per-decision weighted IS or switch to TD.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 role of Monte Carlo methods:</p>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Why MC</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Short-horizon games (blackjack, poker)</td>
+<td>Episodes terminate naturally; returns are clean.</td>
+</tr>
+<tr>
+<td>Offline evaluation of a logged policy</td>
+<td>Average discounted returns over stored trajectories.</td>
+</tr>
+<tr>
+<td>Monte Carlo Tree Search (AlphaZero)</td>
+<td>MC rollouts from tree leaves guide selection.</td>
+</tr>
+<tr>
+<td>LLM RL evaluation</td>
+<td>Compute average reward over sampled completions for a given policy.</td>
+</tr>
+<tr>
+<td>Baseline estimation in PPO</td>
+<td>The advantage target <code>A_t = G_t - V(s_t)</code> uses an MC <code>G_t</code>.</td>
+</tr>
+<tr>
+<td>Teaching RL</td>
+<td>Simplest algorithm that actually works — strip bootstrapping to see the core.</td>
+</tr>
+</tbody></table>
+<p>Modern deep-RL algorithms (PPO, SAC) interpolate between pure MC (full returns) and pure TD (one-step bootstrap) via <code>n</code>-step returns or GAE. Both endpoints are instances of the same estimator.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-mc-evaluator.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: mc-evaluator
+description: Evaluate a policy via Monte Carlo rollouts and produce a convergence report with DP-comparison if available.
+version: 1.0.0
+phase: 9
+lesson: 3
+tags: [rl, monte-carlo, evaluation]
+---
+
+Given an environment (episodic, with reset+step API) and a policy, output:
+
+1. Method. First-visit vs every-visit MC. Reason.
+2. Episode budget. Target number, variance diagnostic, expected standard error.
+3. Exploration plan. ε schedule (if needed) or exploring starts.
+4. Gold-standard comparison. DP-optimal V* if tabular; otherwise a bound from a Q-learning / PPO baseline.
+5. Termination check. Max-step cap, timeouts, handling of non-terminating trajectories.
+
+Refuse to run MC on non-episodic tasks without a finite horizon cap. Refuse to report V^π estimates from fewer than 100 episodes per state for tabular tasks. Flag any policy with zero-variance actions as an exploration risk.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Implement first-visit MC evaluation of the uniform-random policy on 4×4 GridWorld. Run 10,000 episodes. Plot <code>V(0,0)</code> as a function of episode count against the DP answer.</li>
+<li><strong>Medium.</strong> Implement ε-greedy MC control with <code>ε ∈ {0.01, 0.1, 0.3}</code>. Compare mean return after 20,000 episodes. What does the curve look like? Where does the bias-variance tradeoff live?</li>
+<li><strong>Hard.</strong> Implement <em>off-policy</em> MC with importance sampling: collect data under uniform-random policy <code>μ</code>, estimate <code>V^π</code> for the deterministic optimal policy <code>π</code>. Compare plain IS vs per-decision IS vs weighted IS. Which has lowest variance?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Monte Carlo</td>
+<td>&quot;Random sampling&quot;</td>
+<td>Estimate expectations by averaging over iid samples from the distribution.</td>
+</tr>
+<tr>
+<td>Return <code>G_t</code></td>
+<td>&quot;Future reward&quot;</td>
+<td>Sum of discounted rewards from step <code>t</code> to episode end: <code>Σ_{k≥0} γ^k r_{t+k+1}</code>.</td>
+</tr>
+<tr>
+<td>First-visit MC</td>
+<td>&quot;Count each state once&quot;</td>
+<td>Only the first visit in an episode contributes to the value estimate.</td>
+</tr>
+<tr>
+<td>Every-visit MC</td>
+<td>&quot;Use all visits&quot;</td>
+<td>Every visit contributes; slightly biased but more sample-efficient.</td>
+</tr>
+<tr>
+<td>ε-greedy</td>
+<td>&quot;Exploration noise&quot;</td>
+<td>Pick greedy action with prob <code>1-ε</code>; random action with prob <code>ε</code>.</td>
+</tr>
+<tr>
+<td>Importance sampling</td>
+<td>&quot;Correcting for sampling from the wrong distribution&quot;</td>
+<td>Reweight returns by <code>π(a|s)/μ(a|s)</code> products to estimate <code>V^π</code> from <code>μ</code> data.</td>
+</tr>
+<tr>
+<td>On-policy</td>
+<td>&quot;Learn from my own data&quot;</td>
+<td>Target policy = behavior policy. Vanilla MC, PPO, SARSA.</td>
+</tr>
+<tr>
+<td>Off-policy</td>
+<td>&quot;Learn from someone else&#39;s data&quot;</td>
+<td>Target policy ≠ behavior policy. Importance-sampled MC, Q-learning, DQN.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 5 — Monte Carlo Methods</a> — the canonical treatment.</li>
+<li><a href="https://link.springer.com/article/10.1007/BF00114726">Singh &amp; Sutton (1996). Reinforcement Learning with Replacing Eligibility Traces</a> — first-visit vs every-visit analysis.</li>
+<li><a href="http://incompleteideas.net/papers/PSS-00.pdf">Precup, Sutton, Singh (2000). Eligibility Traces for Off-Policy Policy Evaluation</a> — off-policy MC and variance control.</li>
+<li><a href="https://arxiv.org/abs/1404.6362">Mahmood et al. (2014). Weighted Importance Sampling for Off-Policy Learning</a> — modern low-variance IS estimators.</li>
+<li><a href="https://dl.acm.org/doi/10.1145/203330.203343">Tesauro (1995). TD-Gammon, A Self-Teaching Backgammon Program</a> — the first large-scale empirical demonstration of MC/TD self-play converging to superhuman play; conceptual precursor to every lesson in the second half of this phase.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-dynamic-programming.html"><span>← Previous</span><b>dynamic programming</b></a>
+      <a class="next" href="./04-q-learning-sarsa.html"><span>Next →</span><b>q learning sarsa</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

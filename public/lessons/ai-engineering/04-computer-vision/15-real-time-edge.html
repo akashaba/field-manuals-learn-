@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Real-Time Vision — Edge Deployment — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/15-real-time-edge/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Real-Time Vision — Edge Deployment</h1>
+    <p class="lesson-sub">Edge inference is the discipline of getting a 90-accuracy model to run at 30 fps on a device with 2 GB of RAM. Every percentage point of accuracy is traded against milliseconds of latency.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 04 (Image Classification), Phase 10 Lesson 11 (Quantization)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="33.0" y="35.3" width="31.1" height="31.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(203 48.6 50.9)"/>
+        <rect x="28.3" y="31.1" width="29.8" height="29.8" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(186 43.2 46.0)"/>
+        <rect x="23.5" y="126.8" width="28.6" height="28.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(168 37.8 141.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Real-Time Vision —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Edge Deployment</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Measure inference latency, peak memory, and throughput for any PyTorch model, and read the FLOPs / params / latency trade-off</li>
+<li>Quantise a vision model to INT8 using PyTorch&#39;s post-training quantisation and verify accuracy loss &lt; 1%</li>
+<li>Export to ONNX and compile with ONNX Runtime or TensorRT; name the three most common export failures and their fixes</li>
+<li>Explain when to pick MobileNetV3, EfficientNet-Lite, ConvNeXt-Tiny, or MobileViT for an edge constraint</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A training-time vision model is a floating-point monster. 100M parameters, 10 GFLOPs per forward pass, 2 GB of VRAM. None of that fits on a phone, a car&#39;s infotainment unit, an industrial camera, or a drone. Shipping a vision system means fitting the same predictions into a budget that is 100x smaller.</p>
+<p>Three knobs do most of the work: model choice (a smaller architecture with the same recipe), quantisation (INT8 instead of FP32), and the inference runtime (ONNX Runtime, TensorRT, Core ML, TFLite). Getting them right is the difference between a demo that runs on a workstation and a product that ships on a $30 camera module.</p>
+<p>This lesson sets up the measurement discipline first (you cannot optimise what you cannot measure), then walks the three knobs. The goal is not to learn every edge runtime but to know what levers exist and how to verify each one does what you think.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-three-budgets"><a class="anchor" href="#the-three-budgets">#</a> The three budgets</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    M[&quot;Model&quot;] --&gt; LAT[&quot;Latency&lt;br/&gt;ms per image&quot;]
+    M --&gt; MEM[&quot;Memory&lt;br/&gt;peak MB&quot;]
+    M --&gt; PWR[&quot;Power&lt;br/&gt;mJ per inference&quot;]
+
+    LAT --&gt; SHIP[&quot;Ship / no-ship&lt;br/&gt;decision&quot;]
+    MEM --&gt; SHIP
+    PWR --&gt; SHIP
+
+    style LAT fill:#fecaca,stroke:#dc2626
+    style MEM fill:#fef3c7,stroke:#d97706
+    style PWR fill:#dbeafe,stroke:#2563eb</pre></div><ul>
+<li><strong>Latency</strong>: p50, p95, p99. Averaging only p50 hides tail behaviour that matters for real-time systems.</li>
+<li><strong>Peak memory</strong>: the maximum the device ever sees, not the steady-state average. Matters because OOMs are fatal on embedded targets.</li>
+<li><strong>Power / energy</strong>: millijoules per inference on a battery-powered device. Often proxied by CPU/GPU utilisation * time.</li>
+</ul>
+<p>A table of (model, latency, memory, accuracy) is what an edge decision is made from. Every cell is measured on the target device, not the workstation.</p>
+<h3 id="measurement-discipline"><a class="anchor" href="#measurement-discipline">#</a> Measurement discipline</h3>
+<p>Three rules that every edge profile should follow:</p>
+<ol>
+<li><strong>Warm up</strong> the model with 5-10 dummy forward passes before measuring. Cold caches and JIT compilation produce unrepresentative first numbers.</li>
+<li><strong>Synchronise</strong> GPU workloads with <code>torch.cuda.synchronize()</code> before and after the timed block. Without this you measure kernel dispatch, not kernel execution.</li>
+<li><strong>Fix input sizes</strong> to the production resolution. Latency on 224x224 is not latency on 512x512.</li>
+</ol>
+<h3 id="flops-as-a-proxy"><a class="anchor" href="#flops-as-a-proxy">#</a> FLOPs as a proxy</h3>
+<p>FLOPs (floating-point operations per inference) is a cheap, device-independent proxy for latency. Useful for architecture comparison, misleading as absolute wall-clock. A model with 10% more FLOPs can be 2x faster in practice because it uses hardware-friendly ops (depthwise convs compile well, large 7x7 convs do not).</p>
+<p>Rule: use FLOPs for architecture search, use on-device latency for deployment decisions.</p>
+<h3 id="quantisation-in-one-paragraph"><a class="anchor" href="#quantisation-in-one-paragraph">#</a> Quantisation in one paragraph</h3>
+<p>Replace FP32 weights and activations with INT8. Model size drops 4x, memory bandwidth drops 4x, compute drops 2-4x on hardware that has INT8 kernels (every modern mobile SoC, every NVIDIA GPU with Tensor Cores). Accuracy loss on vision tasks is typically 0.1-1 percentage points with post-training static quantisation.</p>
+<p>Types:</p>
+<ul>
+<li><strong>Dynamic</strong> — quantise weights to INT8, activations computed in FP. Easy, small speedup.</li>
+<li><strong>Static (post-training)</strong> — quantise weights + calibrate activation ranges on a small calibration set. Much faster than dynamic.</li>
+<li><strong>Quantisation-aware training (QAT)</strong> — simulate quantisation during training so the model learns around it. Best accuracy, needs labelled data.</li>
+</ul>
+<p>For vision, post-training static quantisation gives 95% of the benefit with 5% of the effort. Use QAT only when accuracy loss from PTQ is unacceptable.</p>
+<h3 id="pruning-and-distillation"><a class="anchor" href="#pruning-and-distillation">#</a> Pruning and distillation</h3>
+<ul>
+<li><strong>Pruning</strong> — remove unimportant weights (magnitude-based) or channels (structured). Works well on overparameterised models; less useful on already-compact architectures.</li>
+<li><strong>Distillation</strong> — train a small student to mimic a large teacher&#39;s logits. Often recovers most of the accuracy lost by shrinking the model. Standard for production edge models.</li>
+</ul>
+<h3 id="the-inference-runtimes"><a class="anchor" href="#the-inference-runtimes">#</a> The inference runtimes</h3>
+<ul>
+<li><strong>PyTorch eager</strong> — slow, not for deployment. Use for development only.</li>
+<li><strong>TorchScript</strong> — legacy. Superseded by <code>torch.compile</code> and ONNX export.</li>
+<li><strong>ONNX Runtime</strong> — the neutral runtime. CPU, CUDA, CoreML, TensorRT, OpenVINO all have ONNX providers. Start here.</li>
+<li><strong>TensorRT</strong> — NVIDIA&#39;s compiler. Best latency on NVIDIA GPUs (workstation and Jetson). Integrates with ONNX Runtime or standalone.</li>
+<li><strong>Core ML</strong> — Apple&#39;s runtime for iOS/macOS. Needs <code>.mlmodel</code> or <code>.mlpackage</code>.</li>
+<li><strong>TFLite</strong> — Google&#39;s runtime for Android/ARM. Needs <code>.tflite</code>.</li>
+<li><strong>OpenVINO</strong> — Intel&#39;s runtime for CPU/VPU. Needs <code>.xml</code> + <code>.bin</code>.</li>
+</ul>
+<p>In practice: export PyTorch -&gt; ONNX -&gt; pick the runtime for the target. ONNX is the lingua franca.</p>
+<h3 id="edge-architecture-picker"><a class="anchor" href="#edge-architecture-picker">#</a> Edge architecture picker</h3>
+<table>
+<thead>
+<tr>
+<th>Budget</th>
+<th>Model</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&lt; 3M params</td>
+<td>MobileNetV3-Small</td>
+<td>Compiles everywhere, good baseline</td>
+</tr>
+<tr>
+<td>3-10M</td>
+<td>EfficientNet-Lite-B0</td>
+<td>Best accuracy per param on TFLite</td>
+</tr>
+<tr>
+<td>10-20M</td>
+<td>ConvNeXt-Tiny</td>
+<td>Best accuracy-per-param, CPU-friendly</td>
+</tr>
+<tr>
+<td>20-30M</td>
+<td>MobileViT-S or EfficientViT</td>
+<td>Transformer with ImageNet accuracy</td>
+</tr>
+<tr>
+<td>30-80M</td>
+<td>Swin-V2-Tiny</td>
+<td>If stack supports window attention</td>
+</tr>
+</tbody></table>
+<p>Quantise all of these to INT8 unless you have a specific reason not to.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cnn-param-count</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-measure-latency-correctly"><a class="anchor" href="#step-1-measure-latency-correctly">#</a> Step 1: Measure latency correctly</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import time
+import torch
+
+def measure_latency(model, input_shape, device=&quot;cpu&quot;, warmup=10, iters=50):
+    model = model.to(device).eval()
+    x = torch.randn(input_shape, device=device)
+    with torch.no_grad():
+        for _ in range(warmup):
+            model(x)
+        if device == &quot;cuda&quot;:
+            torch.cuda.synchronize()
+        times = []
+        for _ in range(iters):
+            if device == &quot;cuda&quot;:
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            model(x)
+            if device == &quot;cuda&quot;:
+                torch.cuda.synchronize()
+            times.append((time.perf_counter() - t0) * 1000)
+    times.sort()
+    return {
+        &quot;p50_ms&quot;: times[len(times) // 2],
+        &quot;p95_ms&quot;: times[int(len(times) * 0.95)],
+        &quot;p99_ms&quot;: times[int(len(times) * 0.99)],
+        &quot;mean_ms&quot;: sum(times) / len(times),
+    }</code></pre>
+      </div>
+    <p>Warm up, synchronise, use <code>time.perf_counter()</code>. Report percentiles, not just mean.</p>
+<h3 id="step-2-parameter-and-flop-counts"><a class="anchor" href="#step-2-parameter-and-flop-counts">#</a> Step 2: Parameter and FLOP counts</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def parameter_count(model):
+    return sum(p.numel() for p in model.parameters())
+
+def flops_estimate(model, input_shape):
+    &quot;&quot;&quot;
+    Rough FLOP count for a conv/linear-only model. For production use `fvcore` or `ptflops`.
+    &quot;&quot;&quot;
+    total = 0
+    def conv_hook(m, inp, out):
+        nonlocal total
+        c_out, c_in, kh, kw = m.weight.shape
+        h, w = out.shape[-2:]
+        total += 2 * c_in * c_out * kh * kw * h * w
+    def linear_hook(m, inp, out):
+        nonlocal total
+        total += 2 * m.in_features * m.out_features
+    hooks = []
+    for m in model.modules():
+        if isinstance(m, torch.nn.Conv2d):
+            hooks.append(m.register_forward_hook(conv_hook))
+        elif isinstance(m, torch.nn.Linear):
+            hooks.append(m.register_forward_hook(linear_hook))
+    model.eval()
+    with torch.no_grad():
+        model(torch.randn(input_shape))
+    for h in hooks:
+        h.remove()
+    return total</code></pre>
+      </div>
+    <p>For real projects use <code>fvcore.nn.FlopCountAnalysis</code> or <code>ptflops</code>; they handle every module type correctly.</p>
+<h3 id="step-3-post-training-static-quantisation"><a class="anchor" href="#step-3-post-training-static-quantisation">#</a> Step 3: Post-training static quantisation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def quantise_ptq(model, calibration_loader, backend=&quot;x86&quot;):
+    import torch.ao.quantization as tq
+    model = model.eval().cpu()
+    model.qconfig = tq.get_default_qconfig(backend)
+    tq.prepare(model, inplace=True)
+    with torch.no_grad():
+        for x, _ in calibration_loader:
+            model(x)
+    tq.convert(model, inplace=True)
+    return model</code></pre>
+      </div>
+    <p>Three steps: configure, prepare (insert observers), calibrate with real data, convert (fuse + quantise). Requires the model to be fused (<code>Conv -&gt; BN -&gt; ReLU</code> -&gt; <code>ConvBnReLU</code>), which <code>torch.ao.quantization.fuse_modules</code> handles.</p>
+<h3 id="step-4-export-to-onnx"><a class="anchor" href="#step-4-export-to-onnx">#</a> Step 4: Export to ONNX</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def export_onnx(model, sample_input, path=&quot;model.onnx&quot;):
+    model = model.eval()
+    torch.onnx.export(
+        model,
+        sample_input,
+        path,
+        input_names=[&quot;input&quot;],
+        output_names=[&quot;output&quot;],
+        dynamic_axes={&quot;input&quot;: {0: &quot;batch&quot;}, &quot;output&quot;: {0: &quot;batch&quot;}},
+        opset_version=17,
+    )
+    return path</code></pre>
+      </div>
+    <p><code>opset_version=17</code> is the safe default in 2026. <code>dynamic_axes</code> lets you run the ONNX model with arbitrary batch size.</p>
+<h3 id="step-5-benchmark-and-compare-regimes"><a class="anchor" href="#step-5-benchmark-and-compare-regimes">#</a> Step 5: Benchmark and compare regimes</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn as nn
+from torchvision.models import mobilenet_v3_small
+
+def compare_regimes():
+    model = mobilenet_v3_small(weights=None, num_classes=10)
+    params = parameter_count(model)
+    flops = flops_estimate(model, (1, 3, 224, 224))
+    lat_fp32 = measure_latency(model, (1, 3, 224, 224), device=&quot;cpu&quot;)
+    print(f&quot;FP32 MobileNetV3-Small: {params:,} params  {flops/1e9:.2f} GFLOPs  &quot;
+          f&quot;p50={lat_fp32[&#39;p50_ms&#39;]:.2f}ms  p95={lat_fp32[&#39;p95_ms&#39;]:.2f}ms&quot;)</code></pre>
+      </div>
+    <p>Run the same function for <code>resnet50</code>, <code>efficientnet_v2_s</code>, and <code>convnext_tiny</code> and you have the comparison table you need for a deployment decision.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production stacks converge on one of three paths:</p>
+<ul>
+<li><strong>Web / serverless</strong>: PyTorch -&gt; ONNX -&gt; ONNX Runtime (CPU or CUDA provider). Easiest, good enough for most.</li>
+<li><strong>NVIDIA edge (Jetson, GPU server)</strong>: PyTorch -&gt; ONNX -&gt; TensorRT. Best latency, biggest engineering effort.</li>
+<li><strong>Mobile</strong>: PyTorch -&gt; ONNX -&gt; Core ML (iOS) or TFLite (Android). Quantise before export.</li>
+</ul>
+<p>For measurement, <code>torch-tb-profiler</code>, <code>nvprof</code> / <code>nsys</code>, and Instruments on macOS give layer-by-layer breakdowns. <code>benchmark_app</code> (OpenVINO) and <code>trtexec</code> (TensorRT) give standalone CLI numbers.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-edge-deployment-planner.md</code> — a prompt that picks backbone, quantisation strategy, and runtime given target device and latency SLA.</li>
+<li><code>outputs/skill-latency-profiler.md</code> — a skill that writes a complete latency-benchmarking script with warmup, synchronisation, percentiles, and memory tracking.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Measure p50 latency for <code>resnet18</code>, <code>mobilenet_v3_small</code>, <code>efficientnet_v2_s</code>, and <code>convnext_tiny</code> at 224x224 on CPU. Report the table and identify which architecture has the best accuracy-per-ms.</li>
+<li><strong>(Medium)</strong> Apply post-training static quantisation to <code>mobilenet_v3_small</code>. Report FP32 vs INT8 latency and accuracy loss on a held-out subset of CIFAR-10 or similar.</li>
+<li><strong>(Hard)</strong> Export <code>convnext_tiny</code> to ONNX, run it through <code>onnxruntime</code> with the <code>CPUExecutionProvider</code>, and compare latency to the PyTorch eager baseline. Identify the first layer where ONNX Runtime is faster and explain why.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Latency</td>
+<td>&quot;How fast&quot;</td>
+<td>Time from input to output; p50/p95/p99 percentiles, not mean</td>
+</tr>
+<tr>
+<td>FLOPs</td>
+<td>&quot;Model size&quot;</td>
+<td>Floating-point ops per forward pass; rough proxy for compute cost</td>
+</tr>
+<tr>
+<td>INT8 quantisation</td>
+<td>&quot;8-bit&quot;</td>
+<td>Replace FP32 weights/activations with 8-bit integers; ~4x smaller, 2-4x faster</td>
+</tr>
+<tr>
+<td>PTQ</td>
+<td>&quot;Post-training quantisation&quot;</td>
+<td>Quantise a trained model without retraining; easy, usually enough</td>
+</tr>
+<tr>
+<td>QAT</td>
+<td>&quot;Quantisation-aware training&quot;</td>
+<td>Simulate quantisation during training; best accuracy, requires labelled data</td>
+</tr>
+<tr>
+<td>ONNX</td>
+<td>&quot;The neutral format&quot;</td>
+<td>Model exchange format supported by every mainstream inference runtime</td>
+</tr>
+<tr>
+<td>TensorRT</td>
+<td>&quot;NVIDIA compiler&quot;</td>
+<td>Compiles ONNX into an optimised engine for NVIDIA GPUs</td>
+</tr>
+<tr>
+<td>Distillation</td>
+<td>&quot;Teacher -&gt; student&quot;</td>
+<td>Train a small model to mimic a big model&#39;s logits; recovers most lost accuracy</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1905.11946">EfficientNet (Tan &amp; Le, 2019)</a> — compound scaling for efficient architectures</li>
+<li><a href="https://arxiv.org/abs/1905.02244">MobileNetV3 (Howard et al., 2019)</a> — mobile-first architecture with h-swish and squeeze-excite</li>
+<li><a href="https://developer.nvidia.com/blog/accelerating-model-inference-with-tensorrt-tips-and-best-practices-for-pytorch-users/">A Practical Guide to TensorRT Optimization (NVIDIA)</a> — how to actually get the throughput numbers in the paper</li>
+<li><a href="https://onnxruntime.ai/docs/">ONNX Runtime docs</a> — quantisation, graph optimisation, provider selection</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-vision-transformers.html"><span>← Previous</span><b>vision transformers</b></a>
+      <a class="next" href="./16-vision-pipeline-capstone.html"><span>Next →</span><b>vision pipeline capstone</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

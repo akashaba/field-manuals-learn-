@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>04.02 — Hybrid Search (as the RAG Retrieval Layer) — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/04.%20RAG/04-02-hybrid-search.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">RAG</div>
+    <ol class="toc"><li><a href="#1-retrieval-is-the-ceiling">1. Retrieval Is the Ceiling</a></li><li><a href="#2-hybrid-search-in-real-engines">2. Hybrid Search in Real Engines</a></li><li><a href="#3-filters-must-be-identical-across-legs">3. Filters Must Be Identical Across Legs</a></li><li><a href="#4-multi-source-retrieval">4. Multi-Source Retrieval</a></li><li><a href="#5-temporal-and-versioned-corpora">5. Temporal and Versioned Corpora</a></li><li><a href="#6-how-much-to-retrieve-dynamic-k-and-abstention">6. How Much to Retrieve: Dynamic k and Abstention</a></li><li><a href="#7-caching-without-wrong-answers">7. Caching Without Wrong Answers</a></li><li><a href="#8-measuring-the-retrieval-layer-for-rag">8. Measuring the Retrieval Layer for RAG</a></li><li><a href="#9-production-challenges-how-to-solve-them">9. Production Challenges &amp; How to Solve Them</a></li><li><a href="#10-hands-on-projects">10. Hands-On Projects</a></li><li><a href="#11-foundational-papers-reading-exact-titles">11. Foundational Papers &amp; Reading (exact titles)</a></li><li><a href="#12-essential-tooling">12. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · RAG</div>
+    <h1 class="lesson-title">04.02 — Hybrid Search (as the RAG Retrieval Layer)</h1>
+    <p class="lesson-sub">**Module 4: RAG** · Subtopic 2 of 5</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — RAG 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="15.2" y="119.4" width="26.4" height="26.4" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.4 132.6)"/>
+        <circle cx="23.0" cy="127.6" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.6" cy="122.7" r="11.9" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6d28d9" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#6d28d9" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#6d28d9" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="40" lengthAdjust="spacingAndGlyphs">RAG</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">04.02 — Hybrid</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Search (as the RAG…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> <strong>03.04 (required)</strong> — BM25/BM25F, SPLADE, ColBERT, RRF vs convex fusion, cascades, query routing. Also 03.03 (pgvector, ACLs, CDC), 04.01 (chunks and metadata).
+<strong>Outcome:</strong> you can implement hybrid retrieval <em>inside real engines</em> (Postgres, OpenSearch, Elasticsearch), apply filters and ACLs correctly across both legs, handle temporal and versioned corpora, size the retrieved context dynamically, cache safely, and <strong>attribute RAG failures</strong> to retrieval or to generation.</p>
+</blockquote>
+<blockquote>
+<p><strong>Scope:</strong> 03.04 covered <em>how</em> lexical, sparse, dense, and late-interaction scoring work and how to fuse them. This subtopic covers <strong>operating hybrid search as the retrieval layer of a RAG system</strong>, where the consumer is an LLM with a token budget, not a human scanning ten blue links.</p>
+</blockquote>
+<hr>
+<h2 id="1-retrieval-is-the-ceiling"><a class="anchor" href="#1-retrieval-is-the-ceiling">#</a> 1. Retrieval Is the Ceiling</h2>
+<p>Let $R$ be the event &quot;sufficient evidence was retrieved into the context&quot; and $C$ the event &quot;the answer is correct&quot;:</p>
+<p>$$
+P(C) = \underbrace{P(R)}<em>{\text{retrieval}}\cdot \underbrace{P(C \mid R)}</em>{\text{generation}} + \big(1 - P(R)\big)\cdot \underbrace{P(C \mid \neg R)}_{\text{parametric / lucky}}
+$$</p>
+<p>For domain-specific, fresh, or proprietary knowledge (legislation, internal policy), $P(C \mid \neg R) \approx 0$, and the answer rate is capped by $P(R)$. <strong>Diagnose every failure into one of four quadrants</strong> before changing anything:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">                        answer correct            answer wrong
+                  ┌─────────────────────────┬─────────────────────────────┐
+ evidence         │  ✔ success              │  GENERATION failure          │
+ retrieved        │                         │  (ignored/misread evidence,  │
+                  │                         │   distraction, bad prompt)   │
+                  ├─────────────────────────┼─────────────────────────────┤
+ evidence         │  PARAMETRIC / lucky     │  RETRIEVAL failure           │
+ NOT retrieved    │  (risky: unverifiable,  │  (fix chunking, hybrid,      │
+                  │   may be stale)         │   rewriting, reranking)      │
+                  └─────────────────────────┴─────────────────────────────┘</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from collections import Counter
+
+
+def attribute_failures(records: list[dict]) -&gt; dict:
+    &quot;&quot;&quot;records: {&#39;evidence_ids&#39;: set, &#39;retrieved_ids&#39;: set, &#39;correct&#39;: bool, &#39;slice&#39;: str}.
+    Evidence counts as retrieved when ALL gold evidence ids are present (use &#39;any&#39; for lenient).&quot;&quot;&quot;
+    quad = Counter()
+    by_slice: dict[str, Counter] = {}
+    for r in records:
+        hit = r[&quot;evidence_ids&quot;] &lt;= r[&quot;retrieved_ids&quot;]
+        q = (&quot;success&quot; if r[&quot;correct&quot;] else &quot;generation_failure&quot;) if hit else \
+            (&quot;parametric_or_lucky&quot; if r[&quot;correct&quot;] else &quot;retrieval_failure&quot;)
+        quad[q] += 1
+        by_slice.setdefault(r.get(&quot;slice&quot;, &quot;all&quot;), Counter())[q] += 1
+    n = sum(quad.values())
+    return {&quot;overall&quot;: {k: round(v / n, 3) for k, v in quad.items()},
+            &quot;by_slice&quot;: {s: dict(c) for s, c in by_slice.items()},
+            &quot;retrieval_ceiling&quot;: round((quad[&quot;success&quot;] + quad[&quot;generation_failure&quot;]) / n, 3)}</code></pre>
+      </div>
+    <p><strong>Rule of thumb:</strong> if retrieval failures dominate, work on this subtopic, 04.01, 04.03, and 04.04. If generation failures dominate, work on prompting, context assembly, and verification (02.01, 02.02).</p>
+<hr>
+<h2 id="2-hybrid-search-in-real-engines"><a class="anchor" href="#2-hybrid-search-in-real-engines">#</a> 2. Hybrid Search in Real Engines</h2>
+<h3 id="21-postgres-only-pgvector-full-text-fused-with-rrf-in-sql"><a class="anchor" href="#21-postgres-only-pgvector-full-text-fused-with-rrf-in-sql">#</a> 2.1 Postgres only (pgvector + full-text), fused with RRF in SQL</h3>
+<p>This is attractive when your metadata, ACLs, and transactions already live in Postgres (03.03). You get one system and one consistency model.</p>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">-- $1 query embedding, $2 query text, $3 tenant, $4 caller groups, $5 as-of date
+WITH dense AS (
+    SELECT chunk_id, rank() OVER (ORDER BY embedding &lt;=&gt; $1::halfvec) AS rnk
+    FROM chunks
+    WHERE tenant_id = $3 AND acl_groups &amp;&amp; $4::text[]
+      AND valid_from &lt;= $5 AND ($5 &lt; valid_to OR valid_to IS NULL)
+    ORDER BY embedding &lt;=&gt; $1::halfvec
+    LIMIT 100
+),
+lexical AS (
+    SELECT chunk_id, rank() OVER (ORDER BY ts_rank_cd(tsv, q) DESC) AS rnk
+    FROM chunks, websearch_to_tsquery(&#39;english&#39;, $2) AS q
+    WHERE tsv @@ q
+      AND tenant_id = $3 AND acl_groups &amp;&amp; $4::text[]                   -- SAME filters as dense
+      AND valid_from &lt;= $5 AND ($5 &lt; valid_to OR valid_to IS NULL)
+    ORDER BY ts_rank_cd(tsv, q) DESC
+    LIMIT 100
+)
+SELECT chunk_id,
+       COALESCE(1.0 / (60 + d.rnk), 0) + COALESCE(1.0 / (60 + l.rnk), 0) AS rrf_score
+FROM dense d FULL OUTER JOIN lexical l USING (chunk_id)
+ORDER BY rrf_score DESC
+LIMIT 30;</code></pre>
+      </div>
+    <p><strong>Caveats:</strong></p>
+<ul>
+<li><code>ts_rank_cd</code> is <strong>not BM25</strong>: it has no proper IDF or term-frequency saturation. For true BM25 inside Postgres, use a BM25 extension (e.g. ParadeDB <code>pg_search</code>), or keep a search engine for the lexical leg.</li>
+<li>Add identifier handling: a <code>citations text[]</code> column with a GIN index, and an exact-match clause boosted in fusion (03.04 §2.2).</li>
+<li>Set <code>hnsw.iterative_scan</code> for the dense leg so that restrictive filters still return enough rows (03.03 §4.2).</li>
+</ul>
+<h3 id="22-opensearch-hybrid-query-normalisation-pipeline"><a class="anchor" href="#22-opensearch-hybrid-query-normalisation-pipeline">#</a> 2.2 OpenSearch: hybrid query + normalisation pipeline</h3>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">PUT /_search/pipeline/rag-hybrid
+{
+  &quot;description&quot;: &quot;min-max normalise and weight lexical vs dense&quot;,
+  &quot;phase_results_processors&quot;: [
+    { &quot;normalization-processor&quot;: {
+        &quot;normalization&quot;: { &quot;technique&quot;: &quot;min_max&quot; },
+        &quot;combination&quot;:   { &quot;technique&quot;: &quot;arithmetic_mean&quot;, &quot;parameters&quot;: { &quot;weights&quot;: [0.35, 0.65] } }
+    } }
+  ]
+}
+
+GET /chunks/_search?search_pipeline=rag-hybrid
+{
+  &quot;size&quot;: 30,
+  &quot;query&quot;: {
+    &quot;hybrid&quot;: {
+      &quot;queries&quot;: [
+        { &quot;bool&quot;: {
+            &quot;should&quot;: [
+              { &quot;multi_match&quot;: { &quot;query&quot;: &quot;county sheriff funding HB 45&quot;,
+                                 &quot;fields&quot;: [&quot;title^2&quot;, &quot;section_path^1.5&quot;, &quot;content&quot;] } },
+              { &quot;terms&quot;: { &quot;citations&quot;: [&quot;HB-45&quot;], &quot;boost&quot;: 5 } }
+            ],
+            &quot;filter&quot;: [ { &quot;term&quot;: { &quot;tenant_id&quot;: 42 } }, { &quot;terms&quot;: { &quot;acl_groups&quot;: [&quot;legal&quot;, &quot;staff&quot;] } } ]
+        } },
+        { &quot;knn&quot;: { &quot;embedding&quot;: { &quot;vector&quot;: [0.012, -0.034, 0.101], &quot;k&quot;: 100,
+            &quot;filter&quot;: { &quot;bool&quot;: { &quot;filter&quot;: [ { &quot;term&quot;: { &quot;tenant_id&quot;: 42 } },
+                                              { &quot;terms&quot;: { &quot;acl_groups&quot;: [&quot;legal&quot;, &quot;staff&quot;] } } ] } } } } }
+      ]
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The <code>score-ranker-processor</code> provides RRF instead of score normalisation. <strong>Verify the processor names, parameters, and subquery limits for your OpenSearch version</strong>; the hybrid features have evolved across 2.x and 3.x.</p>
+<h3 id="23-elasticsearch-retrievers-9x"><a class="anchor" href="#23-elasticsearch-retrievers-9x">#</a> 2.3 Elasticsearch retrievers (9.x)</h3>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">GET /chunks/_search
+{
+  &quot;retriever&quot;: {
+    &quot;linear&quot;: {
+      &quot;retrievers&quot;: [
+        { &quot;retriever&quot;: { &quot;standard&quot;: { &quot;query&quot;: { &quot;bool&quot;: {
+              &quot;must&quot;:   { &quot;match&quot;: { &quot;content&quot;: &quot;county sheriff funding&quot; } },
+              &quot;filter&quot;: [ { &quot;term&quot;: { &quot;tenant_id&quot;: 42 } } ] } } } },
+          &quot;weight&quot;: 1.0 },
+        { &quot;retriever&quot;: { &quot;knn&quot;: { &quot;field&quot;: &quot;embedding&quot;, &quot;query_vector&quot;: [0.012, -0.034, 0.101],
+              &quot;k&quot;: 100, &quot;num_candidates&quot;: 400, &quot;filter&quot;: { &quot;term&quot;: { &quot;tenant_id&quot;: 42 } } } },
+          &quot;weight&quot;: 2.0 }
+      ],
+      &quot;normalizer&quot;: &quot;minmax&quot;,
+      &quot;rank_window_size&quot;: 100
+    }
+  }
+}</code></pre>
+      </div>
+    <p>Swap <code>&quot;linear&quot;</code> for <code>&quot;rrf&quot;</code> (with <code>rank_constant</code>, default 60, and <code>rank_window_size</code>) when you have no labels to tune the weights. Weighted RRF is supported through a per-retriever <code>weight</code>.</p>
+<h3 id="24-which-to-use"><a class="anchor" href="#24-which-to-use">#</a> 2.4 Which to use</h3>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Choice</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Metadata/ACLs in Postgres, ≤ tens of millions of chunks, a small team</td>
+<td><strong>Postgres</strong> (pgvector + a BM25 extension or full-text)</td>
+</tr>
+<tr>
+<td>Lexical quality is critical (legal, citations), or you need rich analyzers and aggregations</td>
+<td><strong>OpenSearch/Elasticsearch</strong> hybrid</td>
+</tr>
+<tr>
+<td>Complex multi-phase ranking in the engine (ColBERT, learned features)</td>
+<td><strong>Vespa</strong></td>
+</tr>
+<tr>
+<td>Existing dedicated vector DB with sparse vectors</td>
+<td>Its native hybrid API (e.g. Qdrant prefetch + fusion)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="3-filters-must-be-identical-across-legs"><a class="anchor" href="#3-filters-must-be-identical-across-legs">#</a> 3. Filters Must Be Identical Across Legs</h2>
+<p>If the dense leg applies ACL or tenant filters but the lexical leg doesn&#39;t (or vice versa):</p>
+<ul>
+<li><strong>Security:</strong> unauthorised chunks can enter the fused list (03.03 §6).</li>
+<li><strong>Ranking bias:</strong> fusion mixes a filtered list with an unfiltered one, so rank positions are no longer comparable.</li>
+</ul>
+<p><strong>Engineering pattern:</strong> build filters once as a typed object, compile it into each engine&#39;s syntax, and <strong>contract-test</strong> that every leg receives the same predicate. Also watch for <strong>k-shortfall</strong> under restrictive filters. If the dense leg returns 7 results and the lexical leg 100, fusion is dominated by the lexical leg. Log per-leg result counts.</p>
+<hr>
+<h2 id="4-multi-source-retrieval"><a class="anchor" href="#4-multi-source-retrieval">#</a> 4. Multi-Source Retrieval</h2>
+<p>RAG over several heterogeneous sources (statutes, bills, FAQs, past memos, tickets) needs <strong>source-aware assembly</strong>:</p>
+<ul>
+<li><strong>Per-source retrieval + quotas:</strong> retrieve from each source, then allocate context budget by a per-source share and a minimum (e.g. statutes ≥ 50%, FAQs ≤ 15%).</li>
+<li><strong>Authority ordering:</strong> put primary sources (enacted law) before secondary ones (memos) in the context, and say so in the prompt.</li>
+<li><strong>Source-aware fusion:</strong> normalise scores per source before merging, because sources have different score distributions.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def allocate_by_source(ranked: dict[str, list[tuple[str, float, int]]], budget: int,
+                       shares: dict[str, float], minimum: dict[str, int] | None = None):
+    &quot;&quot;&quot;ranked: source -&gt; [(chunk_id, score, tokens)] best first. Returns chosen chunk ids.
+    Pass 1 fills each source&#39;s share (at least its minimum); pass 2 fills leftovers by global score.&quot;&quot;&quot;
+    minimum = minimum or {}
+    chosen, used, leftovers = [], 0, []
+    for src, items in ranked.items():
+        cap = max(int(budget * shares.get(src, 0.0)), minimum.get(src, 0))
+        spent = 0
+        for cid, score, toks in items:
+            if spent + toks &lt;= cap and used + toks &lt;= budget:
+                chosen.append(cid)
+                spent += toks
+                used += toks
+            else:
+                leftovers.append((score, cid, toks))
+    for score, cid, toks in sorted(leftovers, reverse=True):
+        if used + toks &lt;= budget:
+            chosen.append(cid)
+            used += toks
+    return chosen, used</code></pre>
+      </div>
+    <hr>
+<h2 id="5-temporal-and-versioned-corpora"><a class="anchor" href="#5-temporal-and-versioned-corpora">#</a> 5. Temporal and Versioned Corpora</h2>
+<p>Legislation, policies, and product documentation change. &quot;What is the penalty?&quot; means <em>as of when</em>?</p>
+<h3 id="51-validity-intervals-as-of-retrieval"><a class="anchor" href="#51-validity-intervals-as-of-retrieval">#</a> 5.1 Validity intervals (&quot;as-of&quot; retrieval)</h3>
+<p>Store <code>valid_from</code> / <code>valid_to</code> on every chunk version (e.g. effective date and repeal/amendment date). Default to <strong>today</strong>, and let query rewriting extract explicit dates (&quot;in 2019&quot;, &quot;before the 2023 session&quot;; 04.04). Filter on the interval (§2.1 SQL) so that superseded text never competes with current text.</p>
+<h3 id="52-recency-as-a-soft-signal"><a class="anchor" href="#52-recency-as-a-soft-signal">#</a> 5.2 Recency as a soft signal</h3>
+<p>For news-like sources, where newer is usually better but old items remain valid, blend in an exponential decay with half-life $h$:</p>
+<p>$$
+s&#39;(d) = s(d)\cdot\Big(1 - w + w\cdot e^{-\lambda,\Delta t(d)}\Big), \qquad \lambda = \frac{\ln 2}{h}
+$$</p>
+<p>Here $w \in [0,1]$ is the maximum recency influence. <strong>Never</strong> use a recency decay on authoritative law (use validity intervals instead). Old statutes that are still in force are not less relevant.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+from datetime import date
+
+
+def recency_adjust(results: list[tuple[str, float, date]], today: date, half_life_days: float,
+                   weight: float = 0.3) -&gt; list[tuple[str, float]]:
+    lam = math.log(2) / half_life_days
+    out = [(cid, s * (1 - weight + weight * math.exp(-lam * (today - d).days))) for cid, s, d in results]
+    return sorted(out, key=lambda t: -t[1])</code></pre>
+      </div>
+    <hr>
+<h2 id="6-how-much-to-retrieve-dynamic-k-and-abstention"><a class="anchor" href="#6-how-much-to-retrieve-dynamic-k-and-abstention">#</a> 6. How Much to Retrieve: Dynamic k and Abstention</h2>
+<p>A fixed top-k wastes tokens on easy queries and starves hard ones. Better options:</p>
+<ul>
+<li><strong>Token budget</strong> instead of k (04.01 §6.1).</li>
+<li><strong>Score-gap cut-off:</strong> after reranking (04.03), stop at the largest relative drop in score.</li>
+<li><strong>Calibrated threshold:</strong> keep chunks with calibrated relevance probability ≥ τ (04.03 §5).</li>
+<li><strong>Abstention:</strong> if nothing passes the threshold, say &quot;not found in the sources&quot; rather than letting the model improvise. Measure abstention precision (was the evidence really absent?).</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def dynamic_cut(scores: list[float], min_k: int = 2, max_k: int = 12, min_score: float | None = None,
+                rel_drop: float = 0.35) -&gt; int:
+    &quot;&quot;&quot;Return how many (sorted, descending) results to keep.&quot;&quot;&quot;
+    k = min(len(scores), max_k)
+    if min_score is not None:
+        k = min(k, sum(1 for s in scores if s &gt;= min_score))
+        if k == 0:
+            return 0                                          # abstain
+    for i in range(max(min_k, 1), k):
+        prev, cur = scores[i - 1], scores[i]
+        if prev &gt; 0 and (prev - cur) / prev &gt;= rel_drop:
+            return i
+    return k</code></pre>
+      </div>
+    <hr>
+<h2 id="7-caching-without-wrong-answers"><a class="anchor" href="#7-caching-without-wrong-answers">#</a> 7. Caching Without Wrong Answers</h2>
+<table>
+<thead>
+<tr>
+<th>Cache</th>
+<th>Key</th>
+<th>Risk</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Query embedding</td>
+<td>normalised query text + <code>model_id</code></td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Retrieval results</td>
+<td>normalised query + <strong>filters + ACL groups + as-of date</strong> + index version</td>
+<td>Leaking results across users if ACLs are missing from the key</td>
+</tr>
+<tr>
+<td><strong>Semantic cache</strong> (reuse an answer for a <em>similar</em> query)</td>
+<td>Embedding similarity above a threshold</td>
+<td><strong>High</strong>: &quot;penalty under HB 45&quot; ≈ &quot;penalty under HB 46&quot; in embedding space</td>
+</tr>
+</tbody></table>
+<p><strong>Guard semantic caches with an identifier check.</strong> Require that the numbers, citations, dates, and named entities extracted from the two queries match exactly. Also scope every cache by tenant and ACL, and invalidate on index-version bumps.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import hashlib
+import json
+import re
+
+IDENT = re.compile(r&quot;\b(?:HB|SB|HJ|SJ)[\s-]?\d+\b|\b\d+(?:-\d+)+\b|\b\d{4}\b|\$?\d[\d,.]*&quot;, re.I)
+
+
+def identifiers(q: str) -&gt; tuple[str, ...]:
+    return tuple(sorted(m.group(0).upper().replace(&quot; &quot;, &quot;-&quot;) for m in IDENT.finditer(q)))
+
+
+def retrieval_cache_key(query: str, filters: dict, acl_groups: list[str], index_version: str) -&gt; str:
+    norm = &quot; &quot;.join(query.lower().split())
+    payload = json.dumps({&quot;q&quot;: norm, &quot;f&quot;: filters, &quot;acl&quot;: sorted(acl_groups), &quot;v&quot;: index_version},
+                         sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def semantic_cache_hit(new_q: str, cached_q: str, similarity: float, threshold: float = 0.95) -&gt; bool:
+    return similarity &gt;= threshold and identifiers(new_q) == identifiers(cached_q)</code></pre>
+      </div>
+    <hr>
+<h2 id="8-measuring-the-retrieval-layer-for-rag"><a class="anchor" href="#8-measuring-the-retrieval-layer-for-rag">#</a> 8. Measuring the Retrieval Layer for RAG</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Definition</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Evidence recall @ budget</strong></td>
+<td>Fraction of gold evidence (spans or IDs) inside the retrieved context within $B$ tokens</td>
+<td>Primary retrieval metric for RAG</td>
+</tr>
+<tr>
+<td><strong>Context precision</strong></td>
+<td>Fraction of retrieved tokens or chunks that are relevant</td>
+<td>Distraction and cost</td>
+</tr>
+<tr>
+<td><strong>Retrieval ceiling</strong></td>
+<td>Share of questions whose evidence was retrieved (§1)</td>
+<td>Upper bound on accuracy</td>
+</tr>
+<tr>
+<td><strong>Per-leg contribution</strong></td>
+<td>Share of gold evidence found only by the lexical leg, only by the dense leg, or by both</td>
+<td>Justifies (or removes) a leg</td>
+</tr>
+<tr>
+<td><strong>k-shortfall rate</strong></td>
+<td>Queries where a leg returned fewer results than requested</td>
+<td>Filter/ACL health</td>
+</tr>
+<tr>
+<td><strong>Latency per leg</strong></td>
+<td>P50/P95</td>
+<td>Budget and timeouts</td>
+</tr>
+</tbody></table>
+<p>Frameworks such as RAGAS and ARES provide LLM-judged context precision and recall when gold evidence isn&#39;t labelled. Validate the judge against human labels (03.04 §8.1).</p>
+<hr>
+<h2 id="9-production-challenges-how-to-solve-them"><a class="anchor" href="#9-production-challenges-how-to-solve-them">#</a> 9. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Accuracy plateau</strong></td>
+<td>Prompt tweaks stop helping</td>
+<td>Failure attribution (§1); if retrieval-bound, improve recall</td>
+</tr>
+<tr>
+<td><strong>Inconsistent filters across legs</strong></td>
+<td>ACL leaks; odd rankings</td>
+<td>A single filter object compiled per engine; contract tests; per-leg count logging</td>
+</tr>
+<tr>
+<td><strong>Superseded text retrieved</strong></td>
+<td>Answers cite repealed law</td>
+<td>Validity intervals + as-of filtering; version metadata in the context</td>
+</tr>
+<tr>
+<td><strong>Recency decay on authoritative sources</strong></td>
+<td>Old-but-valid law ranked low</td>
+<td>Decay only on news-like sources; intervals for law</td>
+</tr>
+<tr>
+<td><strong>Semantic cache serves the wrong bill</strong></td>
+<td>Correct-looking answer for the wrong identifier</td>
+<td>Identifier-equality guard; ACL-scoped keys; version invalidation</td>
+</tr>
+<tr>
+<td><strong>Hybrid slower than either leg</strong></td>
+<td>Latency budget exceeded</td>
+<td>Parallel legs with timeouts (03.04 §6.3); smaller candidate windows; approximate filters</td>
+</tr>
+<tr>
+<td><strong>One source dominates the context</strong></td>
+<td>Answers ignore primary law</td>
+<td>Source quotas and authority ordering (§4)</td>
+</tr>
+<tr>
+<td><strong>Too much or too little context</strong></td>
+<td>Wasted tokens, or missing evidence</td>
+<td>Budget-based retrieval, dynamic cut, calibrated thresholds, abstention</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="10-hands-on-projects"><a class="anchor" href="#10-hands-on-projects">#</a> 10. Hands-On Projects</h2>
+<h3 id="project-1-postgres-only-hybrid-rag-vs-opensearch-hybrid"><a class="anchor" href="#project-1-postgres-only-hybrid-rag-vs-opensearch-hybrid">#</a> Project 1 — Postgres-Only Hybrid RAG vs OpenSearch Hybrid</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a tech lead</em> with Postgres already in production, I want to know whether a Postgres-only hybrid retrieval layer is good enough, or whether we need a search engine, so that we don&#39;t add infrastructure without evidence.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Both systems index the same chunks (04.01) and embeddings. Postgres uses pgvector + full-text (and optionally a BM25 extension). OpenSearch uses BM25F + kNN + a normalisation pipeline.</li>
+<li>The retrieval API (Spring Boot or FastAPI) applies identical tenant, ACL, and as-of filters to both legs in both systems, verified by contract tests.</li>
+<li>On ≥ 300 labelled questions (sliced by identifier, keyword, and natural-language queries): evidence recall at 2k/4k tokens, per-leg contribution, P50/P95 latency, and the attribution quadrants of the full RAG answers.</li>
+<li>The operational comparison covers setup effort, resource footprint at 10M chunks (extrapolated), backup and restore, and consistency with the source data.</li>
+<li>A recommendation, with the specific query slices where each system wins.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Load the chunk tables and index the same data into OpenSearch through the 03.03 CDC pipeline (a second sink).</li>
+<li>Implement the SQL of §2.1 and the pipeline and query of §2.2 behind a common <code>Retriever</code> interface.</li>
+<li>Implement the typed filter object and its compilers to SQL and OpenSearch DSL, with contract tests.</li>
+<li>Run the retrieval evaluation, then end-to-end RAG with a fixed generator prompt.</li>
+<li>Compute <code>attribute_failures</code> per slice, and write the decision memo.</li>
+</ol>
+<hr>
+<h3 id="project-2-temporal-as-of-legislation-rag"><a class="anchor" href="#project-2-temporal-as-of-legislation-rag">#</a> Project 2 — Temporal (&quot;As-Of&quot;) Legislation RAG</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a legislative attorney</em>, I want to ask &quot;what did 45-5-207 say in 2019?&quot; or &quot;what changed in this section after the 2023 session?&quot;, and get answers from the correct version with citations.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Ingests ≥ 3 historical versions of a code (or another versioned corpus) with <code>valid_from</code>/<code>valid_to</code> per section version, derived from session laws or effective dates.</li>
+<li>Query rewriting extracts explicit dates or sessions into an <code>as_of</code> filter (validated against the available range). The default is today.</li>
+<li>Supports diff questions by retrieving two versions and presenting both, labelled with their dates.</li>
+<li>On ≥ 150 time-sensitive questions: version accuracy (the cited version is correct) ≥ 95%, and zero answers that cite superseded text as current.</li>
+<li>Contrasts the system with a baseline that has no temporal filtering, and quantifies the stale-citation rate.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Build the version table and compute validity intervals. Handle the &quot;effective upon passage&quot; and &quot;applies retroactively&quot; edge cases explicitly.</li>
+<li>Extend the retrieval SQL or DSL with interval filters (§2.1).</li>
+<li>Implement date extraction with structured output (02.03) and validation.</li>
+<li>Build the diff flow: retrieve the section at t₁ and t₂ and render them side by side in the context.</li>
+<li>Evaluate against the baseline, and write up the failure cases.</li>
+</ol>
+<hr>
+<h3 id="project-3-rag-failure-attribution-and-retrieval-health-dashboard"><a class="anchor" href="#project-3-rag-failure-attribution-and-retrieval-health-dashboard">#</a> Project 3 — RAG Failure-Attribution and Retrieval Health Dashboard</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a RAG owner</em>, I want a live dashboard showing whether failures come from retrieval or generation, per query slice, so that the team works on the right problem every sprint.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>An offline evaluation job runs nightly on a labelled set of ≥ 300 questions. It computes evidence recall @ budget, context precision, the attribution quadrants (<code>attribute_failures</code>), per-leg contribution, and k-shortfall rate.</li>
+<li>Online sampling: 1% of production queries are judged by a validated LLM judge for context relevance and answer groundedness, with PII redaction.</li>
+<li>A dashboard (Grafana or Streamlit) with trends per slice and per release, and annotations for index, model, and prompt versions.</li>
+<li>Alerts: the retrieval ceiling drops by &gt; 3 points week over week, or k-shortfall exceeds 5%.</li>
+<li>One documented case where the dashboard redirected engineering effort (e.g. from prompt tuning to chunking).</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Define the evaluation record schema (question, gold evidence, retrieved IDs, answer, judge outputs, versions).</li>
+<li>Build the offline runner, reusing the §1 and §8 metrics, and store the results in Postgres or ClickHouse.</li>
+<li>Build the online sampler with trace IDs (OpenTelemetry), a redaction step, and the judge.</li>
+<li>Build the dashboards and alerts.</li>
+<li>Run for a few releases, and write the retrospective.</li>
+</ol>
+<hr>
+<h2 id="11-foundational-papers-reading-exact-titles"><a class="anchor" href="#11-foundational-papers-reading-exact-titles">#</a> 11. Foundational Papers &amp; Reading (exact titles)</h2>
+<ul>
+<li>Lewis et al., 2020 — <em>Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</em></li>
+<li>Izacard &amp; Grave, 2021 — <em>Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering</em></li>
+<li>Ram et al., 2023 — <em>In-Context Retrieval-Augmented Language Models</em></li>
+<li>Shi et al., 2023 — <em>REPLUG: Retrieval-Augmented Black-Box Language Models</em></li>
+<li>Barnett et al., 2024 — <em>Seven Failure Points When Engineering a Retrieval Augmented Generation System</em></li>
+<li>Es et al., 2023 — <em>RAGAS: Automated Evaluation of Retrieval Augmented Generation</em></li>
+<li>Saad-Falcon et al., 2023 — <em>ARES: An Automated Evaluation Framework for Retrieval-Augmented Generation Systems</em></li>
+<li>Bruch, Gai &amp; Ingber, 2023 — <em>An Analysis of Fusion Functions for Hybrid Retrieval</em></li>
+<li>Kasai et al., 2023 — <em>RealTime QA: What&#39;s the Answer Right Now?</em> (temporal questions)</li>
+<li>Bang et al., 2023 — <em>GPTCache: An Open-Source Semantic Cache for LLM Applications via Embedding Similarity</em></li>
+<li>Engine docs: pgvector hybrid search; OpenSearch hybrid query, normalization and score-ranker processors; Elasticsearch <code>rrf</code> and <code>linear</code> retrievers</li>
+</ul>
+<h2 id="12-essential-tooling"><a class="anchor" href="#12-essential-tooling">#</a> 12. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PostgreSQL + pgvector (+ ParadeDB <code>pg_search</code> or full-text)</strong></td>
+<td>Single-database hybrid retrieval</td>
+</tr>
+<tr>
+<td><strong>OpenSearch</strong> (hybrid query, search pipelines) / <strong>Elasticsearch</strong> (retrievers)</td>
+<td>Search-engine hybrid</td>
+</tr>
+<tr>
+<td><strong>Qdrant / Weaviate / Vespa</strong> hybrid APIs</td>
+<td>Alternatives with native fusion</td>
+</tr>
+<tr>
+<td><strong>RAGAS, ARES, DeepEval, TruLens</strong></td>
+<td>RAG evaluation (validate judges)</td>
+</tr>
+<tr>
+<td><strong>ranx</strong></td>
+<td>Offline fusion experiments and significance</td>
+</tr>
+<tr>
+<td><strong>OpenTelemetry + Grafana / Langfuse / Phoenix</strong></td>
+<td>Tracing and dashboards</td>
+</tr>
+<tr>
+<td><strong>Redis / Postgres</strong></td>
+<td>Retrieval and embedding caches with safe keys</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-01-chunking.html"><span>← Previous</span><b>01 chunking</b></a>
+      <a class="next" href="./04-03-reranking.html"><span>Next →</span><b>03 reranking</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

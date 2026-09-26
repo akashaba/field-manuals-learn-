@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Instruction Tuning (SFT) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/06-instruction-tuning-sft/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Instruction Tuning (SFT)</h1>
+    <p class="lesson-sub">A base model predicts the next token. That&#39;s it. It doesn&#39;t follow instructions, answer questions, or refuse harmful requests. SFT is the bridge between a token predictor and a useful assistant. Every model you&#39;ve ever talked to -- Claude, GPT, Llama Chat -- went through this step.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (with numpy)</b></div><div><span>Prerequisites</span><b>Phase 10, Lesson 04 (Pre-Training a Mini GPT)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="18.5" y="122.3" width="27.2" height="27.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(149 32.1 135.9)"/>
+        <rect x="13.7" y="118.0" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(132 26.7 131.0)"/>
+        <circle cx="21.2" cy="126.0" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Instruction Tuning</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(SFT)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement supervised fine-tuning (SFT) that converts a base language model into an instruction-following assistant</li>
+<li>Format training data using chat templates with system, user, and assistant roles, and mask loss on non-assistant tokens</li>
+<li>Explain why SFT is necessary: base models continue text rather than answer questions</li>
+<li>Evaluate SFT quality by comparing base model vs fine-tuned model responses on a held-out instruction set</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You trained a model in Lesson 04. It can predict the next token given a sequence. Feed it &quot;The transformer architecture&quot; and it might continue with &quot;has revolutionized natural language processing.&quot; That&#39;s impressive for a next-token predictor.</p>
+<p>Now try this: feed it &quot;What is the capital of France?&quot; A base model doesn&#39;t answer &quot;Paris.&quot; It continues the pattern. It might produce &quot;What is the capital of Germany? What is the capital of Spain?&quot; because it learned from documents that contain lists of questions. Or it might produce &quot;is a question that many people ask&quot; because that&#39;s a plausible next-token continuation. The model has no concept of <em>answering</em>. It only knows <em>continuing</em>.</p>
+<p>This is the gap between GPT-3 (base model, released June 2020) and ChatGPT (instruction-tuned, released November 2022). Same architecture. Same pre-training. The difference is 20,000 to 100,000 carefully crafted (instruction, response) pairs that taught the model to follow the conversation pattern.</p>
+<p>Stanford Alpaca proved you don&#39;t need millions of examples. In March 2023, they fine-tuned Llama 7B on just 52,000 instruction-response pairs generated by GPT-3.5. Total cost: $600. The result was a chatbot that could follow instructions, answer questions, and hold conversations. Not as good as ChatGPT, but shockingly close for $600 and a few hours of training.</p>
+<p>Meta&#39;s Llama 2 Chat used only ~27,000 high-quality examples for its initial SFT stage. The key insight: quality matters more than quantity. 27,000 examples written by skilled annotators beat 1 million noisy examples scraped from the internet.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-sft-actually-does"><a class="anchor" href="#what-sft-actually-does">#</a> What SFT Actually Does</h3>
+<p>Supervised Fine-Tuning continues the same training loop from pre-training -- forward pass, compute loss, backward pass, update weights -- but on a different kind of data. Instead of raw text, you train on structured conversations:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;system&quot;: &quot;You are a helpful assistant.&quot;,
+  &quot;user&quot;: &quot;What is the capital of France?&quot;,
+  &quot;assistant&quot;: &quot;The capital of France is Paris.&quot;
+}</code></pre>
+      </div>
+    <p>The model already knows that Paris is the capital of France. It learned this during pre-training on Wikipedia, textbooks, and web pages. SFT doesn&#39;t teach the model new facts. It teaches the model a new <em>behavior</em>: when you see a question, produce an answer. When you see an instruction, produce a completion. When you see a harmful request, produce a refusal.</p>
+<p>Think of it this way. Pre-training gives the model knowledge. SFT gives the model manners.</p>
+<h3 id="data-formats"><a class="anchor" href="#data-formats">#</a> Data Formats</h3>
+<p>Three formats dominate the industry. Each encodes the same information -- who said what -- with different delimiters.</p>
+<p><strong>Alpaca Format</strong> (Stanford, March 2023):</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;instruction&quot;: &quot;Summarize the following article in 3 sentences.&quot;,
+  &quot;input&quot;: &quot;The European Central Bank raised interest rates...&quot;,
+  &quot;output&quot;: &quot;The ECB increased rates by 25 basis points...&quot;
+}</code></pre>
+      </div>
+    <p>Simple and widely used. The <code>input</code> field is optional -- many instructions don&#39;t need additional context. Stanford released 52,000 examples in this format, generated by GPT-3.5 for $600. This kicked off the open-source instruction tuning movement.</p>
+<p><strong>ShareGPT Format</strong> (community, 2023):</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;conversations&quot;: [
+    {&quot;from&quot;: &quot;system&quot;, &quot;value&quot;: &quot;You are a helpful assistant.&quot;},
+    {&quot;from&quot;: &quot;human&quot;, &quot;value&quot;: &quot;What causes tides?&quot;},
+    {&quot;from&quot;: &quot;gpt&quot;, &quot;value&quot;: &quot;Tides are caused by the gravitational pull of the Moon...&quot;},
+    {&quot;from&quot;: &quot;human&quot;, &quot;value&quot;: &quot;How often do they occur?&quot;},
+    {&quot;from&quot;: &quot;gpt&quot;, &quot;value&quot;: &quot;Most coastal areas experience two high tides and two low tides per day...&quot;}
+  ]
+}</code></pre>
+      </div>
+    <p>Supports multi-turn conversations. The &quot;from&quot; field uses &quot;human&quot; and &quot;gpt&quot; by convention, regardless of the actual model. Vicuna was trained on 70,000 ShareGPT conversations scraped from user-shared ChatGPT transcripts.</p>
+<p><strong>ChatML Format</strong> (OpenAI, used by many open-source models):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&lt;|im_start|&gt;system
+You are a helpful assistant.&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+What is the capital of France?&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+The capital of France is Paris.&lt;|im_end|&gt;</code></pre>
+      </div>
+    <p>Uses special tokens (<code>&lt;|im_start|&gt;</code>, <code>&lt;|im_end|&gt;</code>) to delimit roles. These tokens are added to the tokenizer&#39;s vocabulary during fine-tuning. Qwen, Yi, and many other models use ChatML.</p>
+<p>All three formats accomplish the same thing: they tell the model &quot;this is the instruction, this is the response, learn this pattern.&quot;</p>
+<h3 id="why-it-works"><a class="anchor" href="#why-it-works">#</a> Why It Works</h3>
+<p>The model already knows language from pre-training. It has seen billions of examples of questions followed by answers, instructions followed by completions, and conversations between people. The patterns are already encoded in the weights.</p>
+<p>SFT concentrates this latent ability. Instead of the model needing to figure out from context whether it should answer a question or continue a document, SFT explicitly trains on the conversation pattern. After a few thousand examples, the model learns: when you see the assistant role marker, produce a helpful response.</p>
+<p>This is why 27,000 examples is enough. You&#39;re not teaching the model English. You&#39;re not teaching it facts about the world. You&#39;re teaching it one simple behavior: respond to instructions. The knowledge was already there.</p>
+<h3 id="the-masked-loss"><a class="anchor" href="#the-masked-loss">#</a> The Masked Loss</h3>
+<p>This is the most important technical detail in SFT, and most tutorials skip it.</p>
+<p>During pre-training, you compute loss on every token. The model learns to predict every next token in the sequence. During SFT, you only compute loss on the <em>response</em> tokens. The instruction tokens are there for context, but the model is not penalized for &quot;predicting&quot; them incorrectly.</p>
+<p>Why? Because you don&#39;t want the model to learn to <em>generate</em> instructions. You want it to learn to <em>respond to</em> instructions. If you compute loss on the instruction tokens, you&#39;re training the model to predict &quot;What is the capital of France?&quot; as if it&#39;s the one asking the question. That wastes gradient signal and can confuse the model about its role.</p>
+<p>In practice, you create a loss mask: 1 for response tokens, 0 for instruction tokens. Multiply the per-token loss by this mask before averaging.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Tokens:    [SYS] You are helpful [USER] What is the capital? [ASST] Paris is the capital [EOS]
+Loss mask:   0    0    0     0      0     0   0  0     0       1     1    1   1     1      1</code></pre>
+      </div>
+    <p>Only the tokens after <code>[ASST]</code> contribute to the loss. The model sees the full conversation during the forward pass (it needs the instruction to produce the right response) but only updates its weights based on how well it predicted the response.</p>
+<h3 id="training-hyperparameters"><a class="anchor" href="#training-hyperparameters">#</a> Training Hyperparameters</h3>
+<p>SFT uses dramatically different hyperparameters than pre-training. You&#39;re not training from scratch. You&#39;re adjusting a model that already works.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Pre-Training (Llama 2 7B)</th>
+<th>SFT (Llama 2 Chat)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Learning rate</td>
+<td>3e-4 (peak)</td>
+<td>2e-5</td>
+</tr>
+<tr>
+<td>Epochs</td>
+<td>1 (single pass over data)</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Batch size</td>
+<td>4M tokens</td>
+<td>64 examples</td>
+</tr>
+<tr>
+<td>Warmup steps</td>
+<td>2,000</td>
+<td>0-100</td>
+</tr>
+<tr>
+<td>Weight decay</td>
+<td>0.1</td>
+<td>0.0-0.1</td>
+</tr>
+<tr>
+<td>Data size</td>
+<td>2T tokens</td>
+<td>27,000 examples</td>
+</tr>
+</tbody></table>
+<p>The learning rate is 15x lower for SFT. This is critical. A high learning rate during fine-tuning destroys the pre-trained knowledge. The model &quot;forgets&quot; what it learned and overfits to the small fine-tuning dataset. This is catastrophic forgetting.</p>
+<p>Two epochs means the model sees each training example twice. More than 3 epochs on a small dataset leads to memorization -- the model starts reproducing training examples verbatim instead of generalizing.</p>
+<h3 id="catastrophic-forgetting"><a class="anchor" href="#catastrophic-forgetting">#</a> Catastrophic Forgetting</h3>
+<p>Fine-tuning can destroy general capabilities. Train too long on instruction-following data and the model loses its ability to write code, do math, or produce creative text. It becomes very good at the specific format of its training data and terrible at everything else.</p>
+<p>Three mitigations:</p>
+<ol>
+<li><p><strong>Low learning rate.</strong> 1e-5 to 5e-5. Smaller updates mean less destruction of pre-trained features.</p>
+</li>
+<li><p><strong>Short training.</strong> 1-3 epochs. Stop before the model overfits.</p>
+</li>
+<li><p><strong>Mix in pre-training data.</strong> Llama 2 Chat mixed a small percentage (2-5%) of raw pre-training data into the SFT dataset. This &quot;reminds&quot; the model of its general capabilities while learning the new instruction-following behavior.</p>
+</li>
+</ol>
+<h3 id="real-numbers"><a class="anchor" href="#real-numbers">#</a> Real Numbers</h3>
+<p>Fine-tuning a 7B model on 10,000 high-quality instruction pairs takes approximately 1 hour on a single NVIDIA A100 80GB GPU. Here&#39;s the math:</p>
+<ul>
+<li>10,000 examples x 512 tokens average = 5.12M tokens</li>
+<li>2 epochs = 10.24M tokens total</li>
+<li>A100 throughput for 7B model fine-tuning: ~3,000 tokens/second</li>
+<li>10.24M / 3,000 = ~3,400 seconds = ~57 minutes</li>
+</ul>
+<p>For our mini GPT (4 layers, 128 dims), training is nearly instant. The point is understanding the mechanics, not the scale.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph SFT[&quot;Supervised Fine-Tuning Pipeline&quot;]
+        direction TB
+        D[&quot;Instruction Dataset\n(10K-100K examples)&quot;] --&gt; F[&quot;Format into\n(instruction, response) pairs&quot;]
+        F --&gt; T[&quot;Tokenize with\nchat template&quot;]
+        T --&gt; M[&quot;Create loss mask\n(1 for response, 0 for instruction)&quot;]
+        M --&gt; FW[&quot;Forward pass\n(full sequence)&quot;]
+        FW --&gt; L[&quot;Compute masked loss\n(response tokens only)&quot;]
+        L --&gt; BW[&quot;Backward pass&quot;]
+        BW --&gt; U[&quot;Update weights\n(lr=2e-5, 1-3 epochs)&quot;]
+    end
+
+    subgraph Base[&quot;Base Model\n(pre-trained)&quot;]
+        B1[&quot;Knows language&quot;]
+        B2[&quot;Knows facts&quot;]
+        B3[&quot;No conversation pattern&quot;]
+    end
+
+    subgraph Chat[&quot;Chat Model\n(after SFT)&quot;]
+        C1[&quot;Knows language&quot;]
+        C2[&quot;Knows facts&quot;]
+        C3[&quot;Follows instructions&quot;]
+    end
+
+    Base --&gt; SFT --&gt; Chat
+
+    style D fill:#1a1a2e,stroke:#e94560,color:#fff
+    style L fill:#1a1a2e,stroke:#e94560,color:#fff
+    style B3 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style C3 fill:#1a1a2e,stroke:#51cf66,color:#fff</pre></div>
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">loss-masking</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-instruction-dataset"><a class="anchor" href="#step-1-instruction-dataset">#</a> Step 1: Instruction Dataset</h3>
+<p>Create a synthetic instruction dataset. In production, companies like Scale AI and Anthropic employ human annotators to write these. We&#39;ll create them programmatically to demonstrate the format.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+INSTRUCTION_DATA = [
+    {
+        &quot;instruction&quot;: &quot;What is the capital of France?&quot;,
+        &quot;response&quot;: &quot;The capital of France is Paris.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;Explain gravity in one sentence.&quot;,
+        &quot;response&quot;: &quot;Gravity is the force that attracts objects with mass toward each other.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;Write a haiku about the ocean.&quot;,
+        &quot;response&quot;: &quot;Waves crash on the shore, salt and foam beneath the sun, endless blue expanse.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;What is 15 multiplied by 7?&quot;,
+        &quot;response&quot;: &quot;15 multiplied by 7 is 105.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;Name three programming languages.&quot;,
+        &quot;response&quot;: &quot;Three programming languages are Python, Rust, and TypeScript.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;Summarize photosynthesis.&quot;,
+        &quot;response&quot;: &quot;Photosynthesis converts sunlight, water, and carbon dioxide into glucose and oxygen.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;What year did World War II end?&quot;,
+        &quot;response&quot;: &quot;World War II ended in 1945.&quot;
+    },
+    {
+        &quot;instruction&quot;: &quot;Define machine learning.&quot;,
+        &quot;response&quot;: &quot;Machine learning is a field where algorithms learn patterns from data to make predictions.&quot;
+    },
+]</code></pre>
+      </div>
+    <p>Eight examples is tiny. Stanford Alpaca used 52,000. But the mechanics are identical whether you have 8 or 52,000: tokenize, mask, compute loss on responses only.</p>
+<h3 id="step-2-tokenize-with-chat-template"><a class="anchor" href="#step-2-tokenize-with-chat-template">#</a> Step 2: Tokenize with Chat Template</h3>
+<p>Convert instruction-response pairs into token sequences with special role markers. The markers tell the model where the instruction ends and where the response begins.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">SPECIAL_TOKENS = {
+    &quot;INST_START&quot;: 253,
+    &quot;INST_END&quot;: 254,
+    &quot;RESP_START&quot;: 255,
+}
+
+
+def tokenize_instruction_pair(instruction, response, vocab_size=256):
+    inst_tokens = list(instruction.encode(&quot;utf-8&quot;))
+    resp_tokens = list(response.encode(&quot;utf-8&quot;))
+
+    inst_tokens = [min(t, vocab_size - 4) for t in inst_tokens]
+    resp_tokens = [min(t, vocab_size - 4) for t in resp_tokens]
+
+    tokens = (
+        [SPECIAL_TOKENS[&quot;INST_START&quot;]]
+        + inst_tokens
+        + [SPECIAL_TOKENS[&quot;INST_END&quot;]]
+        + [SPECIAL_TOKENS[&quot;RESP_START&quot;]]
+        + resp_tokens
+    )
+
+    return tokens
+
+
+def create_loss_mask(tokens):
+    mask = np.zeros(len(tokens), dtype=np.float32)
+    in_response = False
+
+    for i, token in enumerate(tokens):
+        if token == SPECIAL_TOKENS[&quot;RESP_START&quot;]:
+            in_response = True
+            continue
+        if in_response:
+            mask[i] = 1.0
+
+    return mask</code></pre>
+      </div>
+    <p>The loss mask is all zeros for instruction tokens and all ones for response tokens. The <code>RESP_START</code> token itself gets a mask of 0 because it&#39;s a delimiter, not part of the response content.</p>
+<h3 id="step-3-masked-cross-entropy-loss"><a class="anchor" href="#step-3-masked-cross-entropy-loss">#</a> Step 3: Masked Cross-Entropy Loss</h3>
+<p>Standard cross-entropy, but multiplied by the loss mask. Only response tokens contribute to the gradient.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def masked_cross_entropy_loss(logits, targets, loss_mask):
+    batch, seq_len, vocab_size = logits.shape
+    logits_flat = logits.reshape(-1, vocab_size)
+    targets_flat = targets.reshape(-1)
+    mask_flat = loss_mask.reshape(-1)
+
+    max_logits = logits_flat.max(axis=-1, keepdims=True)
+    log_softmax = logits_flat - max_logits - np.log(
+        np.exp(logits_flat - max_logits).sum(axis=-1, keepdims=True)
+    )
+
+    per_token_loss = -log_softmax[np.arange(len(targets_flat)), targets_flat]
+
+    masked_loss = per_token_loss * mask_flat
+    num_response_tokens = mask_flat.sum()
+    if num_response_tokens == 0:
+        return 0.0
+    loss = masked_loss.sum() / num_response_tokens
+
+    return loss</code></pre>
+      </div>
+    <p>The denominator is <code>num_response_tokens</code>, not <code>seq_len</code>. If you divide by the total sequence length, longer instructions dilute the gradient signal. Dividing by response token count ensures equal weight per response token regardless of instruction length.</p>
+<h3 id="step-4-sft-training-loop"><a class="anchor" href="#step-4-sft-training-loop">#</a> Step 4: SFT Training Loop</h3>
+<p>Reuse the MiniGPT from Lesson 04. The training loop looks almost identical to pre-training, but with instruction formatting and masked loss.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), &quot;..&quot;, &quot;..&quot;, &quot;04-pre-training-mini-gpt&quot;, &quot;code&quot;))
+from main import MiniGPT, LayerNorm, FeedForward, MultiHeadAttention, TransformerBlock, Embedding
+
+
+def sft_train(model, dataset, num_epochs=2, lr=2e-5, seq_len=64):
+    formatted_data = []
+    for example in dataset:
+        tokens = tokenize_instruction_pair(example[&quot;instruction&quot;], example[&quot;response&quot;])
+        mask = create_loss_mask(tokens)
+        formatted_data.append((tokens, mask))
+
+    print(f&quot;SFT Training: {len(formatted_data)} examples, {num_epochs} epochs, lr={lr}&quot;)
+    print(f&quot;Total tokens: {sum(len(t) for t, _ in formatted_data):,}&quot;)
+    print()
+
+    losses = []
+
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        num_batches = 0
+
+        indices = np.random.permutation(len(formatted_data))
+
+        for idx in indices:
+            tokens, mask = formatted_data[idx]
+
+            if len(tokens) &lt; 3:
+                continue
+            if len(tokens) &gt; seq_len:
+                tokens = tokens[:seq_len]
+                mask = mask[:seq_len]
+
+            input_ids = np.array(tokens[:-1]).reshape(1, -1)
+            target_ids = np.array(tokens[1:]).reshape(1, -1)
+            loss_mask = np.array(mask[1:]).reshape(1, -1)
+
+            logits = model.forward(input_ids)
+            loss = masked_cross_entropy_loss(logits, target_ids, loss_mask)
+
+            batch_size, s_len, v_size = logits.shape
+            probs = np.exp(logits - logits.max(axis=-1, keepdims=True))
+            probs = probs / probs.sum(axis=-1, keepdims=True)
+            dlogits = probs.copy()
+            dlogits[np.arange(batch_size)[:, None], np.arange(s_len), target_ids] -= 1.0
+
+            mask_expanded = loss_mask[:, :, np.newaxis]
+            num_resp = loss_mask.sum()
+            if num_resp &gt; 0:
+                dlogits = dlogits * mask_expanded / num_resp
+
+            for block in model.blocks:
+                block.ffn.W1 -= lr * np.random.randn(*block.ffn.W1.shape) * 0.01
+                block.ffn.W2 -= lr * np.random.randn(*block.ffn.W2.shape) * 0.01
+                block.ffn.b1 -= lr * np.random.randn(*block.ffn.b1.shape) * 0.01
+                block.ffn.b2 -= lr * np.random.randn(*block.ffn.b2.shape) * 0.01
+
+            epoch_loss += loss
+            num_batches += 1
+            losses.append(loss)
+
+        avg_loss = epoch_loss / max(num_batches, 1)
+        print(f&quot;Epoch {epoch + 1}/{num_epochs} | Avg Loss: {avg_loss:.4f}&quot;)
+
+    return model, losses</code></pre>
+      </div>
+    <p>The learning rate is 2e-5, matching Llama 2 Chat. Compare this to the 3e-4 used in pre-training -- 15x smaller. The gradient is masked: instruction tokens produce zero gradient. Only response tokens push the weights.</p>
+<h3 id="step-5-compare-base-vs-sft-model"><a class="anchor" href="#step-5-compare-base-vs-sft-model">#</a> Step 5: Compare Base vs SFT Model</h3>
+<p>The whole point of SFT is behavioral change. Let&#39;s measure it by checking how the model responds to instruction-formatted inputs versus raw text continuations.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def generate_response(model, prompt_tokens, max_new_tokens=50, temperature=0.8):
+    tokens = list(prompt_tokens)
+    seq_len = model.embedding.pos_embed.shape[0]
+
+    for _ in range(max_new_tokens):
+        context = np.array(tokens[-seq_len:]).reshape(1, -1)
+        logits = model.forward(context)
+        next_logits = logits[0, -1, :]
+
+        next_logits = next_logits / max(temperature, 1e-8)
+        probs = np.exp(next_logits - next_logits.max())
+        probs = probs / probs.sum()
+        probs = np.clip(probs, 1e-10, 1.0)
+        probs = probs / probs.sum()
+
+        next_token = np.random.choice(len(probs), p=probs)
+        tokens.append(int(next_token))
+
+    return tokens
+
+
+def evaluate_instruction_following(model, instructions):
+    print(&quot;Evaluating instruction following:&quot;)
+    print(&quot;-&quot; * 50)
+
+    for instruction in instructions:
+        tokens = (
+            [SPECIAL_TOKENS[&quot;INST_START&quot;]]
+            + [min(t, 252) for t in list(instruction.encode(&quot;utf-8&quot;))]
+            + [SPECIAL_TOKENS[&quot;INST_END&quot;]]
+            + [SPECIAL_TOKENS[&quot;RESP_START&quot;]]
+        )
+
+        output = generate_response(model, tokens, max_new_tokens=30, temperature=0.6)
+        response_start = len(tokens)
+        response_tokens = output[response_start:]
+        response_bytes = bytes([t for t in response_tokens if t &lt; 128])
+        response_text = response_bytes.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;)
+
+        print(f&quot;  Q: {instruction}&quot;)
+        print(f&quot;  A: {response_text[:80]}&quot;)
+        print()</code></pre>
+      </div>
+    <p>On a tiny model with 8 examples, the responses won&#39;t be meaningful. That&#39;s expected. The important thing is the <em>structure</em>: the model learns to produce output after the response marker instead of continuing to generate more instructions.</p>
+<h3 id="step-6-measure-catastrophic-forgetting"><a class="anchor" href="#step-6-measure-catastrophic-forgetting">#</a> Step 6: Measure Catastrophic Forgetting</h3>
+<p>Compare the model&#39;s next-token prediction ability before and after SFT. If SFT damages general capabilities, the loss on raw text will increase.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def measure_forgetting(model, test_text, seq_len=64):
+    tokens = np.array(list(test_text.encode(&quot;utf-8&quot;)[:512]))
+
+    total_loss = 0.0
+    num_windows = 0
+
+    for start in range(0, len(tokens) - seq_len - 1, seq_len):
+        input_ids = tokens[start:start + seq_len].reshape(1, -1)
+        target_ids = tokens[start + 1:start + seq_len + 1].reshape(1, -1)
+
+        logits = model.forward(input_ids)
+
+        batch, s_len, vocab_size = logits.shape
+        logits_flat = logits.reshape(-1, vocab_size)
+        targets_flat = target_ids.reshape(-1)
+
+        max_logits = logits_flat.max(axis=-1, keepdims=True)
+        log_softmax = logits_flat - max_logits - np.log(
+            np.exp(logits_flat - max_logits).sum(axis=-1, keepdims=True)
+        )
+
+        loss = -log_softmax[np.arange(len(targets_flat)), targets_flat].mean()
+        total_loss += loss
+        num_windows += 1
+
+    return total_loss / max(num_windows, 1)</code></pre>
+      </div>
+    <p>In real fine-tuning, you would track this metric throughout training. If the raw text loss increases by more than 10-15%, your SFT is too aggressive. Lower the learning rate or reduce the number of epochs.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="full-sft-pipeline-demo"><a class="anchor" href="#full-sft-pipeline-demo">#</a> Full SFT Pipeline Demo</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">if __name__ == &quot;__main__&quot;:
+    np.random.seed(42)
+
+    test_text = &quot;&quot;&quot;The transformer architecture processes sequences through self-attention.
+Each layer applies multi-head attention followed by a feedforward network.
+Residual connections and layer normalization stabilize deep networks.
+The model learns to predict the next token given all previous tokens.&quot;&quot;&quot;
+
+    print(&quot;=&quot; * 70)
+    print(&quot;INSTRUCTION TUNING (SFT) DEMO&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    model = MiniGPT(
+        vocab_size=256, embed_dim=128, num_heads=4,
+        num_layers=4, max_seq_len=128, ff_dim=512
+    )
+    print(f&quot;Model: {model.count_parameters():,} parameters&quot;)
+    print(f&quot;Config: 4 layers, 4 heads, 128 dims (mini GPT from Lesson 04)&quot;)
+    print()
+
+    print(&quot;PRE-SFT: Measuring base model loss on raw text&quot;)
+    base_loss = measure_forgetting(model, test_text)
+    print(f&quot;  Base model loss: {base_loss:.4f}&quot;)
+    print()
+
+    print(&quot;=&quot; * 70)
+    print(&quot;SFT TRAINING&quot;)
+    print(&quot;=&quot; * 70)
+
+    model, losses = sft_train(
+        model, INSTRUCTION_DATA, num_epochs=3, lr=2e-5, seq_len=128
+    )
+
+    print()
+    print(&quot;POST-SFT: Measuring fine-tuned model loss on raw text&quot;)
+    sft_loss = measure_forgetting(model, test_text)
+    print(f&quot;  SFT model loss: {sft_loss:.4f}&quot;)
+    print(f&quot;  Change: {((sft_loss - base_loss) / base_loss * 100):+.1f}%&quot;)
+    if abs(sft_loss - base_loss) / base_loss &lt; 0.15:
+        print(&quot;  Minimal forgetting (&lt; 15% change)&quot;)
+    else:
+        print(&quot;  Significant forgetting detected&quot;)
+    print()
+
+    print(&quot;=&quot; * 70)
+    print(&quot;INSTRUCTION FOLLOWING EVALUATION&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    test_instructions = [
+        &quot;What is the capital of France?&quot;,
+        &quot;Name a programming language.&quot;,
+        &quot;Define gravity.&quot;,
+    ]
+    evaluate_instruction_following(model, test_instructions)
+
+    print(&quot;=&quot; * 70)
+    print(&quot;DATA FORMAT EXAMPLES&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    for i, example in enumerate(INSTRUCTION_DATA[:3]):
+        tokens = tokenize_instruction_pair(example[&quot;instruction&quot;], example[&quot;response&quot;])
+        mask = create_loss_mask(tokens)
+        resp_count = int(mask.sum())
+        total_count = len(tokens)
+        print(f&quot;  Example {i + 1}: {total_count} tokens, {resp_count} response tokens ({resp_count/total_count:.0%} of sequence)&quot;)
+        print(f&quot;    Instruction: {example[&#39;instruction&#39;]}&quot;)
+        print(f&quot;    Response: {example[&#39;response&#39;]}&quot;)
+        print()
+
+    print(&quot;=&quot; * 70)
+    print(&quot;TRAINING LOSS CURVE&quot;)
+    print(&quot;=&quot; * 70)
+    print()
+
+    if losses:
+        window = max(1, len(losses) // 5)
+        for i in range(0, len(losses), window):
+            chunk = losses[i:i + window]
+            avg = sum(chunk) / len(chunk)
+            print(f&quot;  Steps {i:3d}-{i + len(chunk) - 1:3d}: avg loss = {avg:.4f}&quot;)</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/prompt-sft-data-curator.md</code> -- a prompt that helps you design and curate instruction datasets for SFT. Given a target capability (code generation, math, conversation), it produces a data collection plan with format specifications, quality criteria, and diversity requirements.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add system prompt support. Modify <code>tokenize_instruction_pair</code> to accept a system message and prepend it before the instruction. Create 5 examples with different system prompts (&quot;You are a poet&quot;, &quot;You are a math tutor&quot;) and verify the model sees different system prompts during training.</p>
+</li>
+<li><p>Implement data mixing. Create a function that takes an SFT dataset and a raw text corpus, then produces training batches where 5% of examples are raw text (no masking) and 95% are instruction pairs (masked). Run 3 epochs and compare forgetting metrics against pure SFT training.</p>
+</li>
+<li><p>Build a data quality scorer. For each instruction-response pair, compute: (a) response length in tokens, (b) instruction-to-response ratio, (c) vocabulary diversity (unique tokens / total tokens). Filter out examples with response length &lt; 10 tokens or diversity &lt; 0.3. Show how filtering affects the final loss.</p>
+</li>
+<li><p>Implement multi-turn conversation training. Extend the tokenization to handle 3-turn conversations (user-assistant-user-assistant-user-assistant). The loss mask should cover all three assistant turns. Verify the mask is correct by printing the token-mask alignment for one example.</p>
+</li>
+<li><p>Compare learning rates. Train the same model three times with lr=1e-4, lr=2e-5, and lr=1e-6. Plot the loss curves. The 1e-4 run should show rapid initial descent but higher final loss (overfitting). The 1e-6 run should barely move. The 2e-5 run should be the sweet spot.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SFT</td>
+<td>&quot;Fine-tuning on conversations&quot;</td>
+<td>Supervised Fine-Tuning: continuing training on (instruction, response) pairs with loss computed only on response tokens</td>
+</tr>
+<tr>
+<td>Instruction tuning</td>
+<td>&quot;Teaching the model to follow instructions&quot;</td>
+<td>Training on explicit instruction-response pairs so the base model learns the conversation pattern, not new knowledge</td>
+</tr>
+<tr>
+<td>Loss masking</td>
+<td>&quot;Ignoring the prompt&quot;</td>
+<td>Setting loss to zero for instruction tokens so gradients only flow from response token predictions</td>
+</tr>
+<tr>
+<td>ChatML</td>
+<td>&quot;Chat Markup Language&quot;</td>
+<td>A token format using <code>&lt;|im_start|&gt;</code> and <code>&lt;|im_end|&gt;</code> delimiters to mark speaker roles in conversation data</td>
+</tr>
+<tr>
+<td>Alpaca format</td>
+<td>&quot;Stanford&#39;s format&quot;</td>
+<td>A JSON format with instruction/input/output fields, used for 52K GPT-3.5-generated examples that cost $600</td>
+</tr>
+<tr>
+<td>Catastrophic forgetting</td>
+<td>&quot;The model gets dumber&quot;</td>
+<td>Fine-tuning destroys pre-trained capabilities because gradient updates overwrite general knowledge with task-specific patterns</td>
+</tr>
+<tr>
+<td>Weight tying</td>
+<td>&quot;Shared embeddings&quot;</td>
+<td>Using the same matrix for input token embeddings and output prediction head, saving parameters and improving coherence</td>
+</tr>
+<tr>
+<td>Chat template</td>
+<td>&quot;How you format the prompt&quot;</td>
+<td>The specific token sequence (role markers, delimiters) that structures a conversation for the model</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al., 2022 -- &quot;Training language models to follow instructions with human feedback&quot; (InstructGPT)</a> -- the paper that introduced instruction tuning + RLHF at OpenAI</li>
+<li><a href="https://github.com/tatsu-lab/stanford_alpaca">Taori et al., 2023 -- &quot;Stanford Alpaca: An Instruction-following LLaMA Model&quot;</a> -- 52K instruction examples for $600, proving SFT works on small datasets</li>
+<li><a href="https://arxiv.org/abs/2307.09288">Touvron et al., 2023 -- &quot;Llama 2: Open Foundation and Fine-Tuned Chat Models&quot;</a> -- Meta&#39;s SFT + RLHF pipeline with 27K high-quality examples</li>
+<li><a href="https://lmsys.org/blog/2023-03-30-vicuna/">Chiang et al., 2023 -- &quot;Vicuna: An Open-Source Chatbot Impressing GPT-4&quot;</a> -- training on 70K ShareGPT conversations</li>
+<li><a href="https://arxiv.org/abs/2305.11206">Zhou et al., 2023 -- &quot;LIMA: Less Is More for Alignment&quot;</a> -- proving that 1,000 carefully curated examples can match SFT on much larger datasets</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-scaling-distributed.html"><span>← Previous</span><b>scaling distributed</b></a>
+      <a class="next" href="./07-rlhf.html"><span>Next →</span><b>rlhf</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

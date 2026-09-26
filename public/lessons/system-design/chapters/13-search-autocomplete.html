@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 13: Design a Search Autocomplete System — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/13.%20Search%20Autocomplete/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-understanding-the-problem">Step 1: Understanding the Problem</a></li><li><a href="#step-2-high-level-design">Step 2: High-Level Design</a></li><li><a href="#step-3-design-deep-dive">Step 3: Design Deep Dive</a></li><li><a href="#step-4-advanced-features">Step 4: Advanced Features</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 13: Design a Search Autocomplete System</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="109.3" cy="106.1" r="9.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.9" cy="101.2" r="9.1" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.5" cy="96.2" r="8.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M85.2,96.0 L93.0,84.3 L100.9,96.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.4,90.7 L87.6,79.9 L94.8,90.7 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.7,85.4 L82.2,75.6 L88.7,85.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 13: Design a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Search Autocomplete…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>Autocomplete, also known as typeahead or incremental search, provides real-time suggestions to users as they type in search boxes. The system must efficiently deliver top-k relevant and popular suggestions based on historical query data.</p>
+<h3 id="key-features"><a class="anchor" href="#key-features">#</a> Key Features</h3>
+<ul>
+<li>Suggest up to <strong>5 autocomplete results</strong>.</li>
+<li>Based on <strong>query popularity</strong> (frequency).</li>
+<li>Support only <strong>lowercase English characters</strong>.</li>
+<li>Fast response time (&lt;100 ms) and scalable.</li>
+</ul>
+<hr>
+<h2 id="step-1-understanding-the-problem"><a class="anchor" href="#step-1-understanding-the-problem">#</a> Step 1: Understanding the Problem</h2>
+<h3 id="requirements"><a class="anchor" href="#requirements">#</a> Requirements</h3>
+<ol>
+<li><strong>Real-Time Suggestions:</strong> Display relevant matches as the user types.</li>
+<li><strong>Top-k Results:</strong> Return up to 5 results sorted by popularity.</li>
+<li><strong>Scalability:</strong> Handle <strong>10 million DAU</strong> with a peak QPS of <strong>48,000</strong>.</li>
+<li><strong>High Availability:</strong> Handle failures without system downtime.</li>
+<li><strong>Data Growth:</strong> Support daily storage growth of <strong>0.4 GB</strong> for new query data.</li>
+</ol>
+<hr>
+<h2 id="step-2-high-level-design"><a class="anchor" href="#step-2-high-level-design">#</a> Step 2: High-Level Design</h2>
+<p>At the high-level, the system is broken down into two services:</p>
+<ol>
+<li><p><strong>Data Gathering Service:</strong> </p>
+<ul>
+<li>Collects user queries and aggregates them for frequency analysis in real-time.</li>
+<li>Real-time processing is not practical for large data sets; however, it is a good starting point</li>
+</ul>
+</li>
+<li><p><strong>Query Service:</strong> Provides the top-k suggestions based on the user’s input.</p>
+</li>
+</ol>
+<hr>
+<h3 id="data-gathering-service"><a class="anchor" href="#data-gathering-service">#</a> Data Gathering Service</h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/data-gathering.png" alt="Data Gathering" width="600">
+</div>
+
+<ul>
+<li>Aggregates query data from analytics logs and updates the frequency table.</li>
+<li>Processes historical data weekly to build a <strong>trie</strong> (prefix tree).</li>
+</ul>
+<h3 id="query-service"><a class="anchor" href="#query-service">#</a> Query Service</h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/frequency-table.png" alt="Frequency Table" width="400">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/basic-search-suggestions.png" alt="Search Suggestions" width="360">
+</div>
+
+<ul>
+<li>Uses the frequency table from data gathering service.</li>
+<li>Processes user input and retrieves top-k suggestions from the frequency table using a Trie.</li>
+<li>Optimized for fast lookups using caching and efficient data structures.</li>
+<li>For example when a user types “tw” in the search box, the following top 5 searched queries are displayed.</li>
+</ul>
+<hr>
+<h2 id="step-3-design-deep-dive"><a class="anchor" href="#step-3-design-deep-dive">#</a> Step 3: Design Deep Dive</h2>
+<h3 id="trie-data-structure"><a class="anchor" href="#trie-data-structure">#</a> Trie Data Structure</h3>
+<p>The <strong>trie</strong> is a tree-like data structure used to store and retrieve query strings efficiently.</p>
+<h4 id="key-features"><a class="anchor" href="#key-features">#</a> Key Features</h4>
+<ol>
+<li><p><strong>Compact Storage:</strong> Represents prefixes hierarchically to minimize redundancy.</p>
+</li>
+<li><p><strong>Frequency Information:</strong> Stores the popularity of queries at each node.</p>
+</li>
+<li><p><strong>Steps to get top k most searched queries</strong></p>
+<div style="margin-left:3rem">
+   <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/trie-structure.png" alt="Trie Structure" width="500">
+</div>
+
+<ul>
+<li>Find the prefix</li>
+<li>Traverse the subtree from prefix node to get all valid children</li>
+<li>Sort the children and get top k</li>
+</ul>
+</li>
+<li><p><strong>Optimizations:</strong></p>
+<ul>
+<li><p>Cache top-k queries at each node to speed up retrieval and avoid traversing the whole trie.</p>
+   <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/cached-trie.png" alt="Cached Trie" width="600">
+</li>
+<li><p>Limit prefix length to reduce search space as users rarely type a loong search query (say 50).</p>
+</li>
+</ul>
+</li>
+</ol>
+<h4 id="trie-operations"><a class="anchor" href="#trie-operations">#</a> Trie Operations</h4>
+<ol>
+<li><strong>Create:</strong> <ul>
+<li>Built weekly using aggregated query data.</li>
+<li>The source of data is from Analytics Log/DB.</li>
+</ul>
+</li>
+<li><strong>Update:</strong> Rarely updated in real-time; weekly updates replace old data.</li>
+<li><strong>Delete:</strong>    <div style="margin-left:3rem">
+      <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/delete-kv.png" alt="Delete KV" width="500">
+   </div>
+
+<ul>
+<li>Filters remove unwanted or harmful suggestions (e.g., hate speech).</li>
+<li>Having a filter layer gives us the flexibility of removing results based on different filter rules.</li>
+<li>Unwanted suggestions are removed physically from the database asynchronically.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="query-processing-flow"><a class="anchor" href="#query-processing-flow">#</a> Query Processing Flow</h3>
+<ol>
+<li><strong>Prefix Search:</strong><ul>
+<li>Identify the prefix node corresponding to the user’s input.</li>
+<li>Traverse the subtree to collect valid suggestions.</li>
+</ul>
+</li>
+<li><strong>Top-k Sorting:</strong><ul>
+<li>Cache top-k suggestions at each node to minimize sorting overhead.</li>
+</ul>
+</li>
+<li><strong>Response Construction:</strong><ul>
+<li>Construct results using cached data for fast response times.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="optimizations"><a class="anchor" href="#optimizations">#</a> Optimizations</h3>
+<ol>
+<li><strong>Cache at Each Node:</strong><ul>
+<li>Store the top-k queries to avoid redundant traversals.</li>
+</ul>
+</li>
+<li><strong>Limit Prefix Length:</strong><ul>
+<li>Cap prefix length to a small value (e.g., 50 characters) for faster lookups.</li>
+</ul>
+</li>
+<li><strong>AJAX Requests:</strong><ul>
+<li>Use lightweight asynchronous requests for real-time responses.</li>
+</ul>
+</li>
+<li><strong>Browser Caching:</strong><ul>
+<li>Save autocomplete results in the browser cache for frequently searched terms.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="data-gathering-pipeline"><a class="anchor" href="#data-gathering-pipeline">#</a> Data Gathering Pipeline</h3>
+<p>In the high-level design, whenever a user types a search query, data is updated in real-time. This appraoch is not practical.</p>
+<ul>
+<li>Users may enter billions of queries per day. Updating the trie on every query is not feasible.</li>
+<li>Top suggestions may not change much one the trie is built.</li>
+</ul>
+<h4 id="updated-design"><a class="anchor" href="#updated-design">#</a> Updated Design</h4>
+<div style="margin-left:3rem">
+   <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/data-gathering-flow.png" alt="Updated Data Gathering Flow" width="600">
+</div>
+
+<ol>
+<li><strong>Analytics Logs:</strong><ul>
+<li>Stores raw query data as logs for weekly aggregation.</li>
+<li>Logs are append-only and are not indexed</li>
+</ul>
+</li>
+<li><strong>Aggregators:</strong><ul>
+<li>Process logs into frequency tables, suitable for trie construction.</li>
+<li>For real-time applications such as Twitter, aggregate data in a shorter time interval.</li>
+<li>For other cases, aggregating data less frequently, say once per week is good enough.</li>
+</ul>
+</li>
+<li><strong>Workers:</strong><ul>
+<li>Asynchronous servers rebuild the trie and store it in persistent storage.</li>
+</ul>
+</li>
+<li><strong>Storage Options:</strong><ul>
+<li><strong>Trie Cache</strong>: Trie Cache is a distributed cache system that keeps trie in memory for fast read.</li>
+<li><strong>Trie DB</strong> <ol>
+<li><strong>Document Store (e.g., MongoDB)</strong>: Since a new trie is built weekly, we can periodically take a snapshot of it, serialize it, and store the serialized data in the database like MongoDB</li>
+<li><strong>Key-Value Store:</strong> <ul>
+<li><p>Maps prefixes to node data for fast access.</p>
+</li>
+<li><p>Every prefix in the trie is mapped to a key in a hash table.</p>
+</li>
+<li><p>Data on each trie node is mapped to a value in a hash table.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/trie-db.png" alt="Trie DB" width="600"></li>
+</ul>
+</li>
+</ol>
+</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="scalability"><a class="anchor" href="#scalability">#</a> Scalability</h3>
+<ol>
+<li><strong>Sharding:</strong><ul>
+<li>Distribute trie nodes across servers based on prefix ranges (e.g., <code>a-m</code>, <code>n-z</code>).</li>
+<li>Further shard within prefixes to balance uneven distributions (e.g., <code>aa-ag</code>, <code>ah-an</code>).</li>
+</ul>
+</li>
+<li><strong>Load Balancing:</strong><div style="margin-left:3rem">
+   <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/13.%20Search%20Autocomplete/images/sharding.png" alt="Sharding" width="400">
+</div>
+
+<ul>
+<li>Use a shard map manager to route requests to the appropriate server.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="step-4-advanced-features"><a class="anchor" href="#step-4-advanced-features">#</a> Step 4: Advanced Features</h2>
+<h3 id="multi-language-support"><a class="anchor" href="#multi-language-support">#</a> Multi-Language Support</h3>
+<ol>
+<li><strong>Unicode Characters:</strong> Use Unicode to support non-English languages.</li>
+<li><strong>Country-Specific Tries:</strong> Build separate tries for different countries or regions.</li>
+</ol>
+<h3 id="trending-queries"><a class="anchor" href="#trending-queries">#</a> Trending Queries</h3>
+<ul>
+<li>Handle real-time events by dynamically updating trie nodes or weighting recent queries more heavily.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-chat-system.html"><span>← Previous</span><b>chat system</b></a>
+      <a class="next" href="./14-youtube.html"><span>Next →</span><b>youtube</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

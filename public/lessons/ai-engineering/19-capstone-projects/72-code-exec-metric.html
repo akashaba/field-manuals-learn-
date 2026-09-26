@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Code Exec Metric — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/72-code-exec-metric/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning objectives</a></li><li><a href="#why-an-isolated-subprocess">Why an isolated subprocess</a></li><li><a href="#the-shape-of-a-code-exec-task">The shape of a code-exec task</a></li><li><a href="#the-denylist">The denylist</a></li><li><a href="#wall-clock-timeout">Wall-clock timeout</a></li><li><a href="#output-cap">Output cap</a></li><li><a href="#pass-at-k">Pass-at-k</a></li><li><a href="#exit-codes">Exit codes</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Code Exec Metric</h1>
+    <p class="lesson-sub">Generated code is right when it passes the tests. The eval harness has to extract code, run it without crashing the host, and tally pass-rates honestly. This lesson builds that surface.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track B foundations, lessons 70 and 71</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 72">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="108.4" cy="105.2" r="9.6" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.9" cy="100.3" r="9.0" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.2,100.4 L97.5,87.9 L105.9,100.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.4,95.1 L92.1,83.5 L99.8,95.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.6,89.8 L86.7,79.2 L93.7,89.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.8,84.5 L81.3,74.8 L87.7,84.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">72</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Code Exec Metric</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning objectives</h2>
+<ul>
+<li>Extract a code block from a free-form generation in a way that matches the post-process rule from lesson 70.</li>
+<li>Execute candidate code in an isolated subprocess with a wall-clock timeout, output cap, and an import denylist.</li>
+<li>Score a task as the fraction of supplied assertion strings that pass against the candidate.</li>
+<li>Compute pass-at-k for tasks that sample multiple generations from one model.</li>
+<li>Treat sandbox crashes, syntax errors, and timeouts as first-class fail modes with distinct exit codes the runner can log.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sandbox-runner</code></pre>
+      </div>
+    <h2 id="why-an-isolated-subprocess"><a class="anchor" href="#why-an-isolated-subprocess">#</a> Why an isolated subprocess</h2>
+<p>Inline <code>exec</code> is a security and stability hazard. A generated <code>while True: pass</code> blocks the eval forever. A generated <code>import shutil; shutil.rmtree(&#39;/&#39;)</code> is exactly as catastrophic as it sounds. The fix is to spawn a fresh Python interpreter per candidate, pass the code on stdin, write the assertion results to stdout, and kill the process if it overruns. The host eval process keeps running.</p>
+<p>Real evals like HumanEval, MBPP, BigCodeBench, and LiveCodeBench all use a subprocess sandbox. Some layer Docker on top. We stop at the subprocess for a reason: it is portable, it is stdlib, and it catches the failure modes that matter for educational eval. Production deployments add seccomp, network isolation, and a read-only filesystem. The next lesson on hardening lives outside this track.</p>
+<h2 id="the-shape-of-a-code-exec-task"><a class="anchor" href="#the-shape-of-a-code-exec-task">#</a> The shape of a code-exec task</h2>
+<p>A <code>code_exec</code> task carries assertion strings in <code>targets</code>. The runner extracts a fenced code block from the generation, builds a test harness around it, and runs the result.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[generation text] --&gt;|extract_code_block| B[code string]
+    C[task.targets list of assertions] --&gt; D[build runner script]
+    B --&gt; D
+    D --&gt; E[spawn python subprocess&lt;br/&gt;timeout, denylist, output cap]
+    E --&gt;|stdout JSON| F[per-assertion results]
+    E --&gt;|timeout| G[result: timeout]
+    E --&gt;|nonzero exit| H[result: error]
+    F --&gt; I[score = passed / total]
+    G --&gt; I
+    H --&gt; I</pre></div><p>The score is a fraction in <code>[0, 1]</code>. A task with three assertions where two pass scores 0.667. The runner returns the same shape no matter what fails: the subprocess crashes are mapped to a normalised error code, not a Python traceback bubbling up to the harness.</p>
+<h2 id="the-denylist"><a class="anchor" href="#the-denylist">#</a> The denylist</h2>
+<p>The denylist is import-based. Before running candidate code, the runner script rewrites imports of dangerous modules to a stub that raises <code>ImportError(&quot;denied&quot;)</code>. The list is deliberately conservative: <code>os.system</code>, <code>subprocess</code>, <code>socket</code>, <code>requests</code>, <code>urllib</code>, <code>urllib.request</code>, <code>urllib.error</code>, <code>urllib.parse</code>, <code>ctypes</code>, <code>shutil</code>, <code>http.client</code>, <code>asyncio.subprocess</code>.</p>
+<p>We do not pretend this is bulletproof. Determined adversarial code can escape any in-process sandbox in Python. The denylist is a backstop. The wall-clock timeout and the output cap are the load-bearing controls.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">DENIED = {
+    &quot;os.system&quot;: True,
+    &quot;subprocess&quot;: True,
+    &quot;socket&quot;: True,
+    &quot;shutil&quot;: True,
+    &quot;requests&quot;: True,
+    &quot;urllib&quot;: True,
+    &quot;ctypes&quot;: True,
+}</code></pre>
+      </div>
+    <p>We wrap the candidate by prepending <code>import sys</code> and a guard that monkey-patches <code>os.system</code> to raise. The full template is in <code>main.py</code>.</p>
+<h2 id="wall-clock-timeout"><a class="anchor" href="#wall-clock-timeout">#</a> Wall-clock timeout</h2>
+<p>Every subprocess gets a default budget of three wall-clock seconds. The runner uses <code>subprocess.run(..., timeout=t)</code>. If the timeout fires, the runner catches <code>TimeoutExpired</code>, kills the process, and records a <code>timeout</code> exit reason for the task. The score for that task is zero. The runner moves on.</p>
+<p>The timeout is configurable per task through <code>task.metadata.timeout_s</code>. Long-running unit tests can ask for more; the validator from lesson 70 caps the value at thirty seconds to keep the suite bounded.</p>
+<h2 id="output-cap"><a class="anchor" href="#output-cap">#</a> Output cap</h2>
+<p>The subprocess can flood stdout, exhausting host memory. The runner streams stdout into a buffer and kills the child as soon as the running total crosses 256 KB. The result is recorded as <code>exit_code = error</code> with the detail string <code>&quot;output overflow&quot;</code>. This shows up in practice when a generation accidentally writes an infinite loop that prints.</p>
+<h2 id="pass-at-k"><a class="anchor" href="#pass-at-k">#</a> Pass-at-k</h2>
+<p>Pass-at-k is the unbiased estimator used by HumanEval and friends. Given <code>n</code> independent samples per task and <code>c</code> of them passing, the probability that a sample of size <code>k</code> from the <code>n</code> contains at least one passing solution is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">pass_at_k(n, c, k) = 1 - C(n - c, k) / C(n, k)</code></pre>
+      </div>
+    <p>When <code>n - c &lt; k</code> the numerator is undefined and the value is <code>1</code>. The implementation handles the edge case directly. We expose <code>pass_at_k(n, c, k)</code> for use by the leaderboard layer in lesson 74.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[task with n=10 samples] --&gt; B[run each sample]
+    B --&gt; C[c samples passed]
+    C --&gt; D[pass_at_1 = c/n]
+    C --&gt; E[pass_at_5 = 1 - C n-c, 5 / C n, 5]
+    C --&gt; F[pass_at_10 = 1 if c&gt;0 else 0]</pre></div><h2 id="exit-codes"><a class="anchor" href="#exit-codes">#</a> Exit codes</h2>
+<p>The runner returns one of five outcomes per task:</p>
+<ul>
+<li><code>pass</code> when every assertion passed.</li>
+<li><code>assertion_fail</code> when the code ran but at least one assertion failed.</li>
+<li><code>syntax_error</code> when the code did not import or had a SyntaxError.</li>
+<li><code>timeout</code> when the wall clock expired.</li>
+<li><code>error</code> for any other crash, including denylist hits and output overflow (overflow surfaces with detail <code>&quot;output overflow&quot;</code>).</li>
+</ul>
+<p>The score is still a fraction. The exit code is metadata. Downstream lessons can decide whether to count a timeout as zero or as missing data.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not give you a real sandbox. It does not run untrusted code from the open web. It does not handle stateful tasks like file I/O or network calls. Those need a container or a microVM. The point of this lesson is the contract: an isolated subprocess, a denylist, a timeout, an output cap, a clean exit-code vocabulary, and pass-at-k math.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines <code>extract_code</code>, <code>run_candidate</code>, <code>score_code_exec</code>, and <code>pass_at_k</code>. The subprocess runner script is built as a string and passed as <code>-c</code> to a fresh Python interpreter. The tests in <code>code/tests/test_exec.py</code> exercise the four exit codes plus pass-at-k against worked examples drawn from the HumanEval style.</p>
+<p>Read <code>main.py</code> top to bottom. The runner template is the load-bearing piece. Stare at the assertion loop until you can predict the JSON envelope it writes back to the parent process.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>Once the subprocess shape works, the next concern is portability. Different Python versions handle SIGKILL differently on Windows. The cleanest fix is to put the runner in a Docker image. The next thing after that is replacing assertion strings with real unit test files so the eval matches what production CI does. Stop calling assertion strings tests at that point; they are toy tests and they have toy failure modes.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./71-classical-metrics.html"><span>← Previous</span><b>classical metrics</b></a>
+      <a class="next" href="./73-perplexity-calibration.html"><span>Next →</span><b>perplexity calibration</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

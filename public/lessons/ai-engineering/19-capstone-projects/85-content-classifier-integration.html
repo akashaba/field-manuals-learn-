@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone 85 — Content Classifier Integration — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/85-content-classifier-integration/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone 85 — Content Classifier Integration</h1>
+    <p class="lesson-sub">Classifiers on the output side answer a different question than rules on the input side. Both need a policy router.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 18 safety lessons, Phase 19 Track A lessons 25-29</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 85">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="99.6" cy="97.3" r="8.6" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.3,97.1 L94.2,85.2 L102.2,97.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M81.5,91.8 L88.8,80.9 L96.1,91.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M76.7,86.5 L83.4,76.5 L90.0,86.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M71.9,81.2 L77.9,72.1 L84.0,81.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">85</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone 85 —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Content Classifier…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Inputs are not the only attack surface. A model that passed every input check can still produce an output that leaks PII, repeats slurs from its training distribution, or echoes the system prompt back to the user in response to a clever question. An output-side classifier sees the model&#39;s actual response, not the user&#39;s prompt, and asks a different question: regardless of how this prompt got here, is what we are about to ship to the user acceptable.</p>
+<p>Teams often skip output classification because input classification feels sufficient and because output classifiers introduce extra latency. Both arguments lose. Skipping output classification gives an attacker a one-shot bypass: any new attack family that the input pipeline does not cover will land on the user. Latency is real but addressable: classifiers can run in parallel with token streaming, with the gate buffering the final chunk and applying the classifier verdict before flush.</p>
+<p>This capstone wires three independent output-side classifiers behind a single policy router. Toxicity (rule-based slur and harassment detection). PII (regex for emails, phone numbers, SSN-shaped strings, credit-card-shaped strings, IP addresses). Instruction leakage (a heuristic for system prompt echo, comparing the output to a known system prompt by trigram overlap). The router collects classifier verdicts, picks a severity, and applies an action policy: <code>block</code>, <code>redact</code>, <code>warn</code>, or <code>log</code>.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<p>Each classifier is a callable returning a <code>ClassifierVerdict</code> with <code>name</code>, <code>score in [0,1]</code>, <code>severity</code> (<code>none</code>, <code>low</code>, <code>medium</code>, <code>high</code>), and <code>findings</code> (a list of strings describing what it flagged). The router takes a list of verdicts and applies a rule table:</p>
+<table>
+<thead>
+<tr>
+<th>Severity</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>high</td>
+<td>block (drop output, return policy refusal)</td>
+</tr>
+<tr>
+<td>medium</td>
+<td>redact (apply per-classifier redactor to the output)</td>
+</tr>
+<tr>
+<td>low</td>
+<td>warn (log and append a soft notice to the response)</td>
+</tr>
+<tr>
+<td>none</td>
+<td>log (record verdict in the trace, ship as-is)</td>
+</tr>
+</tbody></table>
+<div class="fig"><pre class="mermaid">flowchart TB
+  M[model output] --&gt; T[toxicity]
+  M --&gt; P[pii]
+  M --&gt; I[instruction-leakage]
+  T --&gt; R{router}
+  P --&gt; R
+  I --&gt; R
+  R --&gt;|max severity = high| BL[block]
+  R --&gt;|max severity = medium| RD[redact]
+  R --&gt;|max severity = low| WN[warn]
+  R --&gt;|max severity = none| LG[log]</pre></div><p>The router takes the maximum severity across classifiers and applies the corresponding action. Block wins. A redact + warn becomes redact. A log + warn becomes warn. The router emits an <code>Action</code> object with <code>verb</code>, <code>output</code>, <code>severity</code>, <code>verdicts</code>, and <code>metadata</code>. Downstream, the safety gate in lesson 87 logs the metadata into a trace and either ships the redacted output, ships the original with a warning, or replaces the output with a policy refusal.</p>
+<p>Each classifier has its own redactor. The PII classifier replaces <code>name@example.com</code> with <code>[redacted-email]</code> and the credit-card-shaped digits with <code>[redacted-card]</code>. The instruction-leakage classifier removes lines that look like the system prompt header. The toxicity classifier replaces matched slurs with <code>[redacted-language]</code>. Redaction is independent so a toxicity-and-PII output flows through both redactors.</p>
+<p>The toxicity classifier is rule-based on purpose: a curated list of harassment keywords with whitespace-bounded matching and a small negation-window check so &quot;you are not a slur&quot; does not trip the rule. The list is deliberately short (the lesson is about plumbing, not lexicon-building). The PII classifier uses standard regexes for the common shapes. The instruction-leakage classifier accepts a <code>system_prompt</code> parameter at construction and compares trigram overlap with the output; a high overlap is the leakage signal.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cd-output-router</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/classifiers.py</code> defines all three classifiers. Each has a <code>classify(text) -&gt; ClassifierVerdict</code> method and a <code>redact(text) -&gt; str</code> method. <code>code/main.py</code> defines the <code>Router</code> class with <code>decide(text, verdicts) -&gt; Action</code> and a <code>run(text) -&gt; Action</code> shortcut. The demo wires the three classifiers behind one router and runs a small corpus of crafted outputs that exercise each severity.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Run <code>python3 main.py</code>. The demo prints the action verb for each test output, writes <code>outputs/classifier_report.json</code>, and confirms that block, redact, warn, and log each fire on at least one fixture. Latency is artificially zero because all classifiers are rule-based; for a real model with neural classifiers, the same plumbing applies after the per-classifier latency goes up.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-content-classifier-integration.md</code> documents the verdict and action structures so the gate in lesson 87 can consume them.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a fourth classifier for code injection (output contains <code>&lt;script&gt;</code>, <code>eval(</code>, etc). Decide its severity policy and integrate it.</li>
+<li>Make the router apply a per-classifier severity weight so PII counts more than toxicity. Demonstrate the change on the same fixtures.</li>
+<li>Add a confidence threshold so low-score verdicts downgrade by one severity level. Sweep the threshold and report how block rate changes.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Common usage</th>
+<th>Precise meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>output classifier</td>
+<td>a model that detects bad outputs</td>
+<td>a callable returning a structured verdict with severity, score, and findings, plus a redactor</td>
+</tr>
+<tr>
+<td>severity</td>
+<td>how bad it is</td>
+<td>one of none, low, medium, high</td>
+</tr>
+<tr>
+<td>router</td>
+<td>a switch</td>
+<td>a function from verdict list to action (block, redact, warn, log)</td>
+</tr>
+<tr>
+<td>redact</td>
+<td>hide the bad parts</td>
+<td>per-classifier replacement of matched spans with a tag like [redacted-pii]</td>
+</tr>
+<tr>
+<td>instruction leakage</td>
+<td>the model leaks the system prompt</td>
+<td>a heuristic comparing model output to a known system prompt by trigram overlap</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<p>Lesson 86 adds a declarative rules engine for constraints not naturally classifier-shaped. Lesson 87 composes both with the input-side detector.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./84-refusal-evaluation.html"><span>← Previous</span><b>refusal evaluation</b></a>
+      <a class="next" href="./86-constitutional-rules-engine.html"><span>Next →</span><b>constitutional rules engine</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 6: Design a Key-Value Store — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/06.%20Key-Value%20Store/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#single-server-key-value-store">Single Server Key-Value Store</a></li><li><a href="#distributed-key-value-store">Distributed Key-Value Store</a></li><li><a href="#system-components">System Components</a></li><li><a href="#write-and-read-paths">Write and Read Paths</a></li><li><a href="#final-architecture">Final Architecture</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 6: Design a Key-Value Store</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="15.1" y="119.2" width="26.3" height="26.3" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.3 132.4)"/>
+        <circle cx="22.8" cy="127.5" r="12.5" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.4" cy="122.5" r="11.9" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="122.0" cy="117.6" r="11.2" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.6" cy="112.7" r="10.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 6: Design a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Key-Value Store</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>A <strong>key-value store</strong> is a type of non-relational database where data is stored as key-value pairs. Each key is unique, and values are accessed using these keys. This chapter details how to design a scalable, high-availability distributed key-value store that supports operations like:</p>
+<ul>
+<li><code>put(key, value)</code> for inserting data.</li>
+<li><code>get(key)</code> for retrieving data.</li>
+</ul>
+<h3 id="characteristics-of-the-design"><a class="anchor" href="#characteristics-of-the-design">#</a> Characteristics of the Design</h3>
+<ul>
+<li>Small key-value pairs (&lt;10 KB).</li>
+<li>Supports big data with high availability and scalability.</li>
+<li>Automatic scaling and tunable consistency.</li>
+<li>Low latency.</li>
+</ul>
+<hr>
+<h2 id="single-server-key-value-store"><a class="anchor" href="#single-server-key-value-store">#</a> Single Server Key-Value Store</h2>
+<h3 id="implementation"><a class="anchor" href="#implementation">#</a> Implementation</h3>
+<ul>
+<li>Use a <strong>hash table</strong> to store key-value pairs in memory.</li>
+<li>Optimizations:<ul>
+<li>Data compression.</li>
+<li>Storing less frequently accessed data on disk.</li>
+</ul>
+</li>
+</ul>
+<h3 id="limitation"><a class="anchor" href="#limitation">#</a> Limitation</h3>
+<p>A single server&#39;s memory is limited, requiring a <strong>distributed approach</strong> for scalability.</p>
+<hr>
+<h2 id="distributed-key-value-store"><a class="anchor" href="#distributed-key-value-store">#</a> Distributed Key-Value Store</h2>
+<p>A <strong>distributed key-value store</strong> partitions data across multiple servers and must address trade-offs outlined by the <strong>CAP theorem</strong>.</p>
+<h3 id="cap-theorem"><a class="anchor" href="#cap-theorem">#</a> CAP Theorem</h3>
+<ol>
+<li><strong>Consistency:</strong> All clients see the same data simultaneously.</li>
+<li><strong>Availability:</strong> The system responds to every request, even if some nodes are down.</li>
+<li><strong>Partition Tolerance:</strong> The system continues to operate despite network partitions.</li>
+</ol>
+<p><strong>Trade-off:</strong> According to CAP theorem only two of the three guarantees can be achieved.</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/cap.png" alt="CAP" width="400">
+</p>
+
+<h4 id="system-types"><a class="anchor" href="#system-types">#</a> System Types:</h4>
+<ul>
+<li><p><strong>CP Systems:</strong> Consistency and partition tolerance while sacrificing availability (e.g., banking systems).</p>
+</li>
+<li><p><strong>AP Systems:</strong> Availability and partition tolerance while sacrificing consistency (e.g., eventual consistency).</p>
+</li>
+<li><p><strong>CA Systems:</strong> Consistency and Availability while sacrificing partition tolerance.</p>
+<p>  <strong>Since network failure is unavoidable, a distributed system must tolerate network partition. Thus, a CA system cannot exist in real-world applications.</strong></p>
+<p>  In a distributed system, partitions are inevitable. When a partition occurs, we must choose between consistency and availability. For example, if node n3 goes down, 
+  any data written to nodes n1 or n2 cannot be propagated to n3. Conversely, if data is written to n3 but not yet propagated to n1 and n2, nodes n1 and n2 will have stale data.</p>
+  <p align="center">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/server-down.png"  alt="Server down" width="400">
+  </p>
+  </li>
+<li><p>If we choose CP system, we must block all write operations to n1 and n2 to avoid data inconsistency.</p>
+</li>
+<li><p>If we choose AP system, the system keeps accepting reads, even though it might return stale data. 
+For writes, n1 and n2 keep accepting writes,
+and data will be synced to n3 when the network partition is resolved.</p>
+</li>
+</ul>
+<hr>
+<h2 id="system-components"><a class="anchor" href="#system-components">#</a> System Components</h2>
+<h3 id="1-data-partitioning"><a class="anchor" href="#1-data-partitioning">#</a> 1. Data Partitioning</h3>
+<ul>
+<li><strong>Technique:</strong> Consistent Hashing is used to distribute data across multiple servers evenly.</li>
+<li><strong>Advantages:</strong><ul>
+<li>Automatic scaling with server addition/removal.</li>
+<li>Heterogeneity through virtual nodes. The number of virtual nodes for a server is proportional to the server capacity.</li>
+</ul>
+</li>
+</ul>
+<h3 id="2-data-replication"><a class="anchor" href="#2-data-replication">#</a> 2. Data Replication</h3>
+<ul>
+<li><p>Replicate data across <code>N</code> servers for high availability.</p>
+</li>
+<li><p>The N servers are chosen by walking clockwise from the server position and choose the first N servers on the ring to store data copies.Place replicas in distinct data centers to improve reliability in case of virtual nodes.</p>
+  <p align="center">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/data-replication.png" alt="Data replication" width="300">
+  </p></li>
+</ul>
+<h3 id="3-consistency"><a class="anchor" href="#3-consistency">#</a> 3. Consistency</h3>
+<p>Since data is replicated at multiple nodes, it must be synchronized across replicas.</p>
+<ul>
+<li><p><strong>Quorum Consensus:</strong></p>
+<ul>
+<li><p><code>N</code>: Total replicas.</p>
+</li>
+<li><p><code>W</code>: Write quorum size. For a write to be considered successful, write must be acknowledged from W replicas.</p>
+</li>
+<li><p><code>R</code>: Read quorum size. For a read to be considered as successful, read must wait for responses from at least R replicas.</p>
+</li>
+<li><p><strong>Rule:</strong> <code>W + R &gt; N</code> ensures strong consistency.</p>
+</li>
+<li><p>The configuration of W, R and N is a typical tradeoff between latency and consistency. </p>
+<p align="center">
+<img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/quorum-consensus.png"   alt="Quorum consensus" width="400">
+</p>
+
+<ul>
+<li>If R = 1 and W = N, the system is optimized for a fast read.</li>
+<li>If W = 1 and R = N, the system is optimized for fast write.</li>
+<li>If W + R &gt; N, strong consistency is guaranteed (Usually N = 3, W = R = 2).</li>
+<li>If W + R &lt;= N, strong consistency is not guaranteed.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><strong>Models</strong>:</p>
+<ul>
+<li><strong>Strong Consistency:</strong> A read operation returns a value corresponding to the result of the most updated write data item.</li>
+<li><strong>Weak Consistency:</strong> Subsequent read operations may not see the most updated value.</li>
+<li><strong>Eventual Consistency:</strong> Given enough time, all updates are propagated, and all replicas are consisten</li>
+</ul>
+</li>
+</ul>
+<h3 id="4-inconsistency-resolution"><a class="anchor" href="#4-inconsistency-resolution">#</a> 4. Inconsistency Resolution</h3>
+<p>Replication gives high availability but causes inconsistencies among replicas. Versioning and
+vector locks are used to solve inconsistency problems.</p>
+<ul>
+<li><p><strong>Versioning:</strong> </p>
+<ul>
+<li><p>Use <strong>vector clocks</strong> to track data versions and resolve conflicts.</p>
+</li>
+<li><p>Versioning means treating each data modification as a new immutable version of data.</p>
+  <div>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/consistent-server.png"   alt="Consisten hashing" width="400">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/inconsistent-server.png"   alt="Inconsistent server" height="230">
+  </div>
+</li>
+<li><p>Server 1 changes the name , and server 2 also changes the name. These two changes are performed simultaneously. Now, we have conflicting values, called versions v1 and v2.</p>
+</li>
+</ul>
+</li>
+<li><p><strong>Vector Clock</strong></p>
+<ol>
+<li><p><strong>Setup</strong>: A vector clock is a [server, version] pair associated with a data item. It can be used to check
+ if one version precedes, succeeds, or in conflict with others.</p>
+<ul>
+<li>Assume a vector clock represented by D([S1, v1], [S2, v2], …, [Sn, vn]), If data item D is written to server
+ Si, the system must perform one of the following tasks.</li>
+<li>Where: <code>D</code> is the data item.<code>Si</code> is the server identifier.<code>vi</code> is the version counter for the data at server <code>Si</code>.</li>
+</ul>
+</li>
+<li><p><strong>Updating the Vector Clock:</strong>  When a data item is modified at a server:</p>
+<ul>
+<li>If the server exists in the vector clock, its version counter is incremented.</li>
+<li>Otherwise, a new entry is added to the vector clock.</li>
+</ul>
+</li>
+<li><p><strong>Conflict Detection:</strong></p>
+<ul>
+<li><strong>No Conflict:</strong> A version X is an ancestor of version Y if all counters in X are less than or equal to those in Y.</li>
+<li><strong>Conflict Exists:</strong> Two versions are siblings if there is at least one counter in Y that is less than its counterpart in X.</li>
+</ul>
+</li>
+<li><p><strong>Conflict Resolution:</strong> When conflicts are detected (sibling versions), the system relies on application-specific logic or client intervention to   reconcile the data.</p>
+ <p align="center">
+ <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/vector-clock.png"  alt="Server hashing" width="500">
+ </p></li>
+</ol>
+</li>
+<li><p><strong>Challenges:</strong></p>
+<ul>
+<li>Increased complexity for clients.</li>
+<li>Vector clock size may grow with many updates, requiring trimming strategies to limit its size.</li>
+</ul>
+</li>
+</ul>
+<h3 id="5-handling-failures"><a class="anchor" href="#5-handling-failures">#</a> 5. Handling Failures</h3>
+<h4 id="a-failure-detection"><a class="anchor" href="#a-failure-detection">#</a> a. Failure Detection</h4>
+<p>It is insufficient to believe that a server is down because another server says so.Usually, it requires at least two independent sources of information to mark a server down.</p>
+<ul>
+<li><strong>Gossip Protocol:</strong>  <div style="margin-left:3rem">
+      <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/gossip-protocol.png"  alt="Gossip protocol" width="600">
+  </div>
+
+<ul>
+<li>Each node maintains member IDs and heartbeat counters.</li>
+<li>Each node periodically increments its heartbeat counter.</li>
+<li>Each node periodically sends heartbeats to a set of random nodes.</li>
+<li>If the heartbeat has not increased for more than predefined periods, the member is
+  considered as offline</li>
+</ul>
+</li>
+</ul>
+<h4 id="b-temporary-failures"><a class="anchor" href="#b-temporary-failures">#</a> b. Temporary Failures</h4>
+<ul>
+<li><p><strong>Sloppy Quorum:</strong> Use healthy nodes to maintain operations temporarily.
+  <p align="center">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/sloppy-quorum.png"   alt="Sloppy Quorum" width="400">
+  </p></p>
+<ul>
+<li>After detecting failures, the system needs to deploy certain mechanisms to ensure availability</li>
+<li>Instead of enforcing the quorum requirement, the system chooses the first W healthy servers for writes and first R
+  healthy servers for reads on the hash ring. </li>
+<li>Offline servers are ignored. If a server is unavailable, another server will process requests temporarily</li>
+</ul>
+</li>
+<li><p><strong>Hinted Handoff:</strong> Offline servers catch up with changes upon recovery.</p>
+<ul>
+<li>When the down server is up, changes will be pushed back to achieve data consistency</li>
+</ul>
+</li>
+</ul>
+<h4 id="c-permanent-failures"><a class="anchor" href="#c-permanent-failures">#</a> c. Permanent Failures</h4>
+<ul>
+<li><p>Use <strong>Merkle Trees</strong> for efficient synchronization between replicas.
+  A <strong>Merkle Tree</strong> (or hash tree) is a data structure to efficiently detect and resolve inconsistencies between replicas during permanent failures. </p>
+</li>
+<li><p>Working</p>
+<ol>
+<li><p><strong>Structure:</strong></p>
+<ul>
+<li><strong>Leaf Nodes</strong> store the hash of individual data blocks.</li>
+<li><strong>Non-Leaf Nodes</strong> store the hash of their child nodes.</li>
+<li>The <strong>root hash</strong> represents the combined state of all data in the tree.</li>
+</ul>
+</li>
+<li><p><strong>Building a Merkle Tree:</strong></p>
+<ul>
+<li><p><strong>Step 1:</strong> Divide the key space into buckets.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/key-bucket.png"   alt="Key Bucket" width="500">
+</li>
+<li><p><strong>Step 2:</strong> Hash each key in a bucket using uniform hashing.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/hash-key-bucket.png"   alt="Hash Key Bucket" width="500">
+</li>
+<li><p><strong>Step 3:</strong> Create a single hash for each bucket.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/hash-bucket.png"   alt="Hash Bucket" width="500">
+</li>
+<li><p><strong>Step 4:</strong> Combine hashes of buckets to compute higher-level hashes, culminating in the root hash.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/merkel-tree.png"   alt="Merkel Tree" width="500"></li>
+</ul>
+</li>
+<li><p><strong>Synchronization:</strong></p>
+<ul>
+<li>To synchronize two replicas:<ul>
+<li>Compare their root hashes.</li>
+<li>If the root hashes match, the replicas are consistent.</li>
+<li>If the root hashes differ, compare child hashes recursively to identify inconsistent buckets.</li>
+</ul>
+</li>
+<li>Only the inconsistent data is synchronized.</li>
+</ul>
+</li>
+</ol>
+</li>
+<li><p>Advantages</p>
+<ul>
+<li><strong>Efficiency:</strong> Only inconsistent data is synchronized, reducing data transfer.</li>
+<li><strong>Scalability:</strong> Effective for large datasets with minimal synchronization overhead.</li>
+<li><strong>Reliability:</strong> Ensures data consistency across replicas.</li>
+</ul>
+</li>
+</ul>
+<h3 id="6-handling-data-center-outages"><a class="anchor" href="#6-handling-data-center-outages">#</a> 6. Handling Data Center Outages</h3>
+<ul>
+<li>Replicate data across multiple data centers to ensure availability during outages.</li>
+</ul>
+<hr>
+<h2 id="write-and-read-paths"><a class="anchor" href="#write-and-read-paths">#</a> Write and Read Paths</h2>
+<h3 id="1-write-path-based-on-cassandra-architecture"><a class="anchor" href="#1-write-path-based-on-cassandra-architecture">#</a> 1. Write Path (Based on Cassandra architecture)</h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/write-path.png"   alt="Hash Bucket" width="500">
+</div>
+
+<ul>
+<li>Persist the write in a <strong>commit log</strong>.</li>
+<li>Save data to a <strong>memory cache</strong>.</li>
+<li>Flush data to <strong>SSTable</strong> (Sorted String Table) on disk when cache is full.</li>
+</ul>
+<h3 id="2-read-path"><a class="anchor" href="#2-read-path">#</a> 2. Read Path</h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/read-path.png"   alt="Hash Bucket" width="500">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/read-path-without-cache.png"   alt="Hash Bucket" width="500">
+</div>
+
+<ul>
+<li>Check <strong>memory cache</strong> for the data.</li>
+<li>If absent, use a <strong>Bloom Filter</strong> to locate the data in SSTables.</li>
+<li>Retrieve and return the data.</li>
+</ul>
+<hr>
+<h2 id="final-architecture"><a class="anchor" href="#final-architecture">#</a> Final Architecture</h2>
+<p align="center">
+<img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/06.%20Key-Value%20Store/images/final-architecture.png"   alt="Hash Bucket" width="500">
+</p>
+
+
+<ul>
+<li>Clients communicate with the key-value store through simple APIs: get(key) and put(key,
+value).</li>
+<li>A coordinator is a node that acts as a proxy between the client and the key-value store.</li>
+<li>Nodes are distributed on a ring using consistent hashing.</li>
+<li>The system is completely decentralized so adding and moving nodes can be automatic.</li>
+<li>Data is replicated at multiple nodes.</li>
+<li>There is no single point of failure as every node has the same set of responsibilities.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-consistent-hashing.html"><span>← Previous</span><b>consistent hashing</b></a>
+      <a class="next" href="./07-unique-id-generator.html"><span>Next →</span><b>unique id generator</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

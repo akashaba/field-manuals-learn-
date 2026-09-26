@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gradient Accumulation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/46-gradient-accumulation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Gradient Accumulation</h1>
+    <p class="lesson-sub">Train at an effective batch you cannot afford, one micro-batch at a time. Scale the loss, hold the optimizer step, and let the gradients pile up.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 42 to 45</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 46">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="21.3" y="124.8" width="28.0" height="28.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(160 35.3 138.8)"/>
+        <rect x="16.6" y="120.6" width="26.7" height="26.7" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(142 29.9 133.9)"/>
+        <circle cx="24.5" cy="129.0" r="12.7" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">46</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Gradient</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Accumulation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Derive the effective batch identity: <code>effective_batch = micro_batch * accum_steps</code>.</li>
+<li>Implement loss-per-micro-batch scaling so the accumulated gradient matches a single full-batch backward.</li>
+<li>Skip optimizer synchronization until the last micro-batch (sync-on-last-step).</li>
+<li>Read a throughput against effective batch curve and explain the diminishing return.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You want to train at an effective batch of 512 because the loss curve is smoother and the optimizer step makes more sense at that scale. The accelerator on the desk holds 32 examples before it runs out of memory. Doubling the batch is not an option. Halving the model is not an option. The trick the field reached for in 2017 and never stopped using is to run 16 backward passes, let the gradients accumulate inside the parameter buffers, and only step the optimizer when the count reaches the target.</p>
+<p>The risk is that the loss is no longer the same number it was at the bigger batch. The cross entropy of 16 mini-batches summed naively is 16 times the loss of one full batch. Without scaling, the gradient direction is correct but the magnitude is wrong, and the optimizer step is 16 times too big. The fix is one division. The fix is also easy to forget.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  start[start] --&gt; zero[zero grads]
+  zero --&gt; mb1[micro batch 1: forward + scaled backward]
+  mb1 --&gt; mb2[micro batch 2: forward + scaled backward]
+  mb2 --&gt; dots[...]
+  dots --&gt; mbN[micro batch N: forward + scaled backward + sync]
+  mbN --&gt; step[optimizer step]
+  step --&gt; next[next effective step]</pre></div><p>The contract is short:</p>
+<ul>
+<li>Loss for each micro-batch is divided by <code>accum_steps</code> before <code>backward()</code>. PyTorch sums gradients into <code>param.grad</code> by default; the division pushes the running sum back into the right scale.</li>
+<li>The optimizer step fires once per effective batch, after the last micro-batch&#39;s backward. Stepping mid-accumulation skews every parameter the rest of the run depends on.</li>
+<li>The optimizer&#39;s state (momentum buffers, Adam moments) advances once per effective step, not once per micro-batch. The exponential moving averages would otherwise see the wrong frequency and burn through the schedule.</li>
+<li>On a single device this is bookkeeping. On a multi-rank cluster the same pattern wraps the non-final micro-batches in a <code>no_sync</code> context that skips the gradient all-reduce; the last micro-batch reduces the full accumulated gradient in one pass instead of paying the network cost N times.</li>
+</ul>
+<h3 id="the-equivalence-proof-in-code"><a class="anchor" href="#the-equivalence-proof-in-code">#</a> The equivalence proof in code</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">loss = criterion(model(x_full), y_full)
+loss.backward()
+opt.step()</code></pre>
+      </div>
+    <p>is equivalent to</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for x, y in chunks(x_full, y_full, n):
+    scaled = criterion(model(x), y) / n
+    scaled.backward()
+opt.step()</code></pre>
+      </div>
+    <p>up to floating point summation order. The accumulated gradient buffer at the end of the loop is the same tensor that a single full-batch backward would produce. The lesson code asserts this with a max-abs difference under 1e-4 in <code>equivalence_check</code>.</p>
+<h3 id="where-the-cost-goes"><a class="anchor" href="#where-the-cost-goes">#</a> Where the cost goes</h3>
+<p>Each micro-batch costs one forward and one backward. With accumulation you trade memory for time. The throughput curve in <code>outputs/accum-curve.json</code> shows what happens as the effective batch grows at fixed micro-batch:</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+  micro[fixed micro batch] --&gt; small[small accum: low loss noise budget, high stepper churn]
+  micro --&gt; large[large accum: smooth loss, optimizer step rare]
+  small --&gt; sps1[samples per second saturates at hardware limit]
+  large --&gt; sps2[samples per second still hits hardware limit]
+  sps1 --&gt; note[total samples per optimizer step scales linearly with accum]
+  sps2 --&gt; note</pre></div><p>There is no free lunch. Doubling <code>accum_steps</code> doubles the wall time per optimizer step. What changes is the variance of the gradient estimate: at the same wall budget you have made fewer optimizer steps but each one was averaged over more samples. The literature treats large batch and small batch as different optimization problems; the lesson here is mechanical, not statistical.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cc-grad-accumulation</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> is the runnable artifact. It does three things.</p>
+<h3 id="step-1-equivalence-check"><a class="anchor" href="#step-1-equivalence-check">#</a> Step 1: equivalence check</h3>
+<p><code>equivalence_check()</code> builds two copies of the same network with the same seed. One sees a 16-sample batch in one forward pass. The other sees four 4-sample chunks with the loss divided by four. The function compares the gradient buffers before the optimizer step and the parameters after. The assertion is <code>max_abs_diff &lt; 1e-4</code>.</p>
+<h3 id="step-2-sync-on-last-step-pattern"><a class="anchor" href="#step-2-sync-on-last-step-pattern">#</a> Step 2: sync-on-last-step pattern</h3>
+<p><code>train_one_optimizer_step</code> walks micro-batches. For every micro-batch except the last it enters <code>no_sync_context(model)</code>. On a single process the context is a no-op; on DDP this is where the gradient all-reduce is skipped. The bookkeeping is the same regardless. A <code>sync_counter</code> records how many times we left the no_sync scope; for N micro-batches the count is one per effective step, not N.</p>
+<h3 id="step-3-the-throughput-curve"><a class="anchor" href="#step-3-the-throughput-curve">#</a> Step 3: the throughput curve</h3>
+<p><code>sweep_effective_batches</code> runs the same model with a fixed micro-batch and a list of accumulation steps. For each setting it logs:</p>
+<ul>
+<li><code>samples_per_sec</code>: total samples seen divided by wall time</li>
+<li><code>median_step_ms</code>: 50th percentile per effective step</li>
+<li><code>sync_calls</code>: collective points exercised</li>
+<li><code>avg_loss</code>: average across the sweep&#39;s optimizer steps</li>
+</ul>
+<p>The output lands in <code>outputs/accum-curve.json</code> and is reusable from a notebook.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script prints the equivalence diff, then the sweep table, then the JSON path. Exit code zero.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In production training, gradient accumulation lives behind one knob. PyTorch&#39;s pattern is <code>accumulation_steps = effective_batch // (micro_batch * world_size)</code>. Frameworks that you are not allowed to use here wrap the same loop, but the steps are the same: scale the loss, skip sync on non-final micros, accumulate, step once.</p>
+<p>Three patterns in the wild:</p>
+<ul>
+<li>The micro-batch size is chosen to saturate device memory. Anything smaller wastes accelerator cycles. Anything larger crashes.</li>
+<li>The effective batch is chosen from a learning rate schedule. Large effective batches need scaled learning rates and warmup; this is the linear scaling rule talked about since 2017.</li>
+<li>The accumulation count is the bridge between the two and the only knob you are free to tune at runtime without rewriting the data loader.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-gradient-accumulation.md</code> captures the recipe so a peer can drop it into a new repo: scale loss by <code>accum_steps</code>, skip optimizer sync on non-final micros, step the optimizer once per effective batch, log throughput against effective batch as JSON so the trade is visible.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Re-run the sweep with <code>--num-steps 100</code> and plot samples per second against effective batch. Where does the curve flatten?</li>
+<li>Add a wrong scaling variant (no division) and show the parameter diff at step 1 against the reference.</li>
+<li>Swap SGD for AdamW and confirm the optimizer state advances once per effective step, not once per micro-batch.</li>
+<li>Introduce a real <code>DistributedDataParallel</code> wrapper and route the <code>no_sync_context</code> to its method. Confirm sync_calls drops by N-1 per effective batch.</li>
+<li>Modify the equivalence check to compare two different micro splits (2 by 8 vs 4 by 4) and explain any tolerance you need to relax.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Micro batch</td>
+<td>The batch you forward</td>
+<td>The slice that fits in memory in a single forward pass</td>
+</tr>
+<tr>
+<td>Accum steps</td>
+<td>Backward passes per step</td>
+<td>Number of backwards summed before one optimizer step</td>
+</tr>
+<tr>
+<td>Effective batch</td>
+<td>The batch</td>
+<td>Micro batch times accum steps times data parallel world size</td>
+</tr>
+<tr>
+<td>Loss scaling</td>
+<td>Divide by N</td>
+<td>Per-micro-batch division so summed gradients match full batch</td>
+</tr>
+<tr>
+<td>Sync on last</td>
+<td>Skip the rest</td>
+<td>Only run the gradient collective on the last backward in the window</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>PyTorch docs on <code>DistributedDataParallel.no_sync</code> for the production version of the sync-on-last-step trick.</li>
+<li>Goyal et al., 2017, on linear scaling for large batch training, the canonical reason to care about effective batch.</li>
+<li>PyTorch issue tracker on gradient accumulation interactions with mixed precision unscaling.</li>
+<li>Phase 19 lessons 42 to 45 cover the model, data loader, optimizer, and trainer scaffolding this lesson assumes.</li>
+<li>Phase 19 lesson 47 covers checkpoint and resume so a long accumulation run survives a wallclock cap.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./45-gradient-clipping-amp.html"><span>← Previous</span><b>gradient clipping amp</b></a>
+      <a class="next" href="./47-checkpoint-save-resume.html"><span>Next →</span><b>checkpoint save resume</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

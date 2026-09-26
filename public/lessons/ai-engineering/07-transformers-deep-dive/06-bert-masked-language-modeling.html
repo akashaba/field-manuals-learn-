@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BERT — Masked Language Modeling — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/06-bert-masked-language-modeling/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">BERT — Masked Language Modeling</h1>
+    <p class="lesson-sub">GPT predicts the next word. BERT predicts a missing word. One sentence of difference — and half a decade of everything embedding-shaped.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 05 (Full Transformer), Phase 5 · 02 (Text Representation)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="26.4" y="129.4" width="29.3" height="29.3" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(179 41.0 144.0)"/>
+        <rect x="21.6" y="125.1" width="28.1" height="28.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(161 35.6 139.1)"/>
+        <rect x="16.8" y="120.8" width="26.8" height="26.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(143 30.2 134.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">BERT — Masked</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Language Modeling</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>In 2018 every NLP task — sentiment, NER, QA, entailment — trained its own model from scratch on its own labeled data. There was no pre-trained &quot;understand English&quot; checkpoint you could fine-tune. ELMo (2018) showed you could pre-train contextual embeddings with a bidirectional LSTM; it helped but did not generalize.</p>
+<p>BERT (Devlin et al. 2018) asked: what if we took a transformer encoder, trained it on every sentence on the internet, and forced it to predict missing words from context on both sides? Then you fine-tune one head on your downstream task. Parameter efficiency was a revelation.</p>
+<p>The result: within 18 months BERT and its variants (RoBERTa, ALBERT, ELECTRA) dominated every NLP leaderboard that existed. By 2020 every search engine, content moderation pipeline, and semantic-search system on earth had a BERT inside.</p>
+<p>In 2026 encoder-only models are still the right tool for classification, retrieval, and structured extraction — they run 5–10× faster per token than decoders and their embeddings are the backbone of every modern retrieval stack. ModernBERT (Dec 2024) pushed the architecture to 8K context with Flash Attention + RoPE + GeGLU.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/07-transformers-deep-dive/06-bert-masked-language-modeling/assets/bert-mlm.svg" alt="Masked language modeling: pick tokens, mask them, predict originals" loading="lazy" /></figure></p>
+<h3 id="the-training-signal"><a class="anchor" href="#the-training-signal">#</a> The training signal</h3>
+<p>Take a sentence: <code>the quick brown fox jumps over the lazy dog</code>.</p>
+<p>Mask 15% of tokens randomly:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">input:  the [MASK] brown fox jumps [MASK] the lazy dog
+target: the  quick brown fox jumps  over  the lazy dog</code></pre>
+      </div>
+    <p>Train the model to predict the original tokens at masked positions. Because the encoder is bidirectional, predicting <code>[MASK]</code> at position 1 can use <code>brown fox jumps</code> at positions 2+. That is the thing GPT cannot do.</p>
+<h3 id="the-bert-mask-rules"><a class="anchor" href="#the-bert-mask-rules">#</a> The BERT mask rules</h3>
+<p>Of the 15% of tokens selected for prediction:</p>
+<ul>
+<li>80% are replaced with <code>[MASK]</code>.</li>
+<li>10% are replaced with a random token.</li>
+<li>10% are left unchanged.</li>
+</ul>
+<p>Why not always <code>[MASK]</code>? Because <code>[MASK]</code> never appears at inference time. Training the model to expect <code>[MASK]</code> at 100% of masked positions would create a distribution shift between pretraining and fine-tuning. The 10% random + 10% unchanged keeps the model honest.</p>
+<h3 id="next-sentence-prediction-nsp-and-why-it-was-dropped"><a class="anchor" href="#next-sentence-prediction-nsp-and-why-it-was-dropped">#</a> Next Sentence Prediction (NSP) — and why it was dropped</h3>
+<p>Original BERT also trained on NSP: given two sentences A and B, predict if B follows A. RoBERTa (2019) ablated it and showed NSP hurt, not helped. Modern encoders skip it.</p>
+<h3 id="what-changed-in-2026-modernbert"><a class="anchor" href="#what-changed-in-2026-modernbert">#</a> What changed in 2026: ModernBERT</h3>
+<p>The 2024 ModernBERT paper rebuilt the block with 2026 primitives:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Original BERT (2018)</th>
+<th>ModernBERT (2024)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Positional</td>
+<td>Learned absolute</td>
+<td>RoPE</td>
+</tr>
+<tr>
+<td>Activation</td>
+<td>GELU</td>
+<td>GeGLU</td>
+</tr>
+<tr>
+<td>Normalization</td>
+<td>LayerNorm</td>
+<td>Pre-norm RMSNorm</td>
+</tr>
+<tr>
+<td>Attention</td>
+<td>Full dense</td>
+<td>Alternating local (128) + global</td>
+</tr>
+<tr>
+<td>Context length</td>
+<td>512</td>
+<td>8192</td>
+</tr>
+<tr>
+<td>Tokenizer</td>
+<td>WordPiece</td>
+<td>BPE</td>
+</tr>
+</tbody></table>
+<p>And unlike the 2018 stack, it is Flash-Attention-native. Inference is 2–3× faster at sequence length 8K than DeBERTa-v3 with better GLUE scores.</p>
+<h3 id="use-cases-that-still-pick-an-encoder-in-2026"><a class="anchor" href="#use-cases-that-still-pick-an-encoder-in-2026">#</a> Use cases that still pick an encoder in 2026</h3>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Why encoder beats decoder</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Retrieval / semantic search embeddings</td>
+<td>Bidirectional context = better embedding quality per token</td>
+</tr>
+<tr>
+<td>Classification (sentiment, intent, toxicity)</td>
+<td>One forward pass; no generation overhead</td>
+</tr>
+<tr>
+<td>NER / token labeling</td>
+<td>Per-position output, natively bidirectional</td>
+</tr>
+<tr>
+<td>Zero-shot entailment (NLI)</td>
+<td>Classifier head on top of encoder</td>
+</tr>
+<tr>
+<td>Reranker for RAG</td>
+<td>Cross-encoder scoring, 10x faster than LLM rerankers</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">transformer-residual</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-masking-logic"><a class="anchor" href="#step-1-masking-logic">#</a> Step 1: masking logic</h3>
+<p>See <code>code/main.py</code>. The function <code>create_mlm_batch</code> takes a list of token IDs, a vocab size, and a mask probability. Returns input IDs (with masks applied) and labels (only at masked positions, -100 elsewhere — PyTorch&#39;s ignore index convention).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def create_mlm_batch(tokens, vocab_size, mask_prob=0.15, rng=None):
+    input_ids = list(tokens)
+    labels = [-100] * len(tokens)
+    for i, t in enumerate(tokens):
+        if rng.random() &lt; mask_prob:
+            labels[i] = t
+            r = rng.random()
+            if r &lt; 0.8:
+                input_ids[i] = MASK_ID
+            elif r &lt; 0.9:
+                input_ids[i] = rng.randrange(vocab_size)
+            # else: keep original
+    return input_ids, labels</code></pre>
+      </div>
+    <h3 id="step-2-run-mlm-prediction-on-a-tiny-corpus"><a class="anchor" href="#step-2-run-mlm-prediction-on-a-tiny-corpus">#</a> Step 2: run MLM prediction on a tiny corpus</h3>
+<p>Train a 2-layer encoder + MLM head on a vocabulary of 20 words, 200 sentences. No gradient — we do forward-pass sanity checks. Full training needs PyTorch.</p>
+<h3 id="step-3-compare-mask-types"><a class="anchor" href="#step-3-compare-mask-types">#</a> Step 3: compare mask types</h3>
+<p>Show how the three-way rule keeps the model usable without <code>[MASK]</code>. Predict on an unmasked sentence and on a masked sentence. Both should produce reasonable token distributions because the model saw both patterns in training.</p>
+<h3 id="step-4-fine-tune-head"><a class="anchor" href="#step-4-fine-tune-head">#</a> Step 4: fine-tune head</h3>
+<p>Replace the MLM head with a classification head on a toy sentiment dataset. Only the head trains; the encoder is frozen. This is the pattern every BERT application follows.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoModel, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained(&quot;answerdotai/ModernBERT-base&quot;)
+model = AutoModel.from_pretrained(&quot;answerdotai/ModernBERT-base&quot;)
+
+text = &quot;Attention is all you need.&quot;
+inputs = tok(text, return_tensors=&quot;pt&quot;)
+out = model(**inputs).last_hidden_state   # (1, N, 768)</code></pre>
+      </div>
+    <p><strong>Embedding models are fine-tuned BERT.</strong> <code>sentence-transformers</code> models like <code>all-MiniLM-L6-v2</code> are BERTs trained with contrastive loss. The encoder is the same. The loss changed.</p>
+<p><strong>Cross-encoder rerankers are also fine-tuned BERT.</strong> Pair-classification on <code>[CLS] query [SEP] doc [SEP]</code>. The bidirectional attention between query and doc is exactly what gives cross-encoders their quality edge over biencoders.</p>
+<p><strong>When not to pick BERT in 2026.</strong> Anything generative. The encoder has no sensible way to autoregressively produce tokens. Also: anything under 1B params where a small decoder can match quality with more flexibility (Phi-3-Mini, Qwen2-1.5B).</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-bert-finetuner.md</code>. The skill scopes a BERT fine-tune (backbone choice, head spec, data, eval, stopping) for a new classification or extraction task.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code> and print the mask distribution across 10,000 tokens. Confirm ~15% are selected, and of those ~80% become <code>[MASK]</code>.</li>
+<li><strong>Medium.</strong> Implement whole-word masking: if a word is tokenized into subwords, mask all subwords together or none. Measure whether this improves MLM accuracy on a 500-sentence corpus.</li>
+<li><strong>Hard.</strong> Train a tiny (2-layer, d=64) BERT on 10,000 sentences from a public dataset. Fine-tune the <code>[CLS]</code> token for SST-2 sentiment. Compare against a decoder-only baseline at matched params — which wins?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MLM</td>
+<td>&quot;Masked language modeling&quot;</td>
+<td>Training signal: randomly replace 15% of tokens with <code>[MASK]</code>, predict the originals.</td>
+</tr>
+<tr>
+<td>Bidirectional</td>
+<td>&quot;Looks both ways&quot;</td>
+<td>Encoder attention has no causal mask — every position sees every other position.</td>
+</tr>
+<tr>
+<td><code>[CLS]</code></td>
+<td>&quot;The pooler token&quot;</td>
+<td>A special token prepended to every sequence; its final embedding is used as the sentence-level representation.</td>
+</tr>
+<tr>
+<td><code>[SEP]</code></td>
+<td>&quot;Segment separator&quot;</td>
+<td>Separates paired sequences (e.g. query/doc, sentence A/B).</td>
+</tr>
+<tr>
+<td>NSP</td>
+<td>&quot;Next sentence prediction&quot;</td>
+<td>BERT&#39;s second pretraining task; shown to be useless in RoBERTa, dropped after 2019.</td>
+</tr>
+<tr>
+<td>Fine-tuning</td>
+<td>&quot;Adapt to a task&quot;</td>
+<td>Keep the encoder mostly frozen; train a small head on top for the downstream task.</td>
+</tr>
+<tr>
+<td>Cross-encoder</td>
+<td>&quot;A reranker&quot;</td>
+<td>A BERT that takes both query and doc as input, outputs a relevance score.</td>
+</tr>
+<tr>
+<td>ModernBERT</td>
+<td>&quot;2024 refresh&quot;</td>
+<td>Encoder rebuilt with RoPE, RMSNorm, GeGLU, alternating local/global attention, 8K context.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1810.04805">Devlin et al. (2018). BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</a> — original paper.</li>
+<li><a href="https://arxiv.org/abs/1907.11692">Liu et al. (2019). RoBERTa: A Robustly Optimized BERT Pretraining Approach</a> — how to train BERT right; kills NSP.</li>
+<li><a href="https://arxiv.org/abs/2003.10555">Clark et al. (2020). ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators</a> — replaced-token detection beats MLM at matched compute.</li>
+<li><a href="https://arxiv.org/abs/2412.13663">Warner et al. (2024). Smarter, Better, Faster, Longer: A Modern Bidirectional Encoder</a> — ModernBERT paper.</li>
+<li><a href="https://github.com/huggingface/transformers/blob/main/src/transformers/models/bert/modeling_bert.py">HuggingFace <code>modeling_bert.py</code></a> — canonical encoder reference.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-full-transformer.html"><span>← Previous</span><b>full transformer</b></a>
+      <a class="next" href="./07-gpt-causal-language-modeling.html"><span>Next →</span><b>gpt causal language modeling</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

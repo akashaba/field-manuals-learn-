@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scope Contracts and Task Boundaries — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/36-scope-contracts/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Scope Contracts and Task Boundaries</h1>
+    <p class="lesson-sub">The model does not know where the work ends. A scope contract is a per-task file that says where the work begins, where it ends, and how to roll back if it spills. The contract turns &quot;stay in scope&quot; from a wish into a check.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 32 (Minimal Workbench), Phase 14 · 33 (Rules as Constraints)</b></div><div><span>Time</span><b>~50 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 36">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.0" y="40.6" width="32.7" height="32.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(225 55.3 57.0)"/>
+        <rect x="34.2" y="36.4" width="31.4" height="31.4" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(208 49.9 52.1)"/>
+        <rect x="29.4" y="32.1" width="30.2" height="30.2" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(190 44.5 47.1)"/>
+        <rect x="24.6" y="127.8" width="28.9" height="28.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(172 39.0 142.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">36</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Scope Contracts and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Task Boundaries</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Write a scope contract that an agent reads at task start and a verifier reads at task end.</li>
+<li>Specify allowed files, forbidden files, acceptance criteria, rollback plan, and approval boundaries.</li>
+<li>Implement a scope checker that compares a diff against the contract and flags violations.</li>
+<li>Make scope creep visible, automatic, and reviewable.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Agents creep. The task is &quot;fix the login bug.&quot; The diff touches the login route, the email helper, the database driver, the README, and the release script. Each touch had a plausible reason in the moment. Together they are a different change than the one that was reviewed.</p>
+<p>Scope creep is the most under-monitored failure mode in agent work because the agent narrates each step in good faith. The fix is not a stricter prompt. The fix is a contract on disk that says what was promised and a check that compares the result against the promise.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Task[Task] --&gt; Contract[scope_contract.json]
+  Contract --&gt; Agent[Agent Loop]
+  Agent --&gt; Diff[final diff]
+  Diff --&gt; Checker[scope_checker.py]
+  Contract --&gt; Checker
+  Checker --&gt; Verdict{in scope?}
+  Verdict -- yes --&gt; Verify[Verification Gate]
+  Verdict -- no --&gt; Block[block + open question]</pre></div><h3 id="what-goes-in-a-scope-contract"><a class="anchor" href="#what-goes-in-a-scope-contract">#</a> What goes in a scope contract</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>task_id</code></td>
+<td>Links to the task on the board</td>
+</tr>
+<tr>
+<td><code>goal</code></td>
+<td>One sentence the reviewer can verify</td>
+</tr>
+<tr>
+<td><code>allowed_files</code></td>
+<td>Globs the agent may write</td>
+</tr>
+<tr>
+<td><code>forbidden_files</code></td>
+<td>Globs the agent must not touch even by accident</td>
+</tr>
+<tr>
+<td><code>acceptance_criteria</code></td>
+<td>Test commands or assertion lines that prove done</td>
+</tr>
+<tr>
+<td><code>rollback_plan</code></td>
+<td>One paragraph the operator can execute if a halt is required</td>
+</tr>
+<tr>
+<td><code>approvals_required</code></td>
+<td>Actions outside scope that need explicit human sign-off</td>
+</tr>
+</tbody></table>
+<p>A contract without <code>forbidden_files</code> is incomplete. The negative space is half the contract.</p>
+<h3 id="globs-not-raw-paths"><a class="anchor" href="#globs-not-raw-paths">#</a> Globs, not raw paths</h3>
+<p>Real repos move files. Pin contracts to globs (<code>app/**/*.py</code>, <code>tests/test_signup*.py</code>) so a refactor between sessions does not invalidate the contract.</p>
+<h3 id="rollback-is-part-of-scope"><a class="anchor" href="#rollback-is-part-of-scope">#</a> Rollback is part of scope</h3>
+<p>Listing how to roll back forces the contract author to think about what could go wrong. A contract you cannot roll back from is a contract that should not be approved.</p>
+<h3 id="scope-check-is-a-diff-check"><a class="anchor" href="#scope-check-is-a-diff-check">#</a> Scope check is a diff check</h3>
+<p>The agent writes a diff. The checker reads the diff, the allowed globs, the forbidden globs, and a list of any acceptance commands that ran. Each violation is a tagged finding the verification gate can refuse.</p>
+<h3 id="two-altitudes-of-scope-the-feature-list-and-the-task-contract"><a class="anchor" href="#two-altitudes-of-scope-the-feature-list-and-the-task-contract">#</a> Two altitudes of scope: the feature list and the task contract</h3>
+<p>The scope contract bounds one task. It does not bound the project. An agent can stay perfectly inside a contract for the login fix and still, on the next turn, decide the project also needs a settings page, a dark mode toggle, and a rewrite of the router. The contract was never asked which work was in scope for the project, only which files were in scope for the task.</p>
+<p>That second altitude needs its own primitive: a <code>feature_list.json</code> the agent reads at session start. It is the project backlog as a machine-readable, ordered file. The agent picks exactly one feature whose <code>status</code> is <code>todo</code>, writes its <code>id</code> into the active scope contract, and is forbidden from starting a second feature in the same session. &quot;One feature at a time&quot; stops being a line in the prompt the agent can rationalize past and becomes a value it reads off disk and a check the gate enforces.</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;project&quot;: &quot;knowledge-base&quot;,
+  &quot;active&quot;: &quot;import-pdf&quot;,
+  &quot;features&quot;: [
+    { &quot;id&quot;: &quot;import-pdf&quot;,   &quot;status&quot;: &quot;in_progress&quot;, &quot;goal&quot;: &quot;import a PDF into the library&quot;,        &quot;done_when&quot;: &quot;pytest tests/test_import.py &amp;&amp; a sample PDF appears in the library view&quot; },
+    { &quot;id&quot;: &quot;full-text-search&quot;, &quot;status&quot;: &quot;todo&quot;,     &quot;goal&quot;: &quot;search document text and rank hits&quot;,   &quot;done_when&quot;: &quot;query returns ranked results with snippets&quot; },
+    { &quot;id&quot;: &quot;cite-answers&quot;, &quot;status&quot;: &quot;todo&quot;,         &quot;goal&quot;: &quot;answers carry source citations&quot;,        &quot;done_when&quot;: &quot;every answer renders at least one clickable citation&quot; }
+  ]
+}</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>active</code></td>
+<td>The single feature the current session may touch; empty means pick one and set it</td>
+</tr>
+<tr>
+<td><code>features[].id</code></td>
+<td>Stable slug the scope contract&#39;s <code>task_id</code> points at</td>
+</tr>
+<tr>
+<td><code>features[].status</code></td>
+<td><code>todo</code>, <code>in_progress</code>, <code>done</code>, <code>blocked</code>; only one <code>in_progress</code> at a time</td>
+</tr>
+<tr>
+<td><code>features[].goal</code></td>
+<td>One sentence the reviewer can verify</td>
+</tr>
+<tr>
+<td><code>features[].done_when</code></td>
+<td>The acceptance line that flips <code>in_progress</code> to <code>done</code></td>
+</tr>
+</tbody></table>
+<p>Two rules make the list load-bearing instead of decorative. First, the invariant &quot;at most one <code>in_progress</code>&quot; is itself a startup check (Phase 14 · 33): if the list shows two, the session refuses to start until a human resolves it. Second, the feature list is a file, not a chat message, because the chat scrolls out of context and the file persists across sessions and across agents. The handoff (Phase 14 · 40) writes the finished feature&#39;s status back to <code>done</code> so the next session opens to an accurate board instead of re-deriving what is left.</p>
+<p>The contract and the list compose by least privilege, the same merge described below: the task contract&#39;s <code>allowed_files</code> must sit inside whatever the active feature touches, never outside it.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">wb-scope-bounce</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>scope_contract.json</code> schema (subset of JSON Schema, glob arrays).</li>
+<li>A diff parser that turns a list of touched files plus a list of run commands into a <code>RunSummary</code>.</li>
+<li>A <code>scope_check</code> that returns <code>(violations, in_scope, off_scope)</code> against the contract.</li>
+<li>Two demo runs: one that stays in scope, one that creeps. The checker flags the creep with the exact file and reason.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: the contract, the two runs, the per-run verdicts, and a saved <code>scope_report.json</code>.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>A practitioner running &quot;specsmaxxing&quot; (scope contracts in YAML before invoking the agent) reports rabbit-hole rate dropped from 52% to 21% in three weeks without changing the agent. The contract did the work, not the model. Three patterns make the gain stick.</p>
+<p><strong>Violation budgets, not binary failures.</strong> <code>agent-guardrails</code> (the OSS merge gate used by Claude Code, Cursor, Windsurf, Codex via MCP) ships a <code>violationBudget</code> per task: minor scope slips within budget are surfaced as warnings; only when the budget is exceeded does the merge gate refuse. Pair with <code>violationSeverity: &quot;error&quot; | &quot;warning&quot;</code>. The budget is the difference between a gate that ships and a gate that gets disabled by the team that hated it.</p>
+<p><strong>Severity asymmetry by path family.</strong> Off-scope writes to <code>docs/**</code> are usually <code>warn</code>; off-scope writes to <code>scripts/**</code>, <code>migrations/**</code>, <code>config/prod/**</code> are always <code>block</code>. This asymmetry has to live in the contract, not in the runtime, because it is project-specific and changes per task.</p>
+<p><strong>Time and network budgets next to file budgets.</strong> A <code>time_budget_minutes</code> field bounds the wall clock; the runtime refuses to continue past it without re-approval. A <code>network_egress</code> allowlist on hostnames prevents the agent from quietly hitting an external API that was not part of the task. These are scope dimensions too; the file globs are necessary, not sufficient.</p>
+<p><strong>Multi-contract merge semantics (least privilege).</strong> When two scope contracts apply (e.g., a project-wide contract plus a task-specific one), the merge is: <strong>intersect</strong> <code>allowed_files</code> (both contracts must permit the path), <strong>union</strong> <code>forbidden_files</code> (either can prohibit), <code>time_budget_minutes</code> is the most restrictive (min), <code>approvals_required</code> accumulates. <code>network_egress</code> is <code>None</code> for no enforcement, <code>[]</code> for deny-all, <code>[...]</code> as an allowlist; under merge, <code>None</code> defers to the other side, two lists intersect, and deny-all stays deny-all. State this in the contract schema so the merge is mechanical and reviewable.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Claude Code slash commands.</strong> A <code>/scope</code> command writes the contract and pins it as session context. Subagents read the contract before acting.</li>
+<li><strong>GitHub PRs.</strong> Push the contract as a JSON file in the PR body or as a checked-in artifact. CI runs the scope checker against the merge diff.</li>
+<li><strong>LangGraph interrupts.</strong> A scope violation triggers an interrupt; the handler asks the human whether the contract needs to grow or the agent needs to back off.</li>
+</ul>
+<p>The contract travels with the task. When the task closes, the contract is archived under <code>outputs/scope/closed/</code>.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-scope-contract.md</code> generates a scope contract for a task description and a glob-aware checker that runs in CI on every agent diff.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>network_egress</code> field listing allowed external hosts. Refuse runs that touch other hosts.</li>
+<li>Extend the checker to fail soft on <code>docs/**</code> and hard on <code>scripts/**</code>. Justify the asymmetry.</li>
+<li>Make the contract derive <code>allowed_files</code> from a <code>goal</code> field using a static rule set (no LLM). What goes wrong on the first edge case?</li>
+<li>Add a <code>time_budget_minutes</code> and refuse to continue once the wall clock exceeds it.</li>
+<li>Run two contracts against the same diff. What is the right merge semantics when both apply?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Scope contract</td>
+<td>&quot;The task brief&quot;</td>
+<td>Per-task JSON listing allowed/forbidden files, acceptance, rollback</td>
+</tr>
+<tr>
+<td>Scope creep</td>
+<td>&quot;It also touched...&quot;</td>
+<td>Files outside the contract changed in the same task</td>
+</tr>
+<tr>
+<td>Rollback plan</td>
+<td>&quot;We can revert&quot;</td>
+<td>The one-paragraph operator runbook for halting</td>
+</tr>
+<tr>
+<td>Approval boundary</td>
+<td>&quot;Needs sign-off&quot;</td>
+<td>An action listed in the contract as requiring explicit human approval</td>
+</tr>
+<tr>
+<td>Diff check</td>
+<td>&quot;Path audit&quot;</td>
+<td>Comparing touched files against the contract globs</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/">LangGraph human-in-the-loop interrupts</a></li>
+<li><a href="https://platform.openai.com/docs/guides/agents-sdk">OpenAI Agents SDK tool approval policies</a></li>
+<li><a href="https://github.com/logi-cmd/agent-guardrails">logi-cmd/agent-guardrails — merge gates and scope validation</a> — violation budgets, severity tiers</li>
+<li><a href="https://earezki.com/ai-news/2026-05-05-i-built-a-tiny-ci-tool-to-keep-ai-agent-configs-from-drifting-in-my-repo/">Dev|Journal, Preventing AI Agent Configuration Drift with Agent Contract Testing</a> — <code>--strict</code> mode without external deps</li>
+<li><a href="https://dev.to/jtorchia/agentic-coding-is-not-a-trap-i-answered-the-viral-hn-post-with-my-own-production-logs-33d9">Agentic Coding Is Not a Trap (production logs)</a> — specsmaxxing receipts: 52% → 21%</li>
+<li><a href="https://opencode.ai/docs/agents/">OpenCode permission globs</a> — fine-grained per-permission scope</li>
+<li><a href="https://www.knostic.ai/blog/ai-coding-agent-security">Knostic, AI Coding Agent Security: Threat Models and Protection Strategies</a> — scope as part of least privilege</li>
+<li><a href="https://www.augmentcode.com/guides/ai-spec-template">Augment Code, AI Spec Template</a> — three-tier boundary system (must/ask/never)</li>
+<li>Phase 14 · 27 — prompt injection defenses that pair with scope locks</li>
+<li>Phase 14 · 33 — the rule set this contract specializes per task</li>
+<li>Phase 14 · 38 — the verification gate the checker reports into</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./35-initialization-scripts.html"><span>← Previous</span><b>initialization scripts</b></a>
+      <a class="next" href="./37-runtime-feedback-loops.html"><span>Next →</span><b>runtime feedback loops</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

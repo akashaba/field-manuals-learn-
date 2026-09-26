@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Backpropagation from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/03-deep-learning-core/03-backpropagation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Deep Learning Core</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Deep Learning Core</div>
+    <h1 class="lesson-title">Backpropagation from Scratch</h1>
+    <p class="lesson-sub">Backpropagation is the algorithm that makes learning possible. Without it, neural networks are just expensive random number generators.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Lesson 03.02 (Multi-Layer Networks)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Deep Learning Core 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="28.6" y="31.3" width="29.9" height="29.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(187 43.5 46.3)"/>
+        <rect x="23.8" y="127.0" width="28.7" height="28.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(169 38.1 141.4)"/>
+        <rect x="19.0" y="122.8" width="27.4" height="27.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(151 32.7 136.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">DEEP LEARNING CORE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Backpropagation from</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement a Value-based autograd engine that builds a computational graph and computes gradients via topological sort</li>
+<li>Derive the backward pass for addition, multiplication, and sigmoid using the chain rule</li>
+<li>Train a multi-layer network on XOR and circle classification using only your from-scratch backpropagation engine</li>
+<li>Identify the vanishing gradient problem in deep sigmoid networks and explain why gradients shrink exponentially</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your network has a single hidden layer with 768 inputs and 3072 outputs. That&#39;s 2,359,296 weights. It made a wrong prediction. Which weights caused the error? Testing each weight individually means 2.3 million forward passes. Backpropagation computes all 2.3 million gradients in a single backward pass. That&#39;s not an optimization. That&#39;s the difference between trainable and impossible.</p>
+<p>The naive approach: take one weight, nudge it by a tiny amount, run the forward pass again, measure whether the loss went up or down. That gives you the gradient for that weight. Now do it for every weight in the network. Multiply by thousands of training steps and millions of data points. You&#39;d need geological time to train anything useful.</p>
+<p>Backpropagation solves this. One forward pass, one backward pass, all gradients computed. The trick is the chain rule from calculus, applied systematically to a computational graph. This is the algorithm that made deep learning practical. Without it, we&#39;d still be stuck on toy problems.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-chain-rule-applied-to-networks"><a class="anchor" href="#the-chain-rule-applied-to-networks">#</a> The Chain Rule, Applied to Networks</h3>
+<p>You saw the chain rule in Phase 01, Lesson 05. Quick recap: if y = f(g(x)), then dy/dx = f&#39;(g(x)) * g&#39;(x). You multiply derivatives along the chain.</p>
+<p>In a neural network, the &quot;chain&quot; is the sequence of operations from input to loss. Each layer applies weights, adds biases, passes through an activation. The loss function compares the final output to the target. Backpropagation traces this chain backward, computing how each operation contributed to the error.</p>
+<h3 id="computational-graphs"><a class="anchor" href="#computational-graphs">#</a> Computational Graphs</h3>
+<p>Every forward pass builds a graph. Each node is an operation (multiply, add, sigmoid). Each edge carries a value forward and a gradient backward.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    x[&quot;x&quot;] --&gt; mul[&quot;*&quot;]
+    w[&quot;w&quot;] --&gt; mul
+    mul -- &quot;z1 = w*x&quot; --&gt; add[&quot;+&quot;]
+    b[&quot;b&quot;] --&gt; add
+    add -- &quot;z2 = z1 + b&quot; --&gt; sig[&quot;sigmoid&quot;]
+    sig -- &quot;a = sigmoid(z2)&quot; --&gt; loss[&quot;Loss&quot;]
+    y[&quot;target&quot;] --&gt; loss</pre></div><p>Forward pass: values flow left to right. x and w produce z1 = w*x. Add b to get z2. Sigmoid gives activation a. Compare a to target y using the loss function.</p>
+<p>Backward pass: gradients flow right to left. Start with dL/da (how loss changes with the activation). Multiply by da/dz2 (sigmoid derivative). That gives dL/dz2. Split into dL/db (which equals dL/dz2, since z2 = z1 + b) and dL/dz1. Then dL/dw = dL/dz1 * x and dL/dx = dL/dz1 * w.</p>
+<p>Every node in the graph has one job during the backward pass: take the gradient coming from above, multiply by its local derivative, and pass it down.</p>
+<h3 id="forward-vs-backward"><a class="anchor" href="#forward-vs-backward">#</a> Forward vs Backward</h3>
+<div class="fig"><pre class="mermaid">graph TB
+    subgraph Forward[&quot;Forward Pass&quot;]
+        direction LR
+        f1[&quot;Input x&quot;] --&gt; f2[&quot;z = Wx + b&quot;]
+        f2 --&gt; f3[&quot;a = sigmoid(z)&quot;]
+        f3 --&gt; f4[&quot;Loss = (a - y)^2&quot;]
+    end
+    subgraph Backward[&quot;Backward Pass&quot;]
+        direction RL
+        b4[&quot;dL/dL = 1&quot;] --&gt; b3[&quot;dL/da = 2(a-y)&quot;]
+        b3 --&gt; b2[&quot;dL/dz = dL/da * a(1-a)&quot;]
+        b2 --&gt; b1[&quot;dL/dW = dL/dz * x\ndL/db = dL/dz&quot;]
+    end
+    Forward --&gt; Backward</pre></div><p>The forward pass stores every intermediate value: z, a, the inputs to each layer. The backward pass needs these stored values to compute gradients. This is the memory-computation tradeoff at the heart of backprop. You trade memory (storing activations) for speed (one pass instead of millions).</p>
+<h3 id="gradient-flow-through-a-network"><a class="anchor" href="#gradient-flow-through-a-network">#</a> Gradient Flow Through a Network</h3>
+<p>For a 3-layer network, gradients chain through every layer:</p>
+<div class="fig"><pre class="mermaid">graph RL
+    L[&quot;Loss&quot;] -- &quot;dL/da3&quot; --&gt; L3[&quot;Layer 3\na3 = sigmoid(z3)&quot;]
+    L3 -- &quot;dL/dz3 = dL/da3 * sigmoid&#39;(z3)&quot; --&gt; L2[&quot;Layer 2\na2 = sigmoid(z2)&quot;]
+    L2 -- &quot;dL/dz2 = dL/da2 * sigmoid&#39;(z2)&quot; --&gt; L1[&quot;Layer 1\na1 = sigmoid(z1)&quot;]
+    L1 -- &quot;dL/dz1 = dL/da1 * sigmoid&#39;(z1)&quot; --&gt; I[&quot;Input&quot;]</pre></div><p>At each layer, the gradient gets multiplied by the sigmoid derivative. The sigmoid derivative is a * (1 - a), which maxes out at 0.25 (when a = 0.5). Three layers deep, the gradient has been multiplied by at most 0.25^3 = 0.0156. Ten layers deep: 0.25^10 = 0.000001.</p>
+<h3 id="vanishing-gradients"><a class="anchor" href="#vanishing-gradients">#</a> Vanishing Gradients</h3>
+<p>This is the vanishing gradient problem. Sigmoid squashes its output between 0 and 1. Its derivative is always less than 0.25. Stack enough sigmoid layers and gradients shrink to nothing. Early layers barely learn because they receive near-zero gradients.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">sigmoid(z):     Output range [0, 1]
+sigmoid&#39;(z):    Max value 0.25 (at z = 0)
+
+After 5 layers:   gradient * 0.25^5 = 0.001x original
+After 10 layers:  gradient * 0.25^10 = 0.000001x original</code></pre>
+      </div>
+    <p>This is why deep sigmoid networks are nearly impossible to train. The fix -- ReLU and its variants -- is the subject of Lesson 04. For now, understand that backprop works perfectly. The problem is what it&#39;s working through.</p>
+<h3 id="deriving-gradients-for-a-2-layer-network"><a class="anchor" href="#deriving-gradients-for-a-2-layer-network">#</a> Deriving Gradients for a 2-Layer Network</h3>
+<p>Concrete math for a network with input x, hidden layer with sigmoid, output layer with sigmoid, and MSE loss.</p>
+<p>Forward pass:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">z1 = W1 * x + b1
+a1 = sigmoid(z1)
+z2 = W2 * a1 + b2
+a2 = sigmoid(z2)
+L = (a2 - y)^2</code></pre>
+      </div>
+    <p>Backward pass (applying chain rule step by step):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">dL/da2 = 2(a2 - y)
+da2/dz2 = a2 * (1 - a2)
+dL/dz2 = dL/da2 * da2/dz2 = 2(a2 - y) * a2 * (1 - a2)
+
+dL/dW2 = dL/dz2 * a1
+dL/db2 = dL/dz2
+
+dL/da1 = dL/dz2 * W2
+da1/dz1 = a1 * (1 - a1)
+dL/dz1 = dL/da1 * da1/dz1
+
+dL/dW1 = dL/dz1 * x
+dL/db1 = dL/dz1</code></pre>
+      </div>
+    <p>Every gradient is a product of local derivatives traced back from the loss. That&#39;s all backpropagation is.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">backprop-vanishing</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-the-value-node"><a class="anchor" href="#step-1-the-value-node">#</a> Step 1: The Value Node</h3>
+<p>Every number in our computation becomes a Value. It stores its data, its gradient, and how it was created (so it knows how to compute gradients backward).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Value:
+    def __init__(self, data, children=(), op=&#39;&#39;):
+        self.data = data
+        self.grad = 0.0
+        self._backward = lambda: None
+        self._children = set(children)
+        self._op = op
+
+    def __repr__(self):
+        return f&quot;Value(data={self.data:.4f}, grad={self.grad:.4f})&quot;</code></pre>
+      </div>
+    <p>No gradient yet (0.0). No backward function yet (no-op). The <code>_children</code> track which Values produced this one, so we can topologically sort the graph later.</p>
+<h3 id="step-2-operations-with-backward-functions"><a class="anchor" href="#step-2-operations-with-backward-functions">#</a> Step 2: Operations with Backward Functions</h3>
+<p>Each operation creates a new Value and defines how gradients flow backward through it.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def __add__(self, other):
+    other = other if isinstance(other, Value) else Value(other)
+    out = Value(self.data + other.data, (self, other), &#39;+&#39;)
+
+    def _backward():
+        self.grad += out.grad
+        other.grad += out.grad
+
+    out._backward = _backward
+    return out
+
+def __mul__(self, other):
+    other = other if isinstance(other, Value) else Value(other)
+    out = Value(self.data * other.data, (self, other), &#39;*&#39;)
+
+    def _backward():
+        self.grad += other.data * out.grad
+        other.grad += self.data * out.grad
+
+    out._backward = _backward
+    return out</code></pre>
+      </div>
+    <p>For addition: d(a+b)/da = 1, d(a+b)/db = 1. So both inputs get the output&#39;s gradient directly.</p>
+<p>For multiplication: d(a<em>b)/da = b, d(a</em>b)/db = a. Each input gets the other&#39;s value times the output gradient.</p>
+<p>The <code>+=</code> is critical. A Value might be used in multiple operations. Its gradient is the sum of gradients from all paths.</p>
+<h3 id="step-3-sigmoid-and-loss"><a class="anchor" href="#step-3-sigmoid-and-loss">#</a> Step 3: Sigmoid and Loss</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+def sigmoid(self):
+    x = self.data
+    x = max(-500, min(500, x))
+    s = 1.0 / (1.0 + math.exp(-x))
+    out = Value(s, (self,), &#39;sigmoid&#39;)
+
+    def _backward():
+        self.grad += (s * (1 - s)) * out.grad
+
+    out._backward = _backward
+    return out</code></pre>
+      </div>
+    <p>Sigmoid derivative: sigmoid(x) * (1 - sigmoid(x)). We computed sigmoid(x) = s during the forward pass. Reuse it. No extra work.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def mse_loss(predicted, target):
+    diff = predicted + Value(-target)
+    return diff * diff</code></pre>
+      </div>
+    <p>MSE for a single output: (predicted - target)^2. We express subtraction as addition with a negated Value.</p>
+<h3 id="step-4-backward-pass"><a class="anchor" href="#step-4-backward-pass">#</a> Step 4: Backward Pass</h3>
+<p>Topological sort ensures we process nodes in the right order -- a node&#39;s gradient is fully accumulated before we propagate through it.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def backward(self):
+    topo = []
+    visited = set()
+
+    def build_topo(v):
+        if v not in visited:
+            visited.add(v)
+            for child in v._children:
+                build_topo(child)
+            topo.append(v)
+
+    build_topo(self)
+    self.grad = 1.0
+    for v in reversed(topo):
+        v._backward()</code></pre>
+      </div>
+    <p>Start at the loss (gradient = 1.0, since dL/dL = 1). Walk backward through the sorted graph. Each node&#39;s <code>_backward</code> pushes gradients to its children.</p>
+<h3 id="step-5-layer-and-network"><a class="anchor" href="#step-5-layer-and-network">#</a> Step 5: Layer and Network</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import random
+
+class Neuron:
+    def __init__(self, n_inputs):
+        scale = (2.0 / n_inputs) ** 0.5
+        self.weights = [Value(random.uniform(-scale, scale)) for _ in range(n_inputs)]
+        self.bias = Value(0.0)
+
+    def __call__(self, x):
+        act = sum((wi * xi for wi, xi in zip(self.weights, x)), self.bias)
+        return act.sigmoid()
+
+    def parameters(self):
+        return self.weights + [self.bias]
+
+
+class Layer:
+    def __init__(self, n_inputs, n_outputs):
+        self.neurons = [Neuron(n_inputs) for _ in range(n_outputs)]
+
+    def __call__(self, x):
+        out = [n(x) for n in self.neurons]
+        return out[0] if len(out) == 1 else out
+
+    def parameters(self):
+        params = []
+        for n in self.neurons:
+            params.extend(n.parameters())
+        return params
+
+
+class Network:
+    def __init__(self, sizes):
+        self.layers = []
+        for i in range(len(sizes) - 1):
+            self.layers.append(Layer(sizes[i], sizes[i + 1]))
+
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x)
+            if not isinstance(x, list):
+                x = [x]
+        return x[0] if len(x) == 1 else x
+
+    def parameters(self):
+        params = []
+        for layer in self.layers:
+            params.extend(layer.parameters())
+        return params
+
+    def zero_grad(self):
+        for p in self.parameters():
+            p.grad = 0.0</code></pre>
+      </div>
+    <p>A Neuron takes inputs, computes weighted sum + bias, and applies sigmoid. Weight initialization scales by sqrt(2/n_inputs) to prevent sigmoid saturation in deeper networks. A Layer is a list of Neurons. A Network is a list of Layers. The <code>parameters()</code> method collects all learnable Values so we can update them.</p>
+<h3 id="step-6-train-on-xor"><a class="anchor" href="#step-6-train-on-xor">#</a> Step 6: Train on XOR</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">random.seed(42)
+net = Network([2, 4, 1])
+
+xor_data = [
+    ([0.0, 0.0], 0.0),
+    ([0.0, 1.0], 1.0),
+    ([1.0, 0.0], 1.0),
+    ([1.0, 1.0], 0.0),
+]
+
+learning_rate = 1.0
+
+for epoch in range(1000):
+    total_loss = Value(0.0)
+    for inputs, target in xor_data:
+        x = [Value(i) for i in inputs]
+        pred = net(x)
+        loss = mse_loss(pred, target)
+        total_loss = total_loss + loss
+
+    net.zero_grad()
+    total_loss.backward()
+
+    for p in net.parameters():
+        p.data -= learning_rate * p.grad
+
+    if epoch % 100 == 0:
+        print(f&quot;Epoch {epoch:4d} | Loss: {total_loss.data:.6f}&quot;)
+
+print(&quot;\nXOR Results:&quot;)
+for inputs, target in xor_data:
+    x = [Value(i) for i in inputs]
+    pred = net(x)
+    print(f&quot;  {inputs} -&gt; {pred.data:.4f} (expected {target})&quot;)</code></pre>
+      </div>
+    <p>Watch the loss decrease. From random predictions to correct XOR outputs, driven entirely by backpropagation computing gradients and nudging weights in the right direction.</p>
+<h3 id="step-7-circle-classification"><a class="anchor" href="#step-7-circle-classification">#</a> Step 7: Circle Classification</h3>
+<p>In Lesson 02, you hand-tuned weights for circle classification. Now let the network learn them.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">random.seed(7)
+
+def generate_circle_data(n=100):
+    data = []
+    for _ in range(n):
+        x1 = random.uniform(-1.5, 1.5)
+        x2 = random.uniform(-1.5, 1.5)
+        label = 1.0 if x1 * x1 + x2 * x2 &lt; 1.0 else 0.0
+        data.append(([x1, x2], label))
+    return data
+
+circle_data = generate_circle_data(80)
+
+circle_net = Network([2, 8, 1])
+learning_rate = 0.5
+
+for epoch in range(2000):
+    random.shuffle(circle_data)
+    total_loss_val = 0.0
+    for inputs, target in circle_data:
+        x = [Value(i) for i in inputs]
+        pred = circle_net(x)
+        loss = mse_loss(pred, target)
+        circle_net.zero_grad()
+        loss.backward()
+        for p in circle_net.parameters():
+            p.data -= learning_rate * p.grad
+        total_loss_val += loss.data
+
+    if epoch % 200 == 0:
+        correct = 0
+        for inputs, target in circle_data:
+            x = [Value(i) for i in inputs]
+            pred = circle_net(x)
+            predicted_class = 1.0 if pred.data &gt; 0.5 else 0.0
+            if predicted_class == target:
+                correct += 1
+        accuracy = correct / len(circle_data) * 100
+        print(f&quot;Epoch {epoch:4d} | Loss: {total_loss_val:.4f} | Accuracy: {accuracy:.1f}%&quot;)</code></pre>
+      </div>
+    <p>We use online SGD here -- update weights after each sample instead of accumulating the full batch. This breaks symmetry faster and avoids sigmoid saturation on the full loss landscape. Shuffling the data each epoch prevents the network from memorizing the order.</p>
+<p>No hand-tuning. The network discovers the circular decision boundary on its own. That&#39;s the power of backpropagation: you define the architecture, the loss function, and the data. The algorithm figures out the weights.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PyTorch does everything above in a few lines. The core idea is identical -- autograd builds a computational graph during the forward pass and traces it backward to compute gradients.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+model = nn.Sequential(
+    nn.Linear(2, 4),
+    nn.Sigmoid(),
+    nn.Linear(4, 1),
+    nn.Sigmoid(),
+)
+optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
+criterion = nn.MSELoss()
+
+X = torch.tensor([[0,0],[0,1],[1,0],[1,1]], dtype=torch.float32)
+y = torch.tensor([[0],[1],[1],[0]], dtype=torch.float32)
+
+for epoch in range(1000):
+    pred = model(X)
+    loss = criterion(pred, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+print(&quot;PyTorch XOR Results:&quot;)
+with torch.no_grad():
+    for i in range(4):
+        pred = model(X[i])
+        print(f&quot;  {X[i].tolist()} -&gt; {pred.item():.4f} (expected {y[i].item()})&quot;)</code></pre>
+      </div>
+    <p><code>loss.backward()</code> is your <code>total_loss.backward()</code>. <code>optimizer.step()</code> is your manual <code>p.data -= lr * p.grad</code>. <code>optimizer.zero_grad()</code> is your <code>net.zero_grad()</code>. Same algorithm, industrial-strength implementation. PyTorch handles GPU acceleration, mixed precision, gradient checkpointing, and hundreds of layer types. But the backward pass is the same chain rule applied to the same computational graph.</p>
+<p>Training runs the forward pass, then the backward pass, then updates weights. Inference runs only the forward pass. No gradients, no updates. This distinction matters because inference is what happens in production. When you call an API like Claude or GPT, you&#39;re running inference -- your prompt flows forward through the network, and tokens come out the other end. No weights change. Understanding backprop matters because it shaped every weight in that network.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-gradient-debugger.md</code> -- a reusable prompt for diagnosing gradient problems (vanishing, exploding, NaN) in any neural network</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add a <code>__sub__</code> method to the Value class (a - b = a + (-1 * b)). Then implement a <code>__neg__</code> method. Verify that the gradients are correct by comparing with manual calculation for a simple expression like (a - b)^2.</p>
+</li>
+<li><p>Add a <code>relu</code> method to Value (output max(0, x), derivative is 1 if x &gt; 0, else 0). Replace sigmoid with relu in the hidden layers and train on XOR again. Compare convergence speed. You should see faster training -- this previews Lesson 04.</p>
+</li>
+<li><p>Implement a <code>__pow__</code> method on Value for integer powers. Use it to replace <code>mse_loss</code> with a proper <code>(predicted - target) ** 2</code> expression. Verify gradients match the original implementation.</p>
+</li>
+<li><p>Add gradient clipping to the training loop: after calling <code>backward()</code>, clip all gradients to [-1, 1]. Train a deeper network (4+ layers with sigmoid) and compare loss curves with and without clipping. This is your first defense against exploding gradients.</p>
+</li>
+<li><p>Build a visualization: after training on XOR, print the gradient of every parameter in the network. Identify which layer has the smallest gradients. This demonstrates the vanishing gradient problem you read about in the Concept section.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Backpropagation</td>
+<td>&quot;The network learns&quot;</td>
+<td>An algorithm that computes dL/dw for every weight by applying the chain rule backward through the computational graph</td>
+</tr>
+<tr>
+<td>Computational graph</td>
+<td>&quot;The network structure&quot;</td>
+<td>A directed acyclic graph where nodes are operations and edges carry values (forward) and gradients (backward)</td>
+</tr>
+<tr>
+<td>Chain rule</td>
+<td>&quot;Multiply the derivatives&quot;</td>
+<td>If y = f(g(x)), then dy/dx = f&#39;(g(x)) * g&#39;(x) -- the mathematical foundation of backpropagation</td>
+</tr>
+<tr>
+<td>Gradient</td>
+<td>&quot;The direction of steepest ascent&quot;</td>
+<td>The partial derivative of the loss with respect to a parameter -- tells you how to change that parameter to reduce the loss</td>
+</tr>
+<tr>
+<td>Vanishing gradient</td>
+<td>&quot;Deep networks don&#39;t learn&quot;</td>
+<td>Gradients shrink exponentially as they propagate through layers with saturating activations like sigmoid</td>
+</tr>
+<tr>
+<td>Forward pass</td>
+<td>&quot;Running the network&quot;</td>
+<td>Computing the output from inputs by sequentially applying each layer&#39;s operations and storing intermediate values</td>
+</tr>
+<tr>
+<td>Backward pass</td>
+<td>&quot;Computing gradients&quot;</td>
+<td>Traversing the computational graph in reverse, accumulating gradients at each node using the chain rule</td>
+</tr>
+<tr>
+<td>Learning rate</td>
+<td>&quot;How fast it learns&quot;</td>
+<td>A scalar that controls the step size when updating weights: w_new = w_old - lr * gradient</td>
+</tr>
+<tr>
+<td>Topological sort</td>
+<td>&quot;The right order&quot;</td>
+<td>An ordering of graph nodes where each node appears after all nodes it depends on -- ensures gradients are fully accumulated before propagation</td>
+</tr>
+<tr>
+<td>Autograd</td>
+<td>&quot;Automatic differentiation&quot;</td>
+<td>A system that builds computational graphs during forward computation and automatically computes gradients -- what PyTorch&#39;s engine does</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Rumelhart, Hinton &amp; Williams, &quot;Learning representations by back-propagating errors&quot; (1986) -- the paper that made backpropagation mainstream and unlocked multi-layer network training</li>
+<li>3Blue1Brown, &quot;Neural Networks&quot; series (<a href="https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi">https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi</a>) -- the best visual explanation of backpropagation and gradient flow through networks</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-multi-layer-networks.html"><span>← Previous</span><b>multi layer networks</b></a>
+      <a class="next" href="./04-activation-functions.html"><span>Next →</span><b>activation functions</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>T5, BART — Encoder-Decoder Models — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/08-t5-bart-encoder-decoder/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">T5, BART — Encoder-Decoder Models</h1>
+    <p class="lesson-sub">Encoders understand. Decoders generate. Put them back together and you get a model built for input → output tasks: translate, summarize, rewrite, transcribe.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 05 (Full Transformer), Phase 7 · 06 (BERT), Phase 7 · 07 (GPT)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="102.3" cy="99.7" r="8.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.6,99.8 L96.9,87.4 L105.2,99.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.8,94.4 L91.5,83.0 L99.1,94.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.1,89.1 L86.0,78.6 L93.0,89.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.3,83.8 L80.6,74.3 L87.0,83.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">T5, BART —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Encoder-Decoder…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Decoder-only GPT and encoder-only BERT each strip down the 2017 architecture for a different goal. But many tasks are naturally input-output:</p>
+<ul>
+<li>Translation: English → French.</li>
+<li>Summarization: 5,000-token article → 200-token summary.</li>
+<li>Speech recognition: audio tokens → text tokens.</li>
+<li>Structured extraction: prose → JSON.</li>
+</ul>
+<p>For these, encoder-decoder makes the cleanest fit. The encoder produces a dense representation of the source. The decoder generates the output, cross-attending to that representation at every step. Training is shift-by-one on the output side. Same loss as GPT, just conditioned on the encoder output.</p>
+<p>Two papers defined the modern playbook:</p>
+<ol>
+<li><strong>T5</strong> (Raffel et al. 2019). &quot;Text-to-Text Transfer Transformer.&quot; Every NLP task reframed as text-in, text-out. Single architecture, single vocabulary, single loss. Pretrained on masked span prediction (corrupt spans in the input, decode them in the output).</li>
+<li><strong>BART</strong> (Lewis et al. 2019). &quot;Bidirectional and Auto-Regressive Transformer.&quot; Denoising autoencoder: corrupt input in multiple ways (shuffle, mask, delete, rotate), ask the decoder to reconstruct the original.</li>
+</ol>
+<p>In 2026 the encoder-decoder format lives on where input structure matters:</p>
+<ul>
+<li>Whisper (speech → text).</li>
+<li>Google&#39;s translation stack.</li>
+<li>Some code-completion / repair models that have distinct context-and-edit structures.</li>
+<li>Flan-T5 and variants for structured reasoning tasks.</li>
+</ul>
+<p>Decoder-only won the spotlight, but encoder-decoder never went away.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/07-transformers-deep-dive/08-t5-bart-encoder-decoder/assets/encoder-decoder.svg" alt="Encoder-decoder with cross-attention" loading="lazy" /></figure></p>
+<h3 id="the-forward-loop"><a class="anchor" href="#the-forward-loop">#</a> The forward loop</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">source tokens ─▶ encoder ─▶ (N_src, d_model)  ──┐
+                                                 │
+target tokens ─▶ decoder block                   │
+                 ├─▶ masked self-attention       │
+                 ├─▶ cross-attention ◀───────────┘
+                 └─▶ FFN
+                ↓
+              next-token logits</code></pre>
+      </div>
+    <p>Crucially, the encoder runs once per input. The decoder runs autoregressively but cross-attends to the <em>same</em> encoder output at every step. Caching the encoder output is a free speedup for long inputs.</p>
+<h3 id="t5-pretraining-span-corruption"><a class="anchor" href="#t5-pretraining-span-corruption">#</a> T5 pretraining — span corruption</h3>
+<p>Pick random spans of the input (average length 3 tokens, 15% total). Replace each span with a unique sentinel: <code>&lt;extra_id_0&gt;</code>, <code>&lt;extra_id_1&gt;</code>, etc. The decoder outputs only the corrupted spans with their sentinel prefix:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">source: The quick &lt;extra_id_0&gt; fox jumps &lt;extra_id_1&gt; dog
+target: &lt;extra_id_0&gt; brown &lt;extra_id_1&gt; over the lazy</code></pre>
+      </div>
+    <p>Cheaper signal than predicting the whole sequence. Competitive with MLM (BERT) and prefix-LM (UniLM) in the T5 paper&#39;s ablation.</p>
+<h3 id="bart-pretraining-multi-noise-denoising"><a class="anchor" href="#bart-pretraining-multi-noise-denoising">#</a> BART pretraining — multi-noise denoising</h3>
+<p>BART tries five noising functions:</p>
+<ol>
+<li>Token masking.</li>
+<li>Token deletion.</li>
+<li>Text infilling (mask a span, decoder inserts the right length).</li>
+<li>Sentence permutation.</li>
+<li>Document rotation.</li>
+</ol>
+<p>Combining text infilling + sentence permutation produced the best downstream numbers. The decoder always reconstructs the original. BART&#39;s output is the full sequence, not just the corrupted spans — so pretraining compute is higher than T5.</p>
+<h3 id="inference"><a class="anchor" href="#inference">#</a> Inference</h3>
+<p>Same autoregressive generation as GPT. Greedy / beam / top-p sampling apply. Beam search (width 4–5) is standard for translation and summarization because the output distribution is narrower than chat.</p>
+<h3 id="when-to-pick-each-variant-in-2026"><a class="anchor" href="#when-to-pick-each-variant-in-2026">#</a> When to pick each variant in 2026</h3>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Encoder-decoder?</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Translation</td>
+<td>Yes, usually</td>
+<td>Clear source sequence; fixed output distribution; beam search works</td>
+</tr>
+<tr>
+<td>Speech-to-text</td>
+<td>Yes (Whisper)</td>
+<td>Input modality differs from output; encoder shapes audio features</td>
+</tr>
+<tr>
+<td>Chat / reasoning</td>
+<td>No, decoder-only</td>
+<td>No persistent &quot;input&quot; — the conversation is the sequence</td>
+</tr>
+<tr>
+<td>Code completion</td>
+<td>Usually no</td>
+<td>Decoder-only with long context wins; code models like Qwen 2.5 Coder are decoder-only</td>
+</tr>
+<tr>
+<td>Summarization</td>
+<td>Either works</td>
+<td>BART, PEGASUS beat earlier decoder-only baselines; modern decoder-only LLMs match them</td>
+</tr>
+<tr>
+<td>Structured extraction</td>
+<td>Either</td>
+<td>T5 is clean because &quot;text → text&quot; absorbs any output format</td>
+</tr>
+</tbody></table>
+<p>The trend since ~2022: decoder-only takes over tasks that encoder-decoder used to own because (a) instruction-tuned decoder-only LLMs generalize to anything via prompting, (b) one architecture scales easier than two, (c) RLHF assumes a decoder. Encoder-decoder holds on where input modality differs (speech, images) or where beam search quality matters.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">encoder-decoder</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>See <code>code/main.py</code>. We implement T5-style span corruption for a toy corpus — the most useful single piece of this lesson because it shows up in every encoder-decoder pretraining recipe since.</p>
+<h3 id="step-1-span-corruption"><a class="anchor" href="#step-1-span-corruption">#</a> Step 1: span corruption</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def corrupt_spans(tokens, mask_rate=0.15, mean_span=3.0, rng=None):
+    &quot;&quot;&quot;Pick spans summing to ~mask_rate of tokens. Return (corrupted_input, target).&quot;&quot;&quot;
+    n = len(tokens)
+    n_mask = max(1, int(n * mask_rate))
+    n_spans = max(1, int(round(n_mask / mean_span)))
+    ...</code></pre>
+      </div>
+    <p>The target format is the T5 convention: <code>&lt;sent0&gt; span0 &lt;sent1&gt; span1 ...</code>. The corrupted input interleaves unchanged tokens with the sentinel tokens at span locations.</p>
+<h3 id="step-2-verify-round-trip"><a class="anchor" href="#step-2-verify-round-trip">#</a> Step 2: verify round-trip</h3>
+<p>Given the corrupted input and target, reconstruct the original sentence. If your corruption is reversible, the forward pass is well-defined. This is a sanity check — real training never does this, but the test is cheap and catches off-by-one bugs in your span bookkeeping.</p>
+<h3 id="step-3-bart-noising"><a class="anchor" href="#step-3-bart-noising">#</a> Step 3: BART noising</h3>
+<p>Five functions: <code>token_mask</code>, <code>token_delete</code>, <code>text_infill</code>, <code>sentence_permute</code>, <code>document_rotate</code>. Compose two of them and show the result.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>HuggingFace reference:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import T5ForConditionalGeneration, T5Tokenizer
+tok = T5Tokenizer.from_pretrained(&quot;google/flan-t5-base&quot;)
+model = T5ForConditionalGeneration.from_pretrained(&quot;google/flan-t5-base&quot;)
+
+inputs = tok(&quot;translate English to French: Attention is all you need.&quot;, return_tensors=&quot;pt&quot;)
+out = model.generate(**inputs, max_new_tokens=32)
+print(tok.decode(out[0], skip_special_tokens=True))</code></pre>
+      </div>
+    <p>The T5 trick: the task name goes into the input text. Same model handles dozens of tasks because each task is text-in, text-out. In 2026 this pattern has been generalized by instruction-tuned decoder-only models, but T5 codified it first.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-seq2seq-picker.md</code>. The skill picks between encoder-decoder and decoder-only for a new task given input-output structure, latency, and quality targets.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>, apply span corruption to a 30-token sentence, verify that concatenating the non-sentinel source tokens with the decoded target spans reproduces the original.</li>
+<li><strong>Medium.</strong> Implement BART&#39;s <code>text_infill</code> noise: replace random spans with a single <code>&lt;mask&gt;</code> token, and the decoder must infer the correct span length plus contents. Show one example.</li>
+<li><strong>Hard.</strong> Fine-tune <code>flan-t5-small</code> on a tiny English → pig-Latin corpus (200 pairs). Measure BLEU on a held-out 50-pair set. Compare against fine-tuning <code>Llama-3.2-1B</code> on the same data with the same compute.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Encoder-decoder</td>
+<td>&quot;Seq2seq transformer&quot;</td>
+<td>Two stacks: bidirectional encoder for input, causal decoder with cross-attention for output.</td>
+</tr>
+<tr>
+<td>Cross-attention</td>
+<td>&quot;Where source talks to target&quot;</td>
+<td>Decoder&#39;s Q × encoder&#39;s K/V. The only place encoder information enters the decoder.</td>
+</tr>
+<tr>
+<td>Span corruption</td>
+<td>&quot;T5&#39;s pretraining trick&quot;</td>
+<td>Replace random spans with sentinel tokens; decoder outputs the spans.</td>
+</tr>
+<tr>
+<td>Denoising objective</td>
+<td>&quot;BART&#39;s game&quot;</td>
+<td>Apply a noise function to the input, train the decoder to reconstruct the clean sequence.</td>
+</tr>
+<tr>
+<td>Sentinel token</td>
+<td>&quot;The <code>&lt;extra_id_N&gt;</code> placeholder&quot;</td>
+<td>Special tokens that tag corrupted spans in the source and re-tag them in the target.</td>
+</tr>
+<tr>
+<td>Flan</td>
+<td>&quot;Instruction-tuned T5&quot;</td>
+<td>T5 fine-tuned on &gt;1,800 tasks; made encoder-decoder competitive at instruction-following.</td>
+</tr>
+<tr>
+<td>Beam search</td>
+<td>&quot;Decoding strategy&quot;</td>
+<td>Keep top-k partial sequences at each step; standard for translation/summarization.</td>
+</tr>
+<tr>
+<td>Teacher forcing</td>
+<td>&quot;Training-time input&quot;</td>
+<td>During training, feed the true previous output token to the decoder, not the sampled one.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1910.10683">Raffel et al. (2019). Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</a> — T5.</li>
+<li><a href="https://arxiv.org/abs/1910.13461">Lewis et al. (2019). BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension</a> — BART.</li>
+<li><a href="https://arxiv.org/abs/2210.11416">Chung et al. (2022). Scaling Instruction-Finetuned Language Models</a> — Flan-T5.</li>
+<li><a href="https://arxiv.org/abs/2212.04356">Radford et al. (2022). Robust Speech Recognition via Large-Scale Weak Supervision</a> — Whisper, the canonical 2026 encoder-decoder.</li>
+<li><a href="https://github.com/huggingface/transformers/blob/main/src/transformers/models/t5/modeling_t5.py">HuggingFace <code>modeling_t5.py</code></a> — reference implementation.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-gpt-causal-language-modeling.html"><span>← Previous</span><b>gpt causal language modeling</b></a>
+      <a class="next" href="./09-vision-transformers.html"><span>Next →</span><b>vision transformers</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

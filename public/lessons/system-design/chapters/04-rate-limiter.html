@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 4: Design a Rate Limiter — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/04.%20Rate%20Limiter/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#benefits-of-rate-limiting">Benefits of Rate Limiting</a></li><li><a href="#step-1-understanding-the-problem">Step 1: Understanding the Problem</a></li><li><a href="#step-2-high-level-design">Step 2: High-Level Design</a></li><li><a href="#step-3-rate-limiting-algorithms">Step 3: Rate Limiting Algorithms</a></li><li><a href="#high-level-architecture">High-Level Architecture</a></li><li><a href="#advanced-considerations">Advanced Considerations</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 4: Design a Rate Limiter</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="29.5" y="32.2" width="30.2" height="30.2" rx="2" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55" transform="rotate(190 44.6 47.3)"/>
+        <rect x="24.7" y="127.9" width="28.9" height="28.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(173 39.2 142.4)"/>
+        <rect x="20.0" y="123.6" width="27.6" height="27.6" rx="2" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55" transform="rotate(155 33.8 137.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6b2b1f" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#6b2b1f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#6b2b1f" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 4: Design a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Rate Limiter</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>This chapter explores the design and implementation of a rate limiter—a system component used to control traffic rates sent by clients or services. Rate limiters are crucial for preventing abuse, reducing costs, and ensuring the stability of server resources. Examples of their use include limiting posts, account creations, and reward claims.</p>
+<h2 id="benefits-of-rate-limiting"><a class="anchor" href="#benefits-of-rate-limiting">#</a> Benefits of Rate Limiting</h2>
+<ul>
+<li><strong>Preventing DoS Attacks:</strong> Blocking excess calls to avoid resource starvation.</li>
+<li><strong>Cost Reduction:</strong> Limiting unnecessary requests to reduce server expenses.</li>
+<li><strong>Preventing Overloads:</strong> Filtering out excessive requests to stabilize server performance.</li>
+</ul>
+<h2 id="step-1-understanding-the-problem"><a class="anchor" href="#step-1-understanding-the-problem">#</a> Step 1: Understanding the Problem</h2>
+<h3 id="key-features"><a class="anchor" href="#key-features">#</a> Key Features</h3>
+<ul>
+<li>Server-side API rate limiter.</li>
+<li>Support for multiple throttle rules.</li>
+<li>Handle large-scale systems in distributed environments.</li>
+<li>Option for a standalone service or application-level code.</li>
+<li>Inform users when throttled.</li>
+</ul>
+<h3 id="requirements"><a class="anchor" href="#requirements">#</a> Requirements</h3>
+<ul>
+<li>Accurate request throttling.</li>
+<li>Minimal latency.</li>
+<li>Low memory usage.</li>
+<li>Distributed capability.</li>
+<li>Clear exception handling.</li>
+<li>High fault tolerance.</li>
+</ul>
+<h2 id="step-2-high-level-design"><a class="anchor" href="#step-2-high-level-design">#</a> Step 2: High-Level Design</h2>
+<h3 id="placement-options"><a class="anchor" href="#placement-options">#</a> Placement Options</h3>
+<div style="margin-left:2rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/rate_limiter_architecture.png"  alt="Rate Limiting Middleware Architecture" width="550">
+</div>
+
+<ol>
+<li><strong>Client-Side Implementation:</strong> Unreliable due to potential misuse.</li>
+<li><strong>Server-Side Implementation:</strong> Preferred for control and reliability.</li>
+<li><strong>Middleware (API Gateway):</strong> A flexible option for integrated rate limiting.</li>
+</ol>
+<h3 id="guidelines-for-placement"><a class="anchor" href="#guidelines-for-placement">#</a> Guidelines for Placement</h3>
+<ul>
+<li>Evaluate current tech stack and choose efficient options.</li>
+<li>Select appropriate algorithms based on business needs.</li>
+<li>Use an API gateway if microservices are employed.</li>
+<li>Opt for commercial solutions if resources are limited.</li>
+</ul>
+<h2 id="step-3-rate-limiting-algorithms"><a class="anchor" href="#step-3-rate-limiting-algorithms">#</a> Step 3: Rate Limiting Algorithms</h2>
+<h3 id="1-token-bucket"><a class="anchor" href="#1-token-bucket">#</a> 1. Token Bucket</h3>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/token-bucket.png"  alt="Token Bucket Algorithm" width="550">
+</div>
+
+<ul>
+<li><strong>Description:</strong> Tokens are added to a bucket at a fixed rate; each request consumes a token.</li>
+<li><strong>Parameters:</strong> Bucket size and refill rate.</li>
+<li><strong>Pros:</strong> Easy to implement, memory-efficient, supports traffic bursts.</li>
+<li><strong>Cons:</strong> Requires careful parameter tuning.</li>
+</ul>
+<h3 id="2-leaking-bucket"><a class="anchor" href="#2-leaking-bucket">#</a> 2. Leaking Bucket</h3>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/leaking-bucket.png"  alt="Leaking Bucket Algorithm" width="550">
+</div>
+
+<ul>
+<li><p><strong>Description:</strong> Processes requests at a fixed rate using a FIFO queue.</p>
+</li>
+<li><p><strong>Pros:</strong> Memory-efficient, stable outflow rate.</p>
+</li>
+<li><p><strong>Cons:</strong> Traffic bursts may delay recent requests.</p>
+<p>Example: <a href="https://github.com/uber-go/ratelimit">https://github.com/uber-go/ratelimit</a></p>
+</li>
+</ul>
+<h3 id="3-fixed-window-counter"><a class="anchor" href="#3-fixed-window-counter">#</a> 3. Fixed Window Counter</h3>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/fixed-window-counter.png"  alt="Fixed Window Counter" width="550">
+</div>
+
+<ul>
+<li><p><strong>Description:</strong> Divides time into fixed intervals and uses counters to limit requests.</p>
+</li>
+<li><p><strong>Pros:</strong> Simple, efficient for specific use cases.</p>
+</li>
+<li><p><strong>Cons:</strong> Traffic spikes at window edges can exceed limits.</p>
+</li>
+<li><p>Sudden burst of traffic at the edges of time windows
+could cause more requests than allowed quota to go through.</p>
+<img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/fixed-window-issue.png"  alt="Fixed Window Issue" width="550"></li>
+</ul>
+<h3 id="4-sliding-window-log"><a class="anchor" href="#4-sliding-window-log">#</a> 4. Sliding Window Log</h3>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/sliding-window-log.png"  alt="Sliding Window Log" width="550">
+</div>
+
+<ul>
+<li><strong>Description:</strong> Tracks timestamps to allow a rolling time window.</li>
+<li><strong>Pros:</strong> Accurate rate limiting.</li>
+<li><strong>Cons:</strong> High memory consumption.</li>
+</ul>
+<h3 id="5-sliding-window-counter"><a class="anchor" href="#5-sliding-window-counter">#</a> 5. Sliding Window Counter</h3>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/sliding-window-counter.png"  alt="Fixed Window Counter" width="550">
+</div>
+
+<ul>
+<li><strong>Description:</strong> Combines fixed window and sliding log methods for smoothing spikes.</li>
+<li><strong>Pros:</strong> Memory-efficient, handles traffic bursts.</li>
+<li><strong>Cons:</strong> Approximation may not be perfectly strict.</li>
+</ul>
+<h2 id="high-level-architecture"><a class="anchor" href="#high-level-architecture">#</a> High-Level Architecture</h2>
+<div style="margin-left:2rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/04.%20Rate%20Limiter/images/architecture.png" style="margin-left: 40px; margin-top: 40px; margin-bottom: 20px;" alt="Architecture" width="550">
+</div>
+
+<ul>
+<li><strong>Data Storage:</strong> Use in-memory caching (e.g., Redis) for fast counter operations.</li>
+<li><strong>Steps:</strong><ol>
+<li>Client sends request to middleware.</li>
+<li>Middleware checks counters in Redis.</li>
+<li>Request is processed or rejected based on limits.</li>
+</ol>
+</li>
+</ul>
+<h2 id="advanced-considerations"><a class="anchor" href="#advanced-considerations">#</a> Advanced Considerations</h2>
+<h3 id="distributed-environments"><a class="anchor" href="#distributed-environments">#</a> Distributed Environments</h3>
+<ul>
+<li><strong>Challenges:</strong> Race conditions, synchronization issues.</li>
+<li><strong>Solutions:</strong> Use locks, Lua scripts, or sorted sets in Redis. Employ centralized data stores for synchronization.</li>
+</ul>
+<h3 id="performance-optimizations"><a class="anchor" href="#performance-optimizations">#</a> Performance Optimizations</h3>
+<ul>
+<li>Multi-data center setups for reduced latency.</li>
+<li>Eventual consistency models for synchronization.</li>
+</ul>
+<h3 id="monitoring"><a class="anchor" href="#monitoring">#</a> Monitoring</h3>
+<ul>
+<li>Regular analytics to ensure algorithm effectiveness and adjust rules as needed.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-system-design-framework.html"><span>← Previous</span><b>system design framework</b></a>
+      <a class="next" href="./05-consistent-hashing.html"><span>Next →</span><b>consistent hashing</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

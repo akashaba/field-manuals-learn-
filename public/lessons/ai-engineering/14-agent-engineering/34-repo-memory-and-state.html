@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Repo Memory and Durable State — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/34-repo-memory-and-state/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Repo Memory and Durable State</h1>
+    <p class="lesson-sub">Chat history is volatile. The repo is durable. The workbench stores agent state in versioned files so the next session, the next agent, and the next reviewer all read from the same source of truth.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib + `jsonschema` optional)</b></div><div><span>Prerequisites</span><b>Phase 14 · 32 (Minimal Workbench)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 34">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="100.3" cy="97.9" r="8.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.9,97.8 L94.9,85.8 L103.0,97.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.1,92.5 L89.5,81.4 L96.9,92.5 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.4" y="117.8" width="25.9" height="25.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.4 130.7)"/>
+        <circle cx="20.9" cy="125.8" r="12.3" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">34</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Repo Memory and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Durable State</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Define what belongs in repo memory and what belongs in chat history.</li>
+<li>Author JSON Schemas for <code>agent_state.json</code> and <code>task_board.json</code>.</li>
+<li>Build a state manager that loads, validates, mutates, and persists state atomically.</li>
+<li>Use the schema to refuse bad writes before they corrupt the workbench.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The agent finishes a session. The chat closes. The next session opens and asks where to start. The model says &quot;let me check the files,&quot; reads stale notes, and re-does work that was already complete. Or worse, it rewrites a finished file because no one told it the file was finished.</p>
+<p>The workbench fix is repo memory: state lives in JSON files in the repo, written under a schema, persisted atomically, diff-friendly in code review. Chat is a transient feed; the repo is the system of record.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Agent[Agent Loop] --&gt; Manager[StateManager]
+  Manager --&gt; Schema[agent_state.schema.json]
+  Schema --&gt; Validate{valid?}
+  Validate -- yes --&gt; Write[agent_state.json]
+  Validate -- no --&gt; Reject[refuse + raise]
+  Write --&gt; Manager</pre></div><h3 id="what-belongs-in-repo-memory"><a class="anchor" href="#what-belongs-in-repo-memory">#</a> What belongs in repo memory</h3>
+<table>
+<thead>
+<tr>
+<th>Belongs</th>
+<th>Does not belong</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Active task id</td>
+<td>Raw chat transcripts</td>
+</tr>
+<tr>
+<td>Touched files this session</td>
+<td>Token-level reasoning traces</td>
+</tr>
+<tr>
+<td>Assumptions the agent made</td>
+<td>&quot;The user seemed frustrated&quot;</td>
+</tr>
+<tr>
+<td>Open blockers</td>
+<td>Sampled completions</td>
+</tr>
+<tr>
+<td>Next action</td>
+<td>Vendor-specific model ids</td>
+</tr>
+</tbody></table>
+<p>The test is durability: would this be useful three months from now in a CI rerun? If yes, repo. If no, telemetry.</p>
+<h3 id="schema-first-state"><a class="anchor" href="#schema-first-state">#</a> Schema-first state</h3>
+<p>JSON Schema is the contract. Without it, every agent invents new fields, every reviewer learns a new shape, and every CI script has to special-case past versions. With it, a bad write is a refused write.</p>
+<p>The schema covers:</p>
+<ul>
+<li>Required keys.</li>
+<li>Allowed <code>status</code> values.</li>
+<li>Forbidden values (e.g. <code>null</code> for arrays).</li>
+<li>Pattern constraints (task ids match <code>T-\d{3,}</code>).</li>
+<li>Version field for migrations.</li>
+</ul>
+<h3 id="atomic-writes"><a class="anchor" href="#atomic-writes">#</a> Atomic writes</h3>
+<p>State writes need to survive partial failures: write to a tempfile, fsync, rename over the target. The state file is the source of truth; a half-written one is worse than no file at all.</p>
+<h3 id="migrations"><a class="anchor" href="#migrations">#</a> Migrations</h3>
+<p>When the schema changes, ship a migration script next to the schema bump. The state file carries a <code>schema_version</code> field; the manager refuses to load a file from a version it cannot migrate.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">wb-state-persist</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>agent_state.schema.json</code> and <code>task_board.schema.json</code>.</li>
+<li>A stdlib-only validator (subset of JSON Schema: required, type, enum, pattern, items).</li>
+<li><code>StateManager.load</code>, <code>StateManager.update</code>, <code>StateManager.commit</code> with atomic temp-and-rename writes.</li>
+<li>A demo that mutates state, persists, reloads, and proves the round-trip.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script writes <code>workdir/agent_state.json</code> and <code>workdir/task_board.json</code>, mutates them across two turns, and prints the validated state at each step.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Four patterns turn the lesson&#39;s minimum into something a multi-agent monorepo can survive.</p>
+<p><strong>Atomic temp-and-rename is not optional.</strong> A March 2026 Hive project bug report documents the failure mode cleanly: <code>state.json</code> was written via <code>write_text()</code> and exceptions were caught and silenced. Partial writes left sessions resuming against corrupt state with no signal. The fix is always: <code>tempfile.mkstemp</code> in the same directory as the target, write, <code>fsync</code>, <code>os.replace</code> (atomic rename on POSIX and Windows). This lesson&#39;s <code>atomic_write</code> does exactly that.</p>
+<p><strong>Idempotency keys on every non-idempotent tool call.</strong> If an agent crashes after calling a tool but before checkpointing the result, recovery retries the tool call. Safe for reads; dangerous for emails, DB inserts, file uploads. The pattern: log every tool call ID before execution into a <code>pending_calls.jsonl</code>. On retry, check for the ID; if present, skip the call and use the cached result. Anthropic and LangChain both call this out in 2026 guidance; LangGraph&#39;s checkpointer persists pending writes for the same reason.</p>
+<p><strong>Separate large artifacts from state.</strong> Don&#39;t store CSVs, long transcripts, or generated files in <code>agent_state.json</code>. Save the artifact as a separate file (or upload to object storage) and keep only the path in state. Checkpoints stay small and fast; the artifacts grow independently.</p>
+<p><strong>Event sourcing for audit, snapshots for resume.</strong> Append to an event log (<code>state.events.jsonl</code>) on every mutation; periodically snapshot to <code>state.json</code>. Resume reads the snapshot, then replays any events after the snapshot&#39;s timestamp. This costs more disk but lets you replay agent decisions verbatim — essential when debugging long-horizon runs. The same shape Postgres uses internally for WAL.</p>
+<p><strong>Schema migrations or refuse to load.</strong> The <code>schema_version</code> integer is the contract. When the manager loads a file at an unknown version, it refuses to read. Ship a migration script next to the schema bump; <code>tools/migrate_state.py</code> runs idempotently on every startup.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In production:</p>
+<ul>
+<li><strong>LangGraph checkpointers.</strong> Same idea, different storage. The checkpointer persists graph state to SQLite, Postgres, or a custom backend. The schema this lesson teaches is what you reach for when the checkpointer dies and you need to read state by hand.</li>
+<li><strong>Letta memory blocks.</strong> Persistent blocks with structured schemas (Phase 14 · 08). Same discipline scoped to long-running personas.</li>
+<li><strong>OpenAI Agents SDK session store.</strong> Pluggable backends, schema-aware. The state file in this lesson is the local-file backend.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-state-schema.md</code> generates a project-specific JSON Schema pair (state + board), a Python <code>StateManager</code> wired to atomic writes, and a migration scaffold so the next schema bump does not break the workbench.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>last_human_touch</code> timestamp. Refuse any agent write within five seconds of a human edit.</li>
+<li>Extend the validator to support <code>oneOf</code> so a task can be either a build task or a review task with different required fields.</li>
+<li>Add a <code>schema_version</code> field and write the migration from v1 to v2 (rename <code>blockers</code> to <code>risks</code>).</li>
+<li>Move the storage backend from a local file to SQLite. Keep the <code>StateManager</code> API identical.</li>
+<li>Run two agents against the same state file with a 50 ms write race. What goes wrong and how does the atomic rename save you?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Repo memory</td>
+<td>&quot;Notes file&quot;</td>
+<td>State stored in tracked files in the repo, under schema</td>
+</tr>
+<tr>
+<td>Schema-first</td>
+<td>&quot;Validate inputs&quot;</td>
+<td>Define the contract before the writer, refuse drift</td>
+</tr>
+<tr>
+<td>Atomic write</td>
+<td>&quot;Just rename&quot;</td>
+<td>Write to temp, fsync, rename, so partial failures cannot corrupt</td>
+</tr>
+<tr>
+<td>Migration</td>
+<td>&quot;Schema bump&quot;</td>
+<td>A script that turns vN state into v(N+1) state</td>
+</tr>
+<tr>
+<td>System of record</td>
+<td>&quot;Source of truth&quot;</td>
+<td>The artifact the workbench treats as authoritative</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://json-schema.org/specification.html">JSON Schema specification</a></li>
+<li><a href="https://langchain-ai.github.io/langgraph/concepts/persistence/">LangGraph checkpointers</a></li>
+<li><a href="https://docs.letta.com/concepts/memory">Letta memory blocks</a></li>
+<li><a href="https://fast.io/resources/ai-agent-state-checkpointing/">Fast.io, AI Agent State Checkpointing: A Practical Guide</a> — schema-first checkpointing with idempotency</li>
+<li><a href="https://fast.io/resources/ai-agent-workflow-state-persistence/">Fast.io, AI Agent Workflow State Persistence: Best Practices 2026</a> — concurrency control, TTL, event sourcing</li>
+<li><a href="https://github.com/aden-hive/hive/issues/6263">Hive Issue #6263 — non-atomic state.json writes silently ignored</a> — the failure mode in a real project</li>
+<li><a href="https://eunomia.dev/blog/2025/05/11/checkpointrestore-systems-evolution-techniques-and-applications-in-ai-agents/">eunomia, Checkpoint/Restore Systems: Evolution, Techniques, Applications</a> — CR primitives from OS history applied to agents</li>
+<li><a href="https://www.indium.tech/blog/7-state-persistence-strategies-ai-agents-2026/">Indium, 7 State Persistence Strategies for Long-Running AI Agents in 2026</a></li>
+<li><a href="https://learn.microsoft.com/en-us/agent-framework/agents/conversations/compaction">Microsoft Agent Framework, Compaction</a> — vendor checkpoint manager</li>
+<li>Phase 14 · 08 — memory blocks and sleep-time compute</li>
+<li>Phase 14 · 32 — the three-file minimum this lesson schematizes</li>
+<li>Phase 14 · 40 — handoff packets read from the same schema</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./33-instructions-as-executable-constraints.html"><span>← Previous</span><b>instructions as executable constraints</b></a>
+      <a class="next" href="./35-initialization-scripts.html"><span>Next →</span><b>initialization scripts</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

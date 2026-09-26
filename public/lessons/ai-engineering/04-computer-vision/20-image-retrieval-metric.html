@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image Retrieval &amp; Metric Learning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/20-image-retrieval-metric/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Image Retrieval &amp; Metric Learning</h1>
+    <p class="lesson-sub">A retrieval system ranks candidates by a distance in embedding space. Metric learning is the discipline of shaping that space so the distances mean what you want.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 14 (ViT), Phase 4 Lesson 18 (CLIP)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 20">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="37.6" y="39.4" width="32.3" height="32.3" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(220 53.8 55.6)"/>
+        <rect x="32.8" y="35.1" width="31.1" height="31.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(202 48.3 50.7)"/>
+        <rect x="28.0" y="30.8" width="29.8" height="29.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(185 42.9 45.7)"/>
+        <rect x="23.2" y="126.6" width="28.5" height="28.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(167 37.5 140.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">20</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Image Retrieval &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Metric Learning</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain triplet, contrastive, and proxy-based metric learning losses and pick the right one for a given dataset</li>
+<li>Implement L2-normalisation and cosine similarity correctly and audit the difference between &quot;same item&quot; and &quot;same class&quot; retrieval</li>
+<li>Build a FAISS index, query it by text and by image, and report recall@K for a held-out query set</li>
+<li>Use DINOv2, CLIP, and SigLIP as off-the-shelf embedding backbones and know when each wins</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Retrieval is everywhere in production vision: duplicate detection, reverse image search, visual search (&quot;find similar products&quot;), face re-identification, person re-ID for surveillance, instance-level matching for e-commerce. The product question is always the same: &quot;given this query image, rank my catalogue.&quot;</p>
+<p>Two design decisions shape the whole system. The embedding — what model produces the vectors. The index — how to find nearest neighbours at scale. Both are commodity in 2026 (DINOv2 for the embedding, FAISS for the index), which raises the bar: the hard part is defining <em>what counts as similar</em> for your application, then shaping the embedding space so the distances match.</p>
+<p>That shaping is metric learning. It is a small but high-leverage discipline.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="retrieval-at-a-glance"><a class="anchor" href="#retrieval-at-a-glance">#</a> Retrieval at a glance</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    Q[&quot;Query image&lt;br/&gt;or text&quot;] --&gt; ENC[&quot;Encoder&quot;]
+    ENC --&gt; EMB[&quot;Query embedding&quot;]
+    EMB --&gt; IDX[&quot;FAISS index&quot;]
+    CAT[&quot;Catalogue images&quot;] --&gt; ENC2[&quot;Encoder (same)&quot;] --&gt; IDX_BUILD[&quot;Build index&quot;]
+    IDX_BUILD --&gt; IDX
+    IDX --&gt; RANK[&quot;Top-k nearest&lt;br/&gt;by cosine / L2&quot;]
+    RANK --&gt; OUT[&quot;Ranked results&quot;]
+
+    style ENC fill:#dbeafe,stroke:#2563eb
+    style IDX fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a</pre></div><h3 id="the-four-loss-families"><a class="anchor" href="#the-four-loss-families">#</a> The four loss families</h3>
+<table>
+<thead>
+<tr>
+<th>Loss</th>
+<th>Requires</th>
+<th>Pros</th>
+<th>Cons</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Contrastive</strong></td>
+<td>(anchor, positive) + negatives</td>
+<td>Simple, works with any pair label</td>
+<td>Slow to converge without many negatives</td>
+</tr>
+<tr>
+<td><strong>Triplet</strong></td>
+<td>(anchor, positive, negative)</td>
+<td>Intuitive; direct margin control</td>
+<td>Hard-triplet mining is expensive</td>
+</tr>
+<tr>
+<td><strong>NT-Xent / InfoNCE</strong></td>
+<td>Pairs + batch-mined negatives</td>
+<td>Scales to large batches</td>
+<td>Needs big batch or momentum queue</td>
+</tr>
+<tr>
+<td><strong>Proxy-based (ProxyNCA)</strong></td>
+<td>Class labels only</td>
+<td>Fast, stable, no mining</td>
+<td>Can overfit to proxies on small datasets</td>
+</tr>
+</tbody></table>
+<p>For most production use cases, start with a pretrained backbone and only add a metric-learning fine-tune if the off-the-shelf embeddings underperform on your test set.</p>
+<h3 id="triplet-loss-formally"><a class="anchor" href="#triplet-loss-formally">#</a> Triplet loss formally</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L = max(0, ||f(a) - f(p)||^2 - ||f(a) - f(n)||^2 + margin)</code></pre>
+      </div>
+    <p>Pull anchor <code>a</code> close to positive <code>p</code>, push it away from negative <code>n</code>, with a <code>margin</code> that ensures a gap. The three-image structure generalises to any similarity ordering.</p>
+<p>Mining matters: easy triplets (<code>n</code> already far from <code>a</code>) contribute zero loss; only hard triplets teach the network. Semi-hard mining (<code>n</code> further than <code>p</code> but within margin) is the 2016 FaceNet recipe and still dominates.</p>
+<h3 id="cosine-similarity-vs-l2"><a class="anchor" href="#cosine-similarity-vs-l2">#</a> Cosine similarity vs L2</h3>
+<p>Two metrics, two conventions:</p>
+<ul>
+<li><strong>Cosine</strong>: angle between vectors. Requires L2-normalised embeddings.</li>
+<li><strong>L2</strong>: Euclidean distance. Works on raw or normalised embeddings, but is usually paired with L2-normalised + squared L2.</li>
+</ul>
+<p>For most modern nets the two are equivalent: <code>||a - b||^2 = 2 - 2 cos(a, b)</code> when <code>||a|| = ||b|| = 1</code>. Pick the convention that matches your embedding training; mixing them silently changes what &quot;nearest&quot; means.</p>
+<h3 id="recallk"><a class="anchor" href="#recallk">#</a> Recall@K</h3>
+<p>The standard retrieval metric:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">recall@K = fraction of queries where at least one correct match is in the top K results</code></pre>
+      </div>
+    <p>Report recall@1, @5, @10 side by side. A recall@10 above 0.95 with recall@1 below 0.5 means the embedding space has the right structure but the ranking is noisy — try longer fine-tunes or a re-ranking step.</p>
+<p>For duplicate detection, precision@K matters more because every false positive is a user-visible mistake. For visual search, recall@K is the product signal.</p>
+<h3 id="faiss-in-one-paragraph"><a class="anchor" href="#faiss-in-one-paragraph">#</a> FAISS in one paragraph</h3>
+<p>Facebook AI Similarity Search. The de-facto library for nearest-neighbour search. Three index choices:</p>
+<ul>
+<li><code>IndexFlatIP</code> / <code>IndexFlatL2</code> — brute force, exact, no training. Use up to ~1M vectors.</li>
+<li><code>IndexIVFFlat</code> — partition into K cells, search only the closest few cells. Approximate, fast, needs training data.</li>
+<li><code>IndexHNSW</code> — graph-based, fastest for many queries, large index size.</li>
+</ul>
+<p>For 100k vectors you probably want <code>IndexFlatIP</code> on cosine similarity. For 10M you want <code>IndexIVFFlat</code>. For 100M+ combined with product quantisation (<code>IndexIVFPQ</code>).</p>
+<h3 id="instance-level-vs-category-level-retrieval"><a class="anchor" href="#instance-level-vs-category-level-retrieval">#</a> Instance-level vs category-level retrieval</h3>
+<p>Two very different problems with the same name:</p>
+<ul>
+<li><strong>Category-level</strong> — &quot;find cats in my catalogue.&quot; Class-conditional similarity; off-the-shelf CLIP / DINOv2 embeddings work well.</li>
+<li><strong>Instance-level</strong> — &quot;find <em>this exact product</em> in my catalogue.&quot; Needs fine-grained discrimination between visually similar objects of the same class; off-the-shelf embeddings under-perform; fine-tuning with metric learning matters.</li>
+</ul>
+<p>Always ask which one you are solving before picking a model.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">metric-embedding</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-triplet-loss"><a class="anchor" href="#step-1-triplet-loss">#</a> Step 1: Triplet loss</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn.functional as F
+
+def triplet_loss(anchor, positive, negative, margin=0.2):
+    d_ap = F.pairwise_distance(anchor, positive, p=2)
+    d_an = F.pairwise_distance(anchor, negative, p=2)
+    return F.relu(d_ap - d_an + margin).mean()</code></pre>
+      </div>
+    <p>One line. Works on L2-normalised or raw embeddings.</p>
+<h3 id="step-2-semi-hard-mining"><a class="anchor" href="#step-2-semi-hard-mining">#</a> Step 2: Semi-hard mining</h3>
+<p>Given a batch of embeddings and labels, find the hardest semi-hard negative for each anchor.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def semi_hard_negatives(emb, labels, margin=0.2):
+    dist = torch.cdist(emb, emb)
+    same_class = labels[:, None] == labels[None, :]
+    diff_class = ~same_class
+    N = emb.size(0)
+
+    positives = dist.clone()
+    positives[~same_class] = float(&quot;-inf&quot;)
+    positives.fill_diagonal_(float(&quot;-inf&quot;))
+    pos_idx = positives.argmax(dim=1)
+
+    semi_hard = dist.clone()
+    semi_hard[same_class] = float(&quot;inf&quot;)
+    d_ap = dist[torch.arange(N), pos_idx].unsqueeze(1)
+    semi_hard[dist &lt;= d_ap] = float(&quot;inf&quot;)
+    neg_idx = semi_hard.argmin(dim=1)
+
+    fallback_mask = semi_hard[torch.arange(N), neg_idx] == float(&quot;inf&quot;)
+    if fallback_mask.any():
+        hardest = dist.clone()
+        hardest[same_class] = float(&quot;inf&quot;)
+        neg_idx = torch.where(fallback_mask, hardest.argmin(dim=1), neg_idx)
+    return pos_idx, neg_idx</code></pre>
+      </div>
+    <p>Each anchor gets the hardest positive in-class and a semi-hard negative that is further than the positive but within margin.</p>
+<h3 id="step-3-recallk"><a class="anchor" href="#step-3-recallk">#</a> Step 3: Recall@K</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def recall_at_k(query_emb, gallery_emb, query_labels, gallery_labels, k=1):
+    sim = query_emb @ gallery_emb.T
+    _, top_k = sim.topk(k, dim=-1)
+    matches = (gallery_labels[top_k] == query_labels[:, None]).any(dim=-1)
+    return matches.float().mean().item()</code></pre>
+      </div>
+    <p>Top-k by inner product on L2-normalised embeddings equals top-k by cosine. Report the mean proportion of queries with at least one correct neighbour.</p>
+<h3 id="step-4-putting-it-together"><a class="anchor" href="#step-4-putting-it-together">#</a> Step 4: Putting it together</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+from torch.optim import Adam
+
+class Encoder(nn.Module):
+    def __init__(self, in_dim=128, emb_dim=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, 128), nn.ReLU(),
+            nn.Linear(128, emb_dim),
+        )
+
+    def forward(self, x):
+        return F.normalize(self.net(x), dim=-1)
+
+torch.manual_seed(0)
+num_classes = 6
+protos = F.normalize(torch.randn(num_classes, 128), dim=-1)
+
+def sample_batch(bs=32):
+    labels = torch.randint(0, num_classes, (bs,))
+    x = protos[labels] + 0.15 * torch.randn(bs, 128)
+    return x, labels
+
+enc = Encoder()
+opt = Adam(enc.parameters(), lr=3e-3)
+
+for step in range(200):
+    x, y = sample_batch(32)
+    emb = enc(x)
+    pos_idx, neg_idx = semi_hard_negatives(emb, y)
+    loss = triplet_loss(emb, emb[pos_idx], emb[neg_idx])
+    opt.zero_grad(); loss.backward(); opt.step()</code></pre>
+      </div>
+    <p>After a few hundred steps the embedding clusters form one cluster per class.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production stacks in 2026:</p>
+<ul>
+<li><strong>DINOv2 + FAISS</strong> — general-purpose visual retrieval. Works off-the-shelf.</li>
+<li><strong>CLIP + FAISS</strong> — when queries are text.</li>
+<li><strong>Fine-tuned DINOv2 + FAISS</strong> — instance-level retrieval, face re-ID, fashion, e-commerce.</li>
+<li><strong>Milvus / Weaviate / Qdrant</strong> — managed vector DB wrappers around FAISS or HNSW.</li>
+</ul>
+<p>For SOTA instance retrieval, the recipe is: DINOv2 backbone, add an embedding head, fine-tune with a triplet or InfoNCE loss on instance-labelled pairs, index in FAISS.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-retrieval-loss-picker.md</code> — a prompt that picks triplet / InfoNCE / ProxyNCA for a given retrieval problem.</li>
+<li><code>outputs/skill-recall-at-k-runner.md</code> — a skill that writes a clean evaluation harness for recall@K with train/val/gallery splits and proper data contract.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run the toy example above. Plot the embeddings with PCA before and after training to see the six clusters form.</li>
+<li><strong>(Medium)</strong> Add a ProxyNCA loss implementation: one learned &quot;proxy&quot; per class, standard cross-entropy on cosine similarity. Compare convergence speed vs triplet loss on the toy data.</li>
+<li><strong>(Hard)</strong> Take 1,000 ImageNet validation images, embed with DINOv2 via HuggingFace, build a FAISS flat index, and report recall@{1, 5, 10} against the same images as queries (should be 1.0) and against a held-out split with ImageNet labels as ground truth.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Metric learning</td>
+<td>&quot;Shape the space&quot;</td>
+<td>Training an encoder so distances in its output space reflect a target similarity</td>
+</tr>
+<tr>
+<td>Triplet loss</td>
+<td>&quot;Pull and push&quot;</td>
+<td>L = max(0, d(a, p) - d(a, n) + margin); the canonical metric-learning loss</td>
+</tr>
+<tr>
+<td>Semi-hard mining</td>
+<td>&quot;Useful negatives&quot;</td>
+<td>Negatives further from the anchor than the positive but within margin; empirically the most informative</td>
+</tr>
+<tr>
+<td>Proxy-based loss</td>
+<td>&quot;Class prototypes&quot;</td>
+<td>One learned proxy per class; cross-entropy over similarity-to-proxies; no pair mining</td>
+</tr>
+<tr>
+<td>Recall@K</td>
+<td>&quot;Top-K hit rate&quot;</td>
+<td>Fraction of queries with at least one correct result in the top K</td>
+</tr>
+<tr>
+<td>Instance retrieval</td>
+<td>&quot;Find this exact thing&quot;</td>
+<td>Fine-grained matching; off-the-shelf features usually underperform</td>
+</tr>
+<tr>
+<td>FAISS</td>
+<td>&quot;The NN library&quot;</td>
+<td>Facebook&#39;s nearest-neighbour library; supports exact and approximate indexes</td>
+</tr>
+<tr>
+<td>HNSW</td>
+<td>&quot;Graph index&quot;</td>
+<td>Hierarchical navigable small world; fast approximate NN with small memory overhead</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1503.03832">FaceNet: A Unified Embedding for Face Recognition (Schroff et al., 2015)</a> — the triplet loss / semi-hard mining paper</li>
+<li><a href="https://arxiv.org/abs/1703.07737">In Defense of the Triplet Loss for Person Re-Identification (Hermans et al., 2017)</a> — practical guide to triplet fine-tuning</li>
+<li><a href="https://github.com/facebookresearch/faiss/wiki">FAISS documentation</a> — every index, every trade-off</li>
+<li><a href="https://arxiv.org/abs/2010.06927">SMoT: Metric Learning Taxonomy (Kim et al., 2021)</a> — survey of modern losses and their connections</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./19-ocr-document-understanding.html"><span>← Previous</span><b>ocr document understanding</b></a>
+      <a class="next" href="./21-keypoint-pose.html"><span>Next →</span><b>keypoint pose</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

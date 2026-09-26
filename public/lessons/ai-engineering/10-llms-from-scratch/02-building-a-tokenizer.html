@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building a Tokenizer from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/02-building-a-tokenizer/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Building a Tokenizer from Scratch</h1>
+    <p class="lesson-sub">Lesson 01 gave you a toy. This lesson gives you a weapon.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 10, Lesson 01 (Tokenizers: BPE, WordPiece, SentencePiece)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="40.4" y="42.0" width="33.1" height="33.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(231 57.0 58.5)"/>
+        <rect x="35.6" y="37.7" width="31.8" height="31.8" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(213 51.5 53.6)"/>
+        <rect x="30.9" y="33.4" width="30.5" height="30.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(195 46.1 48.7)"/>
+        <rect x="26.1" y="129.1" width="29.3" height="29.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(177 40.7 143.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Building a Tokenizer</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">from Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build a production-grade BPE tokenizer that handles Unicode, whitespace normalization, and special tokens</li>
+<li>Implement byte-level fallback so the tokenizer can encode any input (including emoji, CJK, and code) without unknown tokens</li>
+<li>Add pre-tokenization regex patterns that split text at word boundaries before applying BPE merges</li>
+<li>Train a custom tokenizer on a corpus and evaluate its compression ratio against tiktoken on multilingual text</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your BPE tokenizer from Lesson 01 works on English text. Now throw Japanese at it. Or emoji. Or Python code with mixed tabs and spaces.</p>
+<p>It breaks.</p>
+<p>Not because BPE is wrong -- because the implementation is incomplete. A production tokenizer handles raw bytes in any encoding, normalizes Unicode before splitting, manages special tokens that never get merged, chains pre-tokenization with subword splitting, and does all of this fast enough to not bottleneck a training pipeline processing 15 trillion tokens.</p>
+<p>GPT-2&#39;s tokenizer has 50,257 tokens. Llama 3 has 128,256. GPT-4 has roughly 100,000. These are not toy numbers. The merge tables behind those vocabularies were trained on hundreds of gigabytes of text, and the surrounding machinery -- normalization, pre-tokenization, special token injection, chat template formatting -- is what separates a tokenizer that handles &quot;hello world&quot; from one that handles the entire internet.</p>
+<p>You are going to build that machinery.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-full-pipeline"><a class="anchor" href="#the-full-pipeline">#</a> The Full Pipeline</h3>
+<p>A production tokenizer is not one algorithm. It is a pipeline of five stages, each solving a different problem.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    A[Raw Text] --&gt; B[Normalize]
+    B --&gt; C[Pre-Tokenize]
+    C --&gt; D[BPE Merge]
+    D --&gt; E[Special Tokens]
+    E --&gt; F[Token IDs]
+
+    style A fill:#1a1a2e,stroke:#e94560,color:#fff
+    style B fill:#1a1a2e,stroke:#e94560,color:#fff
+    style C fill:#1a1a2e,stroke:#e94560,color:#fff
+    style D fill:#1a1a2e,stroke:#e94560,color:#fff
+    style E fill:#1a1a2e,stroke:#e94560,color:#fff
+    style F fill:#1a1a2e,stroke:#e94560,color:#fff</pre></div><p>Each stage has a specific job:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>What It Does</th>
+<th>Why It Matters</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Normalize</td>
+<td>NFKC Unicode, lowercase optional, strip accents optional</td>
+<td>&quot;fi&quot; ligature (U+FB01) becomes &quot;fi&quot; (two chars). Without this, same word gets different tokens.</td>
+</tr>
+<tr>
+<td>Pre-Tokenize</td>
+<td>Split text into chunks before BPE</td>
+<td>Prevents BPE from merging across word boundaries. &quot;the cat&quot; should never produce a token &quot;e c&quot;.</td>
+</tr>
+<tr>
+<td>BPE Merge</td>
+<td>Apply learned merge rules to byte sequences</td>
+<td>The core compression. Turns raw bytes into subword tokens.</td>
+</tr>
+<tr>
+<td>Special Tokens</td>
+<td>Inject [BOS], [EOS], [PAD], chat template markers</td>
+<td>These tokens have fixed IDs. They never participate in BPE merges. The model needs them for structure.</td>
+</tr>
+<tr>
+<td>ID Mapping</td>
+<td>Convert token strings to integer IDs</td>
+<td>The model sees integers, not strings.</td>
+</tr>
+</tbody></table>
+<h3 id="byte-level-bpe"><a class="anchor" href="#byte-level-bpe">#</a> Byte-Level BPE</h3>
+<p>Lesson 01&#39;s tokenizer operated on UTF-8 bytes. That was the right call. But we skipped something important: what happens when those bytes are not valid UTF-8?</p>
+<p>Byte-level BPE solves this by treating every possible byte value (0-255) as a valid token. Your base vocabulary is exactly 256 entries. Any file -- text, binary, corrupted -- can be tokenized without producing an unknown token.</p>
+<p>GPT-2 added a trick: map each byte to a printable Unicode character so the vocabulary stays human-readable. Byte 0x20 (space) becomes the character &quot;G&quot; in their mapping. This is purely cosmetic. The algorithm does not care.</p>
+<p>The real power: byte-level BPE handles every language on earth. Chinese characters are 3 UTF-8 bytes each. Japanese can be 3-4 bytes. Arabic, Devanagari, emoji -- all just byte sequences. The BPE algorithm finds patterns in these byte sequences exactly the same way it finds patterns in English ASCII bytes.</p>
+<h3 id="pre-tokenization"><a class="anchor" href="#pre-tokenization">#</a> Pre-Tokenization</h3>
+<p>Before BPE touches your text, you need to split it into chunks. This prevents the merge algorithm from creating tokens that span word boundaries.</p>
+<p>GPT-2 uses a regex pattern to split text:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&#39;(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+</code></pre>
+      </div>
+    <p>This pattern splits on contractions (&quot;don&#39;t&quot; becomes &quot;don&quot; + &quot;&#39;t&quot;), words with optional leading spaces, numbers, punctuation, and whitespace. The leading space is kept attached to the word -- so &quot;the cat&quot; becomes [&quot; the&quot;, &quot; cat&quot;], not [&quot;the&quot;, &quot; &quot;, &quot;cat&quot;].</p>
+<p>Llama uses SentencePiece, which skips regex entirely. It treats the raw byte stream as one long sequence and lets the BPE algorithm figure out the boundaries. This is simpler but gives BPE more freedom to create cross-word tokens.</p>
+<p>The choice matters. GPT-2&#39;s regex prevents the tokenizer from learning that &quot;the&quot; at the end of one word and &quot;the&quot; at the start of the next should merge. SentencePiece allows it, which sometimes produces more efficient compression but less interpretable tokens.</p>
+<h3 id="special-tokens"><a class="anchor" href="#special-tokens">#</a> Special Tokens</h3>
+<p>Every production tokenizer reserves token IDs for structural markers:</p>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Purpose</th>
+<th>Used By</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>[BOS]</code> / <code>&lt;s&gt;</code></td>
+<td>Beginning of sequence</td>
+<td>Llama 3, GPT</td>
+</tr>
+<tr>
+<td><code>[EOS]</code> / <code>&lt;/s&gt;</code></td>
+<td>End of sequence</td>
+<td>All models</td>
+</tr>
+<tr>
+<td><code>[PAD]</code></td>
+<td>Padding for batch alignment</td>
+<td>BERT, T5</td>
+</tr>
+<tr>
+<td><code>[UNK]</code></td>
+<td>Unknown token (byte-level BPE eliminates this)</td>
+<td>BERT, WordPiece</td>
+</tr>
+<tr>
+<td><code>&lt;|im_start|&gt;</code></td>
+<td>Chat message boundary start</td>
+<td>ChatGPT, Qwen</td>
+</tr>
+<tr>
+<td><code>&lt;|im_end|&gt;</code></td>
+<td>Chat message boundary end</td>
+<td>ChatGPT, Qwen</td>
+</tr>
+<tr>
+<td><code>&lt;|user|&gt;</code></td>
+<td>User turn marker</td>
+<td>Llama 3</td>
+</tr>
+<tr>
+<td><code>&lt;|assistant|&gt;</code></td>
+<td>Assistant turn marker</td>
+<td>Llama 3</td>
+</tr>
+</tbody></table>
+<p>Special tokens are never split by BPE. They are matched exactly before the merge algorithm runs, replaced with their fixed ID, and the surrounding text is tokenized normally.</p>
+<h3 id="chat-templates"><a class="anchor" href="#chat-templates">#</a> Chat Templates</h3>
+<p>This is where most people get confused and most implementations break.</p>
+<p>When you send messages to a chat model, the API accepts a list of messages:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">[
+  {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;You are helpful.&quot;},
+  {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Hello&quot;},
+  {&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;Hi there!&quot;}
+]</code></pre>
+      </div>
+    <p>The model does not see JSON. It sees a flat token sequence. The chat template converts messages into that flat sequence using special tokens. Every model does this differently:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Llama 3:
+&lt;|begin_of_text|&gt;&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;
+
+You are helpful.&lt;|eot_id|&gt;&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;
+
+Hello&lt;|eot_id|&gt;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;
+
+Hi there!&lt;|eot_id|&gt;
+
+ChatGPT:
+&lt;|im_start|&gt;system
+You are helpful.&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+Hello&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+Hi there!&lt;|im_end|&gt;</code></pre>
+      </div>
+    <p>Get the template wrong and the model produces garbage. It was trained on one exact format. Any deviation -- a missing newline, a swapped token, an extra space -- puts the input outside the training distribution.</p>
+<h3 id="speed"><a class="anchor" href="#speed">#</a> Speed</h3>
+<p>Python is too slow for production tokenization.</p>
+<p>tiktoken (OpenAI) is written in Rust with Python bindings. HuggingFace tokenizers is also Rust. SentencePiece is C++. These achieve 10-100x speedups over pure Python.</p>
+<p>For perspective: tokenizing 15 trillion tokens for Llama 3 pre-training at 1 million tokens per second (fast Python) would take 174 days. At 100 million tokens per second (Rust), it takes 1.7 days.</p>
+<p>You are building in Python to understand the algorithm. In production, you would use a compiled implementation and only touch the Python wrapper.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">weight-tying</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-byte-level-encoding"><a class="anchor" href="#step-1-byte-level-encoding">#</a> Step 1: Byte-Level Encoding</h3>
+<p>The foundation. Convert any string into a sequence of bytes, map each byte to a printable character for display, and reverse the process.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def bytes_to_tokens(text):
+    return list(text.encode(&quot;utf-8&quot;))
+
+def tokens_to_text(token_bytes):
+    return bytes(token_bytes).decode(&quot;utf-8&quot;, errors=&quot;replace&quot;)</code></pre>
+      </div>
+    <p>Test on multilingual text to see the byte counts:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">texts = [
+    (&quot;English&quot;, &quot;hello&quot;),
+    (&quot;Chinese&quot;, &quot;你好&quot;),
+    (&quot;Emoji&quot;, &quot;🔥&quot;),
+    (&quot;Mixed&quot;, &quot;hello你好🔥&quot;),
+]
+
+for label, text in texts:
+    b = bytes_to_tokens(text)
+    print(f&quot;{label}: {len(text)} chars -&gt; {len(b)} bytes -&gt; {b}&quot;)</code></pre>
+      </div>
+    <p>&quot;hello&quot; is 5 bytes. &quot;你好&quot; is 6 bytes (3 per character). The fire emoji is 4 bytes. The byte-level tokenizer does not care what language it is. Bytes are bytes.</p>
+<h3 id="step-2-pre-tokenizer-with-regex"><a class="anchor" href="#step-2-pre-tokenizer-with-regex">#</a> Step 2: Pre-Tokenizer with Regex</h3>
+<p>Split text into chunks using the GPT-2 regex pattern. Each chunk gets tokenized independently by BPE.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import re
+
+try:
+    import regex
+    GPT2_PATTERN = regex.compile(
+        r&quot;&quot;&quot;&#39;(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+&quot;&quot;&quot;
+    )
+except ImportError:
+    GPT2_PATTERN = re.compile(
+        r&quot;&quot;&quot;&#39;(?:[sdmt]|ll|ve|re)| ?[a-zA-Z]+| ?[0-9]+| ?[^\s\w]+|\s+(?!\S)|\s+&quot;&quot;&quot;
+    )
+
+def pre_tokenize(text):
+    return [match.group() for match in GPT2_PATTERN.finditer(text)]</code></pre>
+      </div>
+    <p>The <code>regex</code> module supports Unicode property escapes (<code>\p{L}</code> for letters, <code>\p{N}</code> for numbers). The standard library <code>re</code> module does not, so we fall back to ASCII character classes. For production multilingual tokenizers, install <code>regex</code>.</p>
+<p>Try it:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">print(pre_tokenize(&quot;Hello, world! Don&#39;t stop.&quot;))
+# [&#39; Hello&#39;, &#39;,&#39;, &#39; world&#39;, &#39;!&#39;, &quot; Don&quot;, &quot;&#39;t&quot;, &#39; stop&#39;, &#39;.&#39;]</code></pre>
+      </div>
+    <p>The leading space stays attached to the word. Contractions split at the apostrophe. Punctuation becomes its own chunk. BPE will never merge tokens across these boundaries.</p>
+<h3 id="step-3-bpe-on-byte-sequences"><a class="anchor" href="#step-3-bpe-on-byte-sequences">#</a> Step 3: BPE on Byte Sequences</h3>
+<p>The core algorithm from Lesson 01, but now operating on pre-tokenized chunks independently.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from collections import Counter
+
+def get_byte_pairs(chunks):
+    pairs = Counter()
+    for chunk in chunks:
+        byte_seq = list(chunk.encode(&quot;utf-8&quot;))
+        for i in range(len(byte_seq) - 1):
+            pairs[(byte_seq[i], byte_seq[i + 1])] += 1
+    return pairs
+
+def apply_merge(byte_seq, pair, new_id):
+    merged = []
+    i = 0
+    while i &lt; len(byte_seq):
+        if i &lt; len(byte_seq) - 1 and byte_seq[i] == pair[0] and byte_seq[i + 1] == pair[1]:
+            merged.append(new_id)
+            i += 2
+        else:
+            merged.append(byte_seq[i])
+            i += 1
+    return merged</code></pre>
+      </div>
+    <h3 id="step-4-special-token-handling"><a class="anchor" href="#step-4-special-token-handling">#</a> Step 4: Special Token Handling</h3>
+<p>Special tokens need exact matching and fixed IDs. They bypass BPE entirely.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SpecialTokenHandler:
+    def __init__(self):
+        self.special_tokens = {}
+        self.pattern = None
+
+    def add_token(self, token_str, token_id):
+        self.special_tokens[token_str] = token_id
+        escaped = [re.escape(t) for t in sorted(self.special_tokens.keys(), key=len, reverse=True)]
+        self.pattern = re.compile(&quot;|&quot;.join(escaped))
+
+    def split_with_specials(self, text):
+        if not self.pattern:
+            return [(text, False)]
+        parts = []
+        last_end = 0
+        for match in self.pattern.finditer(text):
+            if match.start() &gt; last_end:
+                parts.append((text[last_end:match.start()], False))
+            parts.append((match.group(), True))
+            last_end = match.end()
+        if last_end &lt; len(text):
+            parts.append((text[last_end:], False))
+        return parts</code></pre>
+      </div>
+    <h3 id="step-5-full-tokenizer-class"><a class="anchor" href="#step-5-full-tokenizer-class">#</a> Step 5: Full Tokenizer Class</h3>
+<p>Chain everything together: normalize, split on special tokens, pre-tokenize, BPE merge, map to IDs.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import unicodedata
+
+class ProductionTokenizer:
+    def __init__(self):
+        self.merges = {}
+        self.vocab = {i: bytes([i]) for i in range(256)}
+        self.special_handler = SpecialTokenHandler()
+        self.next_id = 256
+
+    def normalize(self, text):
+        return unicodedata.normalize(&quot;NFKC&quot;, text)
+
+    def train(self, text, num_merges):
+        text = self.normalize(text)
+        chunks = pre_tokenize(text)
+        chunk_bytes = [list(chunk.encode(&quot;utf-8&quot;)) for chunk in chunks]
+
+        for i in range(num_merges):
+            pairs = Counter()
+            for seq in chunk_bytes:
+                for j in range(len(seq) - 1):
+                    pairs[(seq[j], seq[j + 1])] += 1
+            if not pairs:
+                break
+            best = max(pairs, key=pairs.get)
+            new_id = self.next_id
+            self.next_id += 1
+            self.merges[best] = new_id
+            self.vocab[new_id] = self.vocab[best[0]] + self.vocab[best[1]]
+            chunk_bytes = [apply_merge(seq, best, new_id) for seq in chunk_bytes]
+
+    def add_special_token(self, token_str):
+        token_id = self.next_id
+        self.next_id += 1
+        self.special_handler.add_token(token_str, token_id)
+        self.vocab[token_id] = token_str.encode(&quot;utf-8&quot;)
+        return token_id
+
+    def encode(self, text):
+        text = self.normalize(text)
+        parts = self.special_handler.split_with_specials(text)
+        all_ids = []
+        for part_text, is_special in parts:
+            if is_special:
+                all_ids.append(self.special_handler.special_tokens[part_text])
+            else:
+                for chunk in pre_tokenize(part_text):
+                    byte_seq = list(chunk.encode(&quot;utf-8&quot;))
+                    for pair, new_id in self.merges.items():
+                        byte_seq = apply_merge(byte_seq, pair, new_id)
+                    all_ids.extend(byte_seq)
+        return all_ids
+
+    def decode(self, ids):
+        byte_parts = []
+        for token_id in ids:
+            if token_id in self.vocab:
+                byte_parts.append(self.vocab[token_id])
+        return b&quot;&quot;.join(byte_parts).decode(&quot;utf-8&quot;, errors=&quot;replace&quot;)
+
+    def vocab_size(self):
+        return len(self.vocab)</code></pre>
+      </div>
+    <h3 id="step-6-multilingual-test"><a class="anchor" href="#step-6-multilingual-test">#</a> Step 6: Multilingual Test</h3>
+<p>The real test. Throw English, Chinese, emoji, and code at it.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">corpus = (
+    &quot;The quick brown fox jumps over the lazy dog. &quot;
+    &quot;The quick brown fox runs through the forest. &quot;
+    &quot;Machine learning models process natural language. &quot;
+    &quot;Deep learning transforms how we build software. &quot;
+    &quot;def train(model, data): return model.fit(data) &quot;
+    &quot;def predict(model, x): return model(x) &quot;
+)
+
+tok = ProductionTokenizer()
+tok.train(corpus, num_merges=50)
+
+bos = tok.add_special_token(&quot;&lt;|begin|&gt;&quot;)
+eos = tok.add_special_token(&quot;&lt;|end|&gt;&quot;)
+
+test_texts = [
+    &quot;The quick brown fox.&quot;,
+    &quot;你好世界&quot;,
+    &quot;Hello 🌍 World&quot;,
+    &quot;def foo(x): return x + 1&quot;,
+    f&quot;&lt;|begin|&gt;Hello&lt;|end|&gt;&quot;,
+]
+
+for text in test_texts:
+    ids = tok.encode(text)
+    decoded = tok.decode(ids)
+    print(f&quot;Input:   {text}&quot;)
+    print(f&quot;Tokens:  {len(ids)} ids&quot;)
+    print(f&quot;Decoded: {decoded}&quot;)
+    print()</code></pre>
+      </div>
+    <p>Chinese characters produce 3 bytes each. The emoji produces 4 bytes. None of these crash the tokenizer. None produce unknown tokens. That is the power of byte-level BPE.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="comparing-real-tokenizers"><a class="anchor" href="#comparing-real-tokenizers">#</a> Comparing Real Tokenizers</h3>
+<p>Load the actual tokenizers from Llama 3, GPT-4, and Mistral. See how each handles the same multilingual paragraph.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import tiktoken
+
+gpt4_enc = tiktoken.get_encoding(&quot;cl100k_base&quot;)
+
+test_paragraph = &quot;Machine learning is powerful. 机器学习很强大。 L&#39;apprentissage automatique est puissant. 🤖💪&quot;
+
+tokens = gpt4_enc.encode(test_paragraph)
+pieces = [gpt4_enc.decode([t]) for t in tokens]
+print(f&quot;GPT-4 ({len(tokens)} tokens): {pieces}&quot;)</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoTokenizer
+
+llama_tok = AutoTokenizer.from_pretrained(&quot;meta-llama/Meta-Llama-3-8B&quot;)
+mistral_tok = AutoTokenizer.from_pretrained(&quot;mistralai/Mistral-7B-v0.1&quot;)
+
+for name, tok in [(&quot;Llama 3&quot;, llama_tok), (&quot;Mistral&quot;, mistral_tok)]:
+    tokens = tok.encode(test_paragraph)
+    pieces = tok.convert_ids_to_tokens(tokens)
+    print(f&quot;{name} ({len(tokens)} tokens): {pieces[:20]}...&quot;)</code></pre>
+      </div>
+    <p>You will see different token counts for the same text. Llama 3 with 128K vocabulary is more aggressive at merging common patterns. GPT-4 with 100K sits in the middle. Mistral with 32K produces more tokens but has a smaller embedding layer.</p>
+<p>The tradeoff is always the same: larger vocabulary means shorter sequences but more parameters.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces a prompt for building and debugging production tokenizers. See <code>outputs/prompt-tokenizer-builder.md</code>.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy:</strong> Add a <code>get_token_bytes(id)</code> method that shows the raw bytes for any token ID. Use it to inspect what your most common merged tokens actually represent.</li>
+<li><strong>Medium:</strong> Implement the Llama-style pre-tokenizer that splits on whitespace and digits but keeps leading spaces. Compare its vocabulary with the GPT-2 regex approach on the same corpus.</li>
+<li><strong>Hard:</strong> Add a chat template method that takes a list of <code>{&quot;role&quot;: ..., &quot;content&quot;: ...}</code> messages and produces the correct token sequence for the Llama 3 chat format. Test it against the HuggingFace implementation.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Byte-level BPE</td>
+<td>&quot;Tokenizer that works on bytes&quot;</td>
+<td>BPE with a base vocabulary of 256 byte values -- handles any input without unknown tokens</td>
+</tr>
+<tr>
+<td>Pre-tokenization</td>
+<td>&quot;Splitting before BPE&quot;</td>
+<td>Regex or rule-based splitting that prevents BPE from merging across word boundaries</td>
+</tr>
+<tr>
+<td>NFKC normalization</td>
+<td>&quot;Unicode cleanup&quot;</td>
+<td>Canonical decomposition followed by compatibility composition -- &quot;fi&quot; ligature becomes &quot;fi&quot;, fullwidth &quot;A&quot; becomes &quot;A&quot;</td>
+</tr>
+<tr>
+<td>Chat template</td>
+<td>&quot;How messages become tokens&quot;</td>
+<td>The exact format for converting a list of role/content messages into a flat token sequence -- model-specific and must match training format</td>
+</tr>
+<tr>
+<td>Special tokens</td>
+<td>&quot;Control tokens&quot;</td>
+<td>Reserved token IDs that bypass BPE -- [BOS], [EOS], [PAD], chat markers -- matched exactly before merge</td>
+</tr>
+<tr>
+<td>Fertility</td>
+<td>&quot;Tokens per word&quot;</td>
+<td>Ratio of output tokens to input words -- 1.3 for English in GPT-4, 2-3 for Korean, higher means wasted context</td>
+</tr>
+<tr>
+<td>tiktoken</td>
+<td>&quot;OpenAI tokenizer&quot;</td>
+<td>Rust BPE implementation with Python bindings -- 10-100x faster than pure Python</td>
+</tr>
+<tr>
+<td>Merge table</td>
+<td>&quot;The vocabulary&quot;</td>
+<td>Ordered list of byte-pair merges learned during training -- this IS the tokenizer&#39;s learned knowledge</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://github.com/openai/tiktoken">OpenAI tiktoken source</a> -- Rust BPE implementation used by GPT-3.5/4</li>
+<li><a href="https://github.com/huggingface/tokenizers">HuggingFace tokenizers</a> -- Rust tokenizer library supporting BPE, WordPiece, Unigram</li>
+<li><a href="https://arxiv.org/abs/2407.21783">Llama 3 paper (Meta, 2024)</a> -- details on 128K vocabulary and tokenizer training</li>
+<li><a href="https://arxiv.org/abs/1808.06226">SentencePiece (Kudo &amp; Richardson, 2018)</a> -- language-agnostic tokenization</li>
+<li><a href="https://github.com/openai/gpt-2/blob/master/src/encoder.py">GPT-2 tokenizer source</a> -- the original byte-to-Unicode mapping</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-tokenizers.html"><span>← Previous</span><b>tokenizers</b></a>
+      <a class="next" href="./03-data-pipelines.html"><span>Next →</span><b>data pipelines</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Advanced RAG (Chunking, Reranking, Hybrid Search) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/07-advanced-rag/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Advanced RAG (Chunking, Reranking, Hybrid Search)</h1>
+    <p class="lesson-sub">Basic RAG retrieves the top-k most similar chunks. That works for simple questions. It falls apart for multi-hop reasoning, ambiguous queries, and large corpora. Advanced RAG is the difference between a demo that works on 10 documents and a system that works on 10 million.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11, Lesson 06 (RAG)</b></div><div><span>Time</span><b>~90 minutes</b></div><div><span>Related</span><b>Phase 5 · 23 (Chunking Strategies for RAG) covers all six chunking algorithms — recursive, semantic, sentence, parent-document, late chunking, contextual retrieval — with Vectara/Anthropic benchmarks. This lesson builds on top: hybrid search, reranking, query transformation.</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.1,77.0 L65.7,50.6 L83.3,77.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.3" y="44.6" width="33.9" height="33.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(242 60.3 61.5)"/>
+        <rect x="38.6" y="40.3" width="32.6" height="32.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(224 54.9 56.6)"/>
+        <rect x="33.8" y="36.0" width="31.3" height="31.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(206 49.4 51.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Advanced RAG</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(Chunking…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement advanced chunking strategies (semantic, recursive, parent-child) that preserve document structure and context</li>
+<li>Build a hybrid search pipeline combining BM25 keyword matching with semantic vector search and a cross-encoder reranker</li>
+<li>Apply query transformation techniques (HyDE, multi-query, step-back) to improve retrieval on ambiguous or complex questions</li>
+<li>Diagnose and fix common RAG failures: wrong chunk retrieved, answer not in context, multi-hop reasoning breakdown</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You built a basic RAG pipeline in Lesson 06. It works for straightforward questions on a small corpus. Now try these:</p>
+<p><strong>Ambiguous query</strong>: &quot;What was revenue last quarter?&quot; Semantic search returns chunks about revenue strategy, revenue projections, and the CFO&#39;s thoughts on revenue growth. All semantically similar to the word &quot;revenue.&quot; None containing the actual number. The correct chunk says &quot;$47.2M in Q3 2025&quot; but uses the word &quot;earnings&quot; instead of &quot;revenue.&quot; The embedding model thinks &quot;revenue strategy&quot; is closer to the query than &quot;Q3 earnings were $47.2M.&quot;</p>
+<p><strong>Multi-hop question</strong>: &quot;Which team had the highest customer satisfaction score improvement?&quot; This requires finding the satisfaction scores for each team, comparing them, and identifying the maximum. No single chunk contains the answer. The information is scattered across team reports.</p>
+<p><strong>Large corpus problem</strong>: You have 2 million chunks. The correct answer is in chunk #1,847,293. Your top-5 retrieval pulls chunks #14, #89,201, #1,200,000, #44, and #901,333. Close in embedding space, but none containing the answer. At this scale, approximate nearest neighbor search introduces enough error that relevant results get pushed out of the top-k.</p>
+<p>Basic RAG fails because vector similarity is not the same as relevance. A chunk can be semantically similar to a query without being useful for answering it. Advanced RAG addresses this with four techniques: hybrid search (add keyword matching), reranking (score candidates more carefully), query transformation (fix the query before searching), and better chunking (retrieve at the right granularity).</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="hybrid-search-semantic-keyword"><a class="anchor" href="#hybrid-search-semantic-keyword">#</a> Hybrid Search: Semantic + Keyword</h3>
+<p>Semantic search (vector similarity) is good at understanding meaning. &quot;How do I cancel my subscription?&quot; matches &quot;Steps to terminate your plan&quot; even though they share no words. But it misses exact matches. &quot;Error code E-4021&quot; might not match a chunk containing &quot;E-4021&quot; if the embedding model treats it as noise.</p>
+<p>Keyword search (BM25) is the opposite. It excels at exact matches. &quot;E-4021&quot; matches perfectly. But &quot;cancel my subscription&quot; returns zero results if the document says &quot;terminate your plan.&quot;</p>
+<p>Hybrid search runs both, then merges the results.</p>
+<p><strong>BM25</strong> (Best Matching 25) is the standard keyword search algorithm. It has been the backbone of search engines since the 1990s. The formula:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">BM25(q, d) = sum over terms t in q:
+    IDF(t) * (tf(t,d) * (k1 + 1)) / (tf(t,d) + k1 * (1 - b + b * |d| / avgdl))</code></pre>
+      </div>
+    <p>Where tf(t,d) is the term frequency of t in document d, IDF(t) is the inverse document frequency, |d| is the document length, avgdl is the average document length, k1 controls term frequency saturation (default 1.2), and b controls length normalization (default 0.75).</p>
+<p>In plain terms: BM25 scores documents higher when they contain query terms (especially rare ones), but with diminishing returns for repeated terms. A document with the word &quot;revenue&quot; 50 times is not 50x more relevant than one with it once.</p>
+<h3 id="reciprocal-rank-fusion-rrf"><a class="anchor" href="#reciprocal-rank-fusion-rrf">#</a> Reciprocal Rank Fusion (RRF)</h3>
+<p>You have two ranked lists: one from vector search, one from BM25. How do you combine them? Reciprocal Rank Fusion is the standard approach.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">RRF_score(d) = sum over rankings R:
+    1 / (k + rank_R(d))</code></pre>
+      </div>
+    <p>Where k is a constant (typically 60) that prevents the top-ranked result from dominating.</p>
+<p>A document ranked #1 in vector search and #5 in BM25 gets: 1/(60+1) + 1/(60+5) = 0.0164 + 0.0154 = 0.0318</p>
+<p>A document ranked #3 in vector search and #2 in BM25 gets: 1/(60+3) + 1/(60+2) = 0.0159 + 0.0161 = 0.0320</p>
+<p>RRF naturally balances the two signals. A document that ranks highly in both lists gets the best score. A document that ranks #1 in one list but is absent from the other gets a moderate score. This is robust because it uses ranks, not raw scores, so differences in score distributions between the two systems do not matter.</p>
+<h3 id="reranking"><a class="anchor" href="#reranking">#</a> Reranking</h3>
+<p>Retrieval (whether vector, keyword, or hybrid) is fast but imprecise. It uses bi-encoders: the query and each document are embedded independently, then compared. The embeddings are computed once and cached. This scales to millions of documents.</p>
+<p>Reranking uses cross-encoders: the query and a candidate document are fed together into a model that outputs a relevance score. The model sees both texts simultaneously and can capture fine-grained interactions between them. A cross-encoder can understand that &quot;What were Q3 earnings?&quot; is highly relevant to a chunk containing &quot;$47.2M in Q3&quot; even if a bi-encoder missed the connection.</p>
+<p>The trade-off: cross-encoders are 100-1000x slower than bi-encoders because they process the query-document pair jointly. You cannot pre-compute cross-encoder scores for a million documents. The solution: retrieve a larger candidate set (top-50 from hybrid search), then rerank with a cross-encoder to get the final top-5.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    Q[&quot;Query&quot;] --&gt; H[&quot;Hybrid Search&quot;]
+    H --&gt; C50[&quot;Top 50 candidates&quot;]
+    C50 --&gt; RR[&quot;Cross-Encoder Reranker&quot;]
+    RR --&gt; C5[&quot;Top 5 final results&quot;]
+    C5 --&gt; P[&quot;Build prompt&quot;]
+    P --&gt; LLM[&quot;Generate answer&quot;]</pre></div><p>Common reranking models (2026 lineup):</p>
+<ul>
+<li>Cohere Rerank 3.5: managed API, multilingual, best recall gain on mixed corpora</li>
+<li>Voyage rerank-2.5: managed API, lowest latency of the hosted options</li>
+<li>Jina-Reranker-v2 Multilingual: open-weight, 100+ languages</li>
+<li>bge-reranker-v2-m3: open-weight, strong baseline</li>
+<li>cross-encoder/ms-marco-MiniLM-L-6-v2: open-weight, runs on CPU for prototyping</li>
+<li>ColBERTv2 / Jina-ColBERT-v2: late-interaction multi-vector rerankers — O(tokens) not O(docs) at scoring time</li>
+</ul>
+<h3 id="query-transformation"><a class="anchor" href="#query-transformation">#</a> Query Transformation</h3>
+<p>Sometimes the problem is not retrieval but the query itself. &quot;What was that thing about the new policy change?&quot; is a terrible search query. It contains no specific terms. The embedding is vague. No retrieval system can find the right documents from this.</p>
+<p><strong>Query rewriting</strong>: rephrase the user&#39;s query into a better search query. An LLM can do this:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User: &quot;What was that thing about the new policy change?&quot;
+Rewritten: &quot;Recent policy changes and updates&quot;</code></pre>
+      </div>
+    <p><strong>HyDE (Hypothetical Document Embeddings)</strong>: instead of searching with the query, generate a hypothetical answer, embed that, and search for similar real documents.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;What is the refund policy for enterprise?&quot;
+Hypothetical answer: &quot;Enterprise customers are eligible for a full refund
+within 60 days of purchase. Refunds are pro-rated based on the remaining
+subscription period and processed within 5-7 business days.&quot;</code></pre>
+      </div>
+    <p>Embed the hypothetical answer and search for real documents similar to it. The intuition: the hypothetical answer lives closer in embedding space to the real answer than the original question does. Questions and answers have different linguistic structures. By generating a hypothetical answer, you bridge the gap between &quot;question space&quot; and &quot;answer space&quot; in the embedding.</p>
+<p>HyDE adds one LLM call before retrieval. This increases latency by 500-2000ms. Worth it when retrieval quality is poor on raw queries.</p>
+<h3 id="parent-child-chunking"><a class="anchor" href="#parent-child-chunking">#</a> Parent-Child Chunking</h3>
+<p>Standard chunking forces a trade-off: small chunks for precise retrieval, large chunks for sufficient context. Parent-child chunking eliminates this trade-off.</p>
+<p>Index small chunks (128 tokens) for retrieval. When a small chunk is retrieved, return its parent chunk (512 tokens) for the prompt. The small chunk matches the query precisely. The parent chunk provides enough context for the LLM to generate a good answer.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    P[&quot;Parent chunk (512 tokens)&lt;br/&gt;Full section about refund policy&quot;]
+    C1[&quot;Child chunk (128 tokens)&lt;br/&gt;Standard plan: 30-day refund&quot;]
+    C2[&quot;Child chunk (128 tokens)&lt;br/&gt;Enterprise: 60-day pro-rated&quot;]
+    C3[&quot;Child chunk (128 tokens)&lt;br/&gt;Processing time: 5-7 days&quot;]
+    C4[&quot;Child chunk (128 tokens)&lt;br/&gt;How to submit a request&quot;]
+
+    P --&gt; C1
+    P --&gt; C2
+    P --&gt; C3
+    P --&gt; C4
+
+    Q[&quot;Query: enterprise refund?&quot;] -.-&gt;|&quot;matches child&quot;| C2
+    C2 -.-&gt;|&quot;return parent&quot;| P</pre></div><p>The query &quot;enterprise refund?&quot; matches child chunk C2 precisely. But the prompt receives the full parent chunk P, which includes the surrounding context about processing time and submission process.</p>
+<h3 id="metadata-filtering"><a class="anchor" href="#metadata-filtering">#</a> Metadata Filtering</h3>
+<p>Before running vector search, filter the corpus by metadata: date, source, category, author, language. This reduces the search space and prevents irrelevant results.</p>
+<p>&quot;What changed in the security policy last month?&quot; should only search documents from the last 30 days in the security category. Without metadata filtering, you search the entire corpus and might retrieve a 2-year-old security document that happens to be semantically similar.</p>
+<p>Production RAG systems store metadata alongside each chunk: source document, creation date, category, author, version. Vector databases support pre-filtering by metadata before similarity search, which is critical for performance at scale.</p>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<p>You built a RAG system. How do you know if it works? Three metrics:</p>
+<p><strong>Retrieval relevance (Recall@k)</strong>: for a set of test questions with known relevant documents, what percentage of relevant documents appear in the top-k results? If the answer to a question is in chunk #47, does chunk #47 appear in the top-5?</p>
+<p><strong>Faithfulness</strong>: is the generated answer grounded in the retrieved documents? If the retrieved chunks say &quot;60-day refund window&quot; and the model says &quot;90-day refund window,&quot; that is a faithfulness failure. The model hallucinated despite having the correct context.</p>
+<p><strong>Answer correctness</strong>: does the generated answer match the expected answer? This is the end-to-end metric. It combines retrieval quality and generation quality.</p>
+<p>A simple faithfulness check: take each claim in the generated answer and verify it appears (in substance) in the retrieved chunks. If the answer contains a fact not in any retrieved chunk, it is likely hallucinated.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph &quot;Evaluation Framework&quot;
+        Q[&quot;Test questions&lt;br/&gt;+ expected answers&lt;br/&gt;+ relevant doc IDs&quot;]
+        Q --&gt; Ret[&quot;Retrieval evaluation&lt;br/&gt;Recall@k: are right&lt;br/&gt;docs retrieved?&quot;]
+        Q --&gt; Faith[&quot;Faithfulness evaluation&lt;br/&gt;Is answer grounded&lt;br/&gt;in retrieved docs?&quot;]
+        Q --&gt; Correct[&quot;Correctness evaluation&lt;br/&gt;Does answer match&lt;br/&gt;expected answer?&quot;]
+    end</pre></div>
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">agentic-rag-loop</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-bm25-implementation"><a class="anchor" href="#step-1-bm25-implementation">#</a> Step 1: BM25 Implementation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+from collections import Counter
+
+class BM25:
+    def __init__(self, k1=1.2, b=0.75):
+        self.k1 = k1
+        self.b = b
+        self.docs = []
+        self.doc_lengths = []
+        self.avg_dl = 0
+        self.doc_freqs = {}
+        self.n_docs = 0
+
+    def index(self, documents):
+        self.docs = documents
+        self.n_docs = len(documents)
+        self.doc_lengths = []
+        self.doc_freqs = {}
+
+        for doc in documents:
+            words = doc.lower().split()
+            self.doc_lengths.append(len(words))
+            unique_words = set(words)
+            for word in unique_words:
+                self.doc_freqs[word] = self.doc_freqs.get(word, 0) + 1
+
+        self.avg_dl = sum(self.doc_lengths) / self.n_docs if self.n_docs else 1
+
+    def score(self, query, doc_idx):
+        query_words = query.lower().split()
+        doc_words = self.docs[doc_idx].lower().split()
+        doc_len = self.doc_lengths[doc_idx]
+        word_counts = Counter(doc_words)
+        score = 0.0
+
+        for term in query_words:
+            if term not in word_counts:
+                continue
+            tf = word_counts[term]
+            df = self.doc_freqs.get(term, 0)
+            idf = math.log((self.n_docs - df + 0.5) / (df + 0.5) + 1)
+            numerator = tf * (self.k1 + 1)
+            denominator = tf + self.k1 * (1 - self.b + self.b * doc_len / self.avg_dl)
+            score += idf * numerator / denominator
+
+        return score
+
+    def search(self, query, top_k=10):
+        scores = [(i, self.score(query, i)) for i in range(self.n_docs)]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]</code></pre>
+      </div>
+    <h3 id="step-2-reciprocal-rank-fusion"><a class="anchor" href="#step-2-reciprocal-rank-fusion">#</a> Step 2: Reciprocal Rank Fusion</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def reciprocal_rank_fusion(ranked_lists, k=60):
+    scores = {}
+    for ranked_list in ranked_lists:
+        for rank, (doc_id, _) in enumerate(ranked_list):
+            if doc_id not in scores:
+                scores[doc_id] = 0.0
+            scores[doc_id] += 1.0 / (k + rank + 1)
+    fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return fused</code></pre>
+      </div>
+    <h3 id="step-3-hybrid-search-pipeline"><a class="anchor" href="#step-3-hybrid-search-pipeline">#</a> Step 3: Hybrid Search Pipeline</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def hybrid_search(query, chunks, vector_embeddings, vocab, idf, bm25_index, top_k=5, fusion_k=60):
+    query_emb = tfidf_embed(query, vocab, idf)
+    vector_results = search(query_emb, vector_embeddings, top_k=top_k * 3)
+    bm25_results = bm25_index.search(query, top_k=top_k * 3)
+    fused = reciprocal_rank_fusion([vector_results, bm25_results], k=fusion_k)
+    return fused[:top_k]</code></pre>
+      </div>
+    <h3 id="step-4-simple-reranker"><a class="anchor" href="#step-4-simple-reranker">#</a> Step 4: Simple Reranker</h3>
+<p>In production, you would use a cross-encoder model. Here we build a reranker that scores query-document relevance using word overlap, term importance, and phrase matching.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rerank(query, candidates, chunks):
+    query_words = set(query.lower().split())
+    stop_words = {&quot;the&quot;, &quot;a&quot;, &quot;an&quot;, &quot;is&quot;, &quot;are&quot;, &quot;was&quot;, &quot;were&quot;, &quot;what&quot;, &quot;how&quot;,
+                  &quot;why&quot;, &quot;when&quot;, &quot;where&quot;, &quot;do&quot;, &quot;does&quot;, &quot;for&quot;, &quot;of&quot;, &quot;in&quot;, &quot;to&quot;,
+                  &quot;and&quot;, &quot;or&quot;, &quot;on&quot;, &quot;at&quot;, &quot;by&quot;, &quot;it&quot;, &quot;its&quot;, &quot;this&quot;, &quot;that&quot;,
+                  &quot;with&quot;, &quot;from&quot;, &quot;be&quot;, &quot;has&quot;, &quot;have&quot;, &quot;had&quot;, &quot;not&quot;, &quot;but&quot;}
+    query_terms = query_words - stop_words
+
+    scored = []
+    for doc_id, initial_score in candidates:
+        chunk = chunks[doc_id].lower()
+        chunk_words = set(chunk.split())
+
+        term_overlap = len(query_terms &amp; chunk_words)
+
+        query_bigrams = set()
+        q_list = [w for w in query.lower().split() if w not in stop_words]
+        for i in range(len(q_list) - 1):
+            query_bigrams.add(q_list[i] + &quot; &quot; + q_list[i + 1])
+        bigram_matches = sum(1 for bg in query_bigrams if bg in chunk)
+
+        position_boost = 0
+        for term in query_terms:
+            pos = chunk.find(term)
+            if pos != -1 and pos &lt; len(chunk) // 3:
+                position_boost += 0.5
+
+        rerank_score = (
+            term_overlap * 1.0
+            + bigram_matches * 2.0
+            + position_boost
+            + initial_score * 5.0
+        )
+        scored.append((doc_id, rerank_score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored</code></pre>
+      </div>
+    <h3 id="step-5-hyde-hypothetical-document-embeddings"><a class="anchor" href="#step-5-hyde-hypothetical-document-embeddings">#</a> Step 5: HyDE (Hypothetical Document Embeddings)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def hyde_generate_hypothesis(query):
+    templates = {
+        &quot;what&quot;: &quot;The answer to &#39;{query}&#39; is as follows: Based on our documentation, {topic} involves specific policies and procedures that define how the process works.&quot;,
+        &quot;how&quot;: &quot;To address &#39;{query}&#39;: The process involves several steps. First, you need to initiate the request. Then, the system processes it according to the defined rules.&quot;,
+        &quot;default&quot;: &quot;Regarding &#39;{query}&#39;: Our records indicate specific details and policies related to this topic that provide a comprehensive answer.&quot;
+    }
+    query_lower = query.lower()
+    if query_lower.startswith(&quot;what&quot;):
+        template = templates[&quot;what&quot;]
+    elif query_lower.startswith(&quot;how&quot;):
+        template = templates[&quot;how&quot;]
+    else:
+        template = templates[&quot;default&quot;]
+
+    topic_words = [w for w in query.lower().split()
+                   if w not in {&quot;what&quot;, &quot;is&quot;, &quot;the&quot;, &quot;how&quot;, &quot;do&quot;, &quot;does&quot;, &quot;a&quot;, &quot;an&quot;,
+                                &quot;for&quot;, &quot;of&quot;, &quot;to&quot;, &quot;in&quot;, &quot;on&quot;, &quot;at&quot;, &quot;by&quot;, &quot;and&quot;, &quot;or&quot;}]
+    topic = &quot; &quot;.join(topic_words) if topic_words else &quot;this topic&quot;
+
+    return template.format(query=query, topic=topic)
+
+
+def hyde_search(query, chunks, vector_embeddings, vocab, idf, top_k=5):
+    hypothesis = hyde_generate_hypothesis(query)
+    hypothesis_emb = tfidf_embed(hypothesis, vocab, idf)
+    results = search(hypothesis_emb, vector_embeddings, top_k)
+    return results, hypothesis</code></pre>
+      </div>
+    <h3 id="step-6-parent-child-chunking"><a class="anchor" href="#step-6-parent-child-chunking">#</a> Step 6: Parent-Child Chunking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def create_parent_child_chunks(text, parent_size=200, child_size=50):
+    words = text.split()
+    parents = []
+    children = []
+    child_to_parent = {}
+
+    parent_idx = 0
+    start = 0
+    while start &lt; len(words):
+        parent_end = min(start + parent_size, len(words))
+        parent_text = &quot; &quot;.join(words[start:parent_end])
+        parents.append(parent_text)
+
+        child_start = start
+        while child_start &lt; parent_end:
+            child_end = min(child_start + child_size, parent_end)
+            child_text = &quot; &quot;.join(words[child_start:child_end])
+            child_idx = len(children)
+            children.append(child_text)
+            child_to_parent[child_idx] = parent_idx
+            child_start += child_size
+
+        parent_idx += 1
+        start += parent_size
+
+    return parents, children, child_to_parent</code></pre>
+      </div>
+    <h3 id="step-7-faithfulness-evaluation"><a class="anchor" href="#step-7-faithfulness-evaluation">#</a> Step 7: Faithfulness Evaluation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def evaluate_faithfulness(answer, retrieved_chunks):
+    answer_sentences = [s.strip() for s in answer.split(&quot;.&quot;) if len(s.strip()) &gt; 10]
+    if not answer_sentences:
+        return 1.0, []
+
+    grounded = 0
+    ungrounded = []
+    context = &quot; &quot;.join(retrieved_chunks).lower()
+
+    for sentence in answer_sentences:
+        words = set(sentence.lower().split())
+        stop_words = {&quot;the&quot;, &quot;a&quot;, &quot;an&quot;, &quot;is&quot;, &quot;are&quot;, &quot;was&quot;, &quot;were&quot;, &quot;and&quot;, &quot;or&quot;,
+                      &quot;to&quot;, &quot;of&quot;, &quot;in&quot;, &quot;for&quot;, &quot;on&quot;, &quot;at&quot;, &quot;by&quot;, &quot;it&quot;, &quot;this&quot;, &quot;that&quot;}
+        content_words = words - stop_words
+        if not content_words:
+            grounded += 1
+            continue
+
+        matched = sum(1 for w in content_words if w in context)
+        ratio = matched / len(content_words) if content_words else 0
+
+        if ratio &gt;= 0.5:
+            grounded += 1
+        else:
+            ungrounded.append(sentence)
+
+    score = grounded / len(answer_sentences) if answer_sentences else 1.0
+    return score, ungrounded
+
+
+def evaluate_retrieval_recall(queries_with_relevant, retrieval_fn, k=5):
+    total_recall = 0.0
+    results = []
+
+    for query, relevant_indices in queries_with_relevant:
+        retrieved = retrieval_fn(query, k)
+        retrieved_indices = set(idx for idx, _ in retrieved)
+        relevant_set = set(relevant_indices)
+        hits = len(retrieved_indices &amp; relevant_set)
+        recall = hits / len(relevant_set) if relevant_set else 1.0
+        total_recall += recall
+        results.append({
+            &quot;query&quot;: query,
+            &quot;recall&quot;: recall,
+            &quot;hits&quot;: hits,
+            &quot;total_relevant&quot;: len(relevant_set)
+        })
+
+    avg_recall = total_recall / len(queries_with_relevant) if queries_with_relevant else 0
+    return avg_recall, results</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>With a real cross-encoder for reranking:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sentence_transformers import CrossEncoder
+
+reranker = CrossEncoder(&quot;cross-encoder/ms-marco-MiniLM-L-6-v2&quot;)
+
+def rerank_with_cross_encoder(query, candidates, chunks, top_k=5):
+    pairs = [(query, chunks[doc_id]) for doc_id, _ in candidates]
+    scores = reranker.predict(pairs)
+    scored = list(zip([doc_id for doc_id, _ in candidates], scores))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:top_k]</code></pre>
+      </div>
+    <p>With Cohere&#39;s managed reranker:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import cohere
+
+co = cohere.Client()
+
+def rerank_with_cohere(query, candidates, chunks, top_k=5):
+    docs = [chunks[doc_id] for doc_id, _ in candidates]
+    response = co.rerank(
+        model=&quot;rerank-english-v3.0&quot;,
+        query=query,
+        documents=docs,
+        top_n=top_k
+    )
+    return [(candidates[r.index][0], r.relevance_score) for r in response.results]</code></pre>
+      </div>
+    <p>For HyDE with a real LLM:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import anthropic
+
+client = anthropic.Anthropic()
+
+def hyde_with_llm(query):
+    response = client.messages.create(
+        model=&quot;claude-sonnet-5&quot;,
+        max_tokens=256,
+        messages=[{
+            &quot;role&quot;: &quot;user&quot;,
+            &quot;content&quot;: f&quot;Write a short paragraph that would be a good answer to this question. Do not say you don&#39;t know. Just write what the answer would look like.\n\nQuestion: {query}&quot;
+        }]
+    )
+    return response.content[0].text</code></pre>
+      </div>
+    <p>For production hybrid search with Weaviate:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import weaviate
+
+client = weaviate.connect_to_local()
+
+collection = client.collections.get(&quot;Documents&quot;)
+response = collection.query.hybrid(
+    query=&quot;enterprise refund policy&quot;,
+    alpha=0.5,
+    limit=10
+)</code></pre>
+      </div>
+    <p>The alpha parameter controls the balance: 0.0 = pure keyword (BM25), 1.0 = pure vector, 0.5 = equal weight. Most production systems use alpha between 0.3 and 0.7.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-advanced-rag-debugger.md</code> -- a prompt for diagnosing and fixing RAG quality issues</li>
+<li><code>outputs/skill-advanced-rag.md</code> -- a skill for building production-grade RAG with hybrid search and reranking</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Compare BM25 vs vector search vs hybrid search on the sample documents. For each of the 5 test queries, record which approach returns the most relevant chunk in position #1. Hybrid search should win on at least 3 out of 5.</p>
+</li>
+<li><p>Implement a metadata filter. Add a &quot;category&quot; field to each document (security, billing, api, product). Before running vector search, filter chunks to only the relevant category. Test with &quot;What encryption is used?&quot; and verify it only searches security-category chunks.</p>
+</li>
+<li><p>Build a full HyDE pipeline using the simple generate function from Lesson 06. Compare retrieval quality (top-3 relevance) between direct query search and HyDE search on all 5 test queries. HyDE should improve results for vague queries.</p>
+</li>
+<li><p>Implement the parent-child chunking strategy on the sample documents. Use child_size=30 and parent_size=100. Search with child chunks but return parent chunks in the prompt. Compare the generated answers to standard chunking with chunk_size=50.</p>
+</li>
+<li><p>Create an evaluation dataset: 10 questions with known answer chunks. Measure Recall@3, Recall@5, and Recall@10 for (a) vector search only, (b) BM25 only, (c) hybrid search, (d) hybrid + reranking. Plot the results and identify where reranking helps most.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BM25</td>
+<td>&quot;Keyword search&quot;</td>
+<td>A probabilistic ranking algorithm that scores documents by term frequency, inverse document frequency, and document length normalization</td>
+</tr>
+<tr>
+<td>Hybrid search</td>
+<td>&quot;Best of both worlds&quot;</td>
+<td>Running semantic (vector) and keyword (BM25) search in parallel, then merging results with rank fusion</td>
+</tr>
+<tr>
+<td>Reciprocal Rank Fusion</td>
+<td>&quot;Merge ranked lists&quot;</td>
+<td>Combining multiple ranked lists by summing 1/(k + rank) for each document across all lists</td>
+</tr>
+<tr>
+<td>Reranking</td>
+<td>&quot;Second pass scoring&quot;</td>
+<td>Using a more expensive cross-encoder model to re-score a candidate set from initial retrieval</td>
+</tr>
+<tr>
+<td>Cross-encoder</td>
+<td>&quot;Joint query-document model&quot;</td>
+<td>A model that takes a query and document as a single input, producing a relevance score; more accurate than bi-encoders but too slow for full corpus search</td>
+</tr>
+<tr>
+<td>Bi-encoder</td>
+<td>&quot;Independent embedding model&quot;</td>
+<td>A model that embeds queries and documents independently; fast because embeddings are precomputed, but less accurate than cross-encoders</td>
+</tr>
+<tr>
+<td>HyDE</td>
+<td>&quot;Search with a fake answer&quot;</td>
+<td>Generate a hypothetical answer to the query, embed it, and search for real documents similar to it</td>
+</tr>
+<tr>
+<td>Parent-child chunking</td>
+<td>&quot;Small search, big context&quot;</td>
+<td>Index small chunks for precise retrieval but return the larger parent chunk to provide sufficient context</td>
+</tr>
+<tr>
+<td>Metadata filtering</td>
+<td>&quot;Narrow before searching&quot;</td>
+<td>Filtering documents by attributes (date, source, category) before running vector search to reduce the search space</td>
+</tr>
+<tr>
+<td>Faithfulness</td>
+<td>&quot;Did it stay grounded&quot;</td>
+<td>Whether the generated answer is supported by the retrieved documents, as opposed to hallucinated from the model&#39;s training data</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Robertson &amp; Zaragoza, &quot;The Probabilistic Relevance Framework: BM25 and Beyond&quot; (2009) -- the definitive reference for BM25, explaining the probabilistic foundations behind the formula</li>
+<li>Cormack et al., &quot;Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods&quot; (2009) -- the original RRF paper showing it beats more complex fusion methods</li>
+<li>Gao et al., &quot;Precise Zero-Shot Dense Retrieval without Relevance Labels&quot; (2022) -- the HyDE paper demonstrating that hypothetical document embeddings improve retrieval without any training data</li>
+<li>Nogueira &amp; Cho, &quot;Passage Re-ranking with BERT&quot; (2019) -- showed cross-encoder reranking on top of BM25 significantly improves retrieval quality</li>
+<li><a href="https://arxiv.org/abs/2310.03714">Khattab et al., &quot;DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines&quot; (2023)</a> -- treats prompt construction and weight selection as an optimization problem over retrieval pipelines; read this for &quot;program LLMs&quot; instead of &quot;prompt LLMs.&quot;</li>
+<li><a href="https://arxiv.org/abs/2404.16130">Edge et al., &quot;From Local to Global: A Graph RAG Approach to Query-Focused Summarization&quot; (Microsoft Research 2024)</a> -- GraphRAG paper: entity-relation extraction + Leiden community detection for query-focused summarization; the global vs local retrieval distinction.</li>
+<li><a href="https://arxiv.org/abs/2310.11511">Asai et al., &quot;Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection&quot; (ICLR 2024)</a> -- self-evaluating RAG with reflection tokens; the agentic frontier past static retrieve-then-generate.</li>
+<li><a href="https://blog.langchain.dev/query-construction/">LangChain Query Construction blog</a> -- how to translate natural-language queries into structured database queries (Text-to-SQL, Cypher) as a pre-retrieval step.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-rag.html"><span>← Previous</span><b>rag</b></a>
+      <a class="next" href="./08-fine-tuning-lora.html"><span>Next →</span><b>fine tuning lora</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

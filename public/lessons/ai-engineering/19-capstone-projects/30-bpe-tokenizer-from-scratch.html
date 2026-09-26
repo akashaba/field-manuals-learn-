@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BPE Tokenizer From Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/30-bpe-tokenizer-from-scratch/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-frame">The frame</a></li><li><a href="#the-pipeline">The pipeline</a></li><li><a href="#the-byte-alphabet">The byte alphabet</a></li><li><a href="#the-training-loop">The training loop</a></li><li><a href="#encoding-fresh-text">Encoding fresh text</a></li><li><a href="#special-tokens">Special tokens</a></li><li><a href="#round-trip-guarantee">Round-trip guarantee</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">BPE Tokenizer From Scratch</h1>
+    <p class="lesson-sub">Bytes in, ids out, ids back to the same bytes. Build the tokenizer that every modern text model still starts from.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 04 lessons, Phase 07 transformer lessons</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 30">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M74.0,83.6 L80.4,74.1 L86.7,83.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M69.3,78.2 L74.9,69.7 L80.6,78.2 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M64.5,72.9 L69.5,65.4 L74.5,72.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.7,75.4 L64.1,49.3 L81.5,75.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.9" y="43.3" width="33.5" height="33.5" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(236 58.7 60.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">30</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">BPE Tokenizer From</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Train a Byte-Pair Encoding vocabulary from a raw text corpus by repeatedly merging the most frequent adjacent symbol pair.</li>
+<li>Implement a deterministic merge table and apply it to fresh text to produce a stream of subword ids.</li>
+<li>Round-trip arbitrary UTF-8 input to ids and back without information loss.</li>
+<li>Reserve and protect special tokens (<code>&lt;|endoftext|&gt;</code>, <code>&lt;|pad|&gt;</code>) so they survive training and decoding.</li>
+<li>Reason about why a byte-level alphabet is the right floor for a general-purpose tokenizer.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-bpe-merge</code></pre>
+      </div>
+    <h2 id="the-frame"><a class="anchor" href="#the-frame">#</a> The frame</h2>
+<p>A language model never sees text. It sees integers. The map from a string to a list of integers and back is the tokenizer. Get this layer wrong and every loss curve in the training run is measuring the wrong thing.</p>
+<p>The dominant family of subword tokenizers for general text models is Byte-Pair Encoding. The idea is small. Start from a known alphabet. Find the adjacent symbol pair that appears most often in the training corpus. Merge it into a new symbol. Repeat until the vocabulary reaches the target size. Encoding new text reuses the same merge list in the same order.</p>
+<p>We will build the byte-level variant. The alphabet is the 256 raw bytes, not Unicode code points. That choice is what lets the tokenizer handle any UTF-8 input without falling back to an unknown token.</p>
+<h2 id="the-pipeline"><a class="anchor" href="#the-pipeline">#</a> The pipeline</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[raw corpus text] --&gt; B[byte split per word]
+    B --&gt; C[count adjacent pair frequencies]
+    C --&gt; D{pair table empty?}
+    D -- no --&gt; E[merge most frequent pair]
+    E --&gt; F[append merge to merge table]
+    F --&gt; G[grow vocabulary by one id]
+    G --&gt; C
+    D -- yes --&gt; H[final vocab + merges]
+    H --&gt; I[encode new text]
+    H --&gt; J[decode ids back to bytes]</pre></div><p>The training side and the inference side share the merge table. That sharing is the contract. If you change the merge order at inference, you decode a different stream of ids.</p>
+<h2 id="the-byte-alphabet"><a class="anchor" href="#the-byte-alphabet">#</a> The byte alphabet</h2>
+<p>The first 256 ids are reserved for the raw bytes 0x00 through 0xFF. That guarantees every input string can be expressed in the vocabulary before any merge happens. After the byte block we reserve a small range for special tokens. The training loop never proposes those ids as merge targets because we keep them out of the pretokenized stream entirely.</p>
+<p>The pretokenizer splits the corpus on whitespace and punctuation boundaries before training sees it. Without that split the BPE merge step would happily learn merges that cross word boundaries and the vocabulary fills up with whole common phrases. With the split, merges stay inside a word and the result generalizes.</p>
+<h2 id="the-training-loop"><a class="anchor" href="#the-training-loop">#</a> The training loop</h2>
+<p>For each training step the loop does three things. It walks every word in the corpus and counts how often each adjacent pair of current symbols appears, weighted by how often the word itself appears. It picks the pair with the highest count. It rewrites every occurrence of that pair into a single new symbol whose id is the next free slot in the vocabulary. Then it records the merge.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    participant Corpus
+    participant PairCount
+    participant MergeTable
+    participant Vocab
+    Corpus-&gt;&gt;PairCount: count adjacent pairs
+    PairCount-&gt;&gt;MergeTable: pick top pair (a,b)
+    MergeTable-&gt;&gt;Vocab: assign new id = a+b
+    MergeTable-&gt;&gt;Corpus: rewrite every (a,b) to new id
+    Corpus-&gt;&gt;PairCount: recount for next step</pre></div><p>The cost of each step is linear in the size of the corpus expressed as a list of symbol sequences. For a million words and a target vocabulary of ten thousand ids the loop runs to completion in seconds because the symbol sequences shrink as merges land.</p>
+<h2 id="encoding-fresh-text"><a class="anchor" href="#encoding-fresh-text">#</a> Encoding fresh text</h2>
+<p>Inference does not call the merge counter. It applies the merge table in the same order it was learned. For a fresh word the encoder starts from the byte split. It scans the current sequence for the lowest-ranked merge (the earliest one that applies). It performs that merge. It scans again. The loop ends when no merge in the table applies to the current sequence.</p>
+<p>The ordering by rank is the property that makes encoding deterministic and matches the training behavior on the same input. A merge that was learned first sits at the top of the table and gets applied first. If two merges could apply at the same position, the lower-rank one wins.</p>
+<h2 id="special-tokens"><a class="anchor" href="#special-tokens">#</a> Special tokens</h2>
+<p>Special tokens are ids that the byte stream can never produce. We reserve them by hand. Two are enough for this lesson.</p>
+<ul>
+<li><code>&lt;|endoftext|&gt;</code> separates documents during pretraining. It tells the model &quot;a new document starts here, do not let the previous one&#39;s context leak in.&quot;</li>
+<li><code>&lt;|pad|&gt;</code> fills out short sequences so a batch can be a rectangular tensor. The loss mask hides it during training.</li>
+</ul>
+<p>The encoder accepts a flag to allow special tokens in the input. With the flag off, the strings <code>&lt;|endoftext|&gt;</code> and <code>&lt;|pad|&gt;</code> get tokenized as the bytes that spell them out. With the flag on, the literal strings get mapped to their reserved ids and are not subject to any merge.</p>
+<h2 id="round-trip-guarantee"><a class="anchor" href="#round-trip-guarantee">#</a> Round-trip guarantee</h2>
+<p>Encoding then decoding must return the input bytes exactly. The decoder concatenates the byte expansion of every id in order. Since every id is either a raw byte or the concatenation of two previously known ids, the recursive expansion always terminates in raw bytes. Decoding then returns the UTF-8 string that those bytes spell.</p>
+<p>The test suite in this lesson checks that property on an unseen sentence, on a sentence with a Unicode emoji, and on a sentence that contains a literal <code>&lt;|endoftext|&gt;</code> token.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not build a regex-driven pretokenizer in the style of the largest production tokenizers. The pretokenizer here is a small whitespace and punctuation split. It is enough to produce sensible merges on a small training corpus and the contract with the rest of the lesson chain stays the same. The next lesson treats the tokenizer as a black box and builds the sliding-window dataset on top of it.</p>
+<p>It does not parallelize the pair counter. A loop in Python over a corpus of a few thousand words finishes in well under a second. For larger corpora the obvious move is to count pairs per word in parallel and reduce.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines four objects. <code>BPETokenizer</code> holds the vocabulary, the merge table, and the special-token table. <code>train</code> is the training loop. <code>encode</code> is the inference path. <code>decode</code> is the byte concatenation. The demo at the bottom trains a small tokenizer on a built-in corpus, encodes a held-out sentence, decodes the ids back, and prints both. The tests in <code>code/tests/test_bpe.py</code> pin the round-trip property, the special-token reservation, and the merge ordering.</p>
+<p>Run the demo. Then change the target vocabulary size in the demo from 300 to 600 and watch how the encoded length of the held-out sentence drops. That curve is the BPE compression curve.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./29-end-to-end-coding-task-demo.html"><span>← Previous</span><b>end to end coding task demo</b></a>
+      <a class="next" href="./31-tokenized-dataset-sliding-window.html"><span>Next →</span><b>tokenized dataset sliding window</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

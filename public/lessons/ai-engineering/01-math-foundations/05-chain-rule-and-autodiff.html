@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chain Rule &amp; Automatic Differentiation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/01-math-foundations/05-chain-rule-and-autodiff/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Math Foundations</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Math Foundations</div>
+    <h1 class="lesson-title">Chain Rule &amp; Automatic Differentiation</h1>
+    <p class="lesson-sub">The chain rule is the engine behind every neural network that learns.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 1, Lesson 04 (Derivatives &amp; Gradients)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Math Foundations 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="25.1" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.6 142.7)"/>
+        <rect x="20.3" y="123.9" width="27.7" height="27.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(156 34.1 137.8)"/>
+        <rect x="15.5" y="119.6" width="26.4" height="26.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(138 28.7 132.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MATH FOUNDATIONS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chain Rule &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Automatic…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build a minimal autograd engine (Value class) that records operations and computes gradients via reverse-mode autodiff</li>
+<li>Implement forward and backward passes through a computation graph using topological sort</li>
+<li>Construct and train a multi-layer perceptron on XOR using only the from-scratch autograd engine</li>
+<li>Verify autodiff correctness using gradient checking against numerical finite differences</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You can compute derivatives of simple functions. But a neural network is not a simple function. It is hundreds of functions composed together: matrix multiply, add bias, apply activation, matrix multiply again, softmax, cross-entropy loss. The output is a function of a function of a function.</p>
+<p>To train the network, you need the gradient of the loss with respect to every single weight. Doing this by hand is impossible for millions of parameters. Doing it numerically (finite differences) is too slow.</p>
+<p>The chain rule gives you the math. Automatic differentiation gives you the algorithm. Together they let you compute exact gradients through arbitrary compositions of functions in time proportional to a single forward pass.</p>
+<p>This is how PyTorch, TensorFlow, and JAX work. You will build a miniature version from scratch.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-chain-rule"><a class="anchor" href="#the-chain-rule">#</a> The Chain Rule</h3>
+<p>If <code>y = f(g(x))</code>, the derivative of <code>y</code> with respect to <code>x</code> is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">dy/dx = dy/dg * dg/dx = f&#39;(g(x)) * g&#39;(x)</code></pre>
+      </div>
+    <p>Multiply the derivatives along the chain. Each link contributes its local derivative.</p>
+<p>Example: <code>y = sin(x^2)</code></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">g(x) = x^2       g&#39;(x) = 2x
+f(g) = sin(g)     f&#39;(g) = cos(g)
+
+dy/dx = cos(x^2) * 2x</code></pre>
+      </div>
+    <p>For deeper compositions, the chain extends:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">y = f(g(h(x)))
+
+dy/dx = f&#39;(g(h(x))) * g&#39;(h(x)) * h&#39;(x)</code></pre>
+      </div>
+    <p>Every layer in a neural network is one link in this chain.</p>
+<h3 id="computational-graphs"><a class="anchor" href="#computational-graphs">#</a> Computational Graphs</h3>
+<p>A computational graph makes the chain rule visual. Every operation becomes a node. Data flows forward through the graph. Gradients flow backward.</p>
+<p><strong>Forward pass (compute values):</strong></p>
+<div class="fig"><pre class="mermaid">graph TD
+    x1[&quot;x1 = 2&quot;] --&gt; mul[&quot;* (multiply)&quot;]
+    x2[&quot;x2 = 3&quot;] --&gt; mul
+    mul --&gt;|&quot;a = 6&quot;| add[&quot;+ (add)&quot;]
+    b[&quot;b = 1&quot;] --&gt; add
+    add --&gt;|&quot;c = 7&quot;| relu[&quot;relu&quot;]
+    relu --&gt;|&quot;y = 7&quot;| y[&quot;output y&quot;]</pre></div><p><strong>Backward pass (compute gradients):</strong></p>
+<div class="fig"><pre class="mermaid">graph TD
+    dy[&quot;dy/dy = 1&quot;] --&gt;|&quot;relu&#39;(c)=1 since c&gt;0&quot;| dc[&quot;dy/dc = 1&quot;]
+    dc --&gt;|&quot;dc/da = 1&quot;| da[&quot;dy/da = 1&quot;]
+    dc --&gt;|&quot;dc/db = 1&quot;| db[&quot;dy/db = 1&quot;]
+    da --&gt;|&quot;da/dx1 = x2 = 3&quot;| dx1[&quot;dy/dx1 = 3&quot;]
+    da --&gt;|&quot;da/dx2 = x1 = 2&quot;| dx2[&quot;dy/dx2 = 2&quot;]</pre></div><p>The backward pass applies the chain rule at every node, propagating gradients from output to inputs.</p>
+<h3 id="forward-mode-vs-reverse-mode"><a class="anchor" href="#forward-mode-vs-reverse-mode">#</a> Forward Mode vs Reverse Mode</h3>
+<p>There are two ways to apply the chain rule through a graph.</p>
+<p><strong>Forward mode</strong> starts at the inputs and pushes derivatives forward. It computes <code>dx/dx = 1</code> and propagates through each operation. Good when you have few inputs and many outputs.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Forward mode: seed dx/dx = 1, propagate forward
+
+  x = 2       (dx/dx = 1)
+  a = x^2     (da/dx = 2x = 4)
+  y = sin(a)  (dy/dx = cos(a) * da/dx = cos(4) * 4 = -2.615)</code></pre>
+      </div>
+    <p><strong>Reverse mode</strong> starts at the output and pulls gradients backward. It computes <code>dy/dy = 1</code> and propagates through each operation in reverse. Good when you have many inputs and few outputs.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Reverse mode: seed dy/dy = 1, propagate backward
+
+  y = sin(a)  (dy/dy = 1)
+  a = x^2     (dy/da = cos(a) = cos(4) = -0.654)
+  x = 2       (dy/dx = dy/da * da/dx = -0.654 * 4 = -2.615)</code></pre>
+      </div>
+    <p>Neural networks have millions of inputs (weights) and one output (loss). Reverse mode computes all gradients in one backward pass. This is why backpropagation uses reverse mode.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Seed</th>
+<th>Direction</th>
+<th>Best when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Forward</td>
+<td><code>dx_i/dx_i = 1</code></td>
+<td>Input to output</td>
+<td>Few inputs, many outputs</td>
+</tr>
+<tr>
+<td>Reverse</td>
+<td><code>dy/dy = 1</code></td>
+<td>Output to input</td>
+<td>Many inputs, few outputs (neural nets)</td>
+</tr>
+</tbody></table>
+<h3 id="dual-numbers-for-forward-mode"><a class="anchor" href="#dual-numbers-for-forward-mode">#</a> Dual Numbers for Forward Mode</h3>
+<p>Forward mode can be implemented elegantly with dual numbers. A dual number has the form <code>a + b*epsilon</code> where <code>epsilon^2 = 0</code>.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Dual number: (value, derivative)
+
+(2, 1) means: value is 2, derivative w.r.t. x is 1
+
+Arithmetic rules:
+  (a, a&#39;) + (b, b&#39;) = (a+b, a&#39;+b&#39;)
+  (a, a&#39;) * (b, b&#39;) = (a*b, a&#39;*b + a*b&#39;)
+  sin(a, a&#39;)         = (sin(a), cos(a)*a&#39;)</code></pre>
+      </div>
+    <p>Seed the input variable with derivative 1. The derivative propagates automatically through every operation.</p>
+<h3 id="building-an-autograd-engine"><a class="anchor" href="#building-an-autograd-engine">#</a> Building an Autograd Engine</h3>
+<p>An autograd engine needs three things:</p>
+<ol>
+<li><strong>Value wrapping.</strong> Wrap every number in an object that stores its value and gradient.</li>
+<li><strong>Graph recording.</strong> Every operation records its inputs and the local gradient function.</li>
+<li><strong>Backward pass.</strong> Topological sort the graph, then walk it in reverse, applying the chain rule at each node.</li>
+</ol>
+<p>This is exactly what PyTorch&#39;s <code>autograd</code> does. The <code>torch.Tensor</code> class wraps values, records operations when <code>requires_grad=True</code>, and computes gradients when you call <code>.backward()</code>.</p>
+<h3 id="how-pytorch-autograd-works-under-the-hood"><a class="anchor" href="#how-pytorch-autograd-works-under-the-hood">#</a> How PyTorch Autograd Works Under the Hood</h3>
+<p>When you write PyTorch code:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">x = torch.tensor(2.0, requires_grad=True)
+y = x ** 2 + 3 * x + 1
+y.backward()
+print(x.grad)  # 7.0 = 2*x + 3 = 2*2 + 3</code></pre>
+      </div>
+    <p>PyTorch internally:</p>
+<ol>
+<li>Creates a <code>Tensor</code> node for <code>x</code> with <code>requires_grad=True</code></li>
+<li>Every operation (<code>**</code>, <code>*</code>, <code>+</code>) creates a new node and records the backward function</li>
+<li><code>y.backward()</code> triggers reverse-mode autodiff through the recorded graph</li>
+<li>Each node&#39;s <code>grad_fn</code> computes local gradients and passes them to parent nodes</li>
+<li>Gradients accumulate in <code>.grad</code> attributes via addition (not replacement)</li>
+</ol>
+<p>The graph is dynamic (define-by-run). A new graph is built on every forward pass. This is why PyTorch supports control flow (if/else, loops) inside models.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">chain-rule</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-the-value-class"><a class="anchor" href="#step-1-the-value-class">#</a> Step 1: The Value class</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Value:
+    def __init__(self, data, children=(), op=&#39;&#39;):
+        self.data = data
+        self.grad = 0.0
+        self._backward = lambda: None
+        self._prev = set(children)
+        self._op = op
+
+    def __repr__(self):
+        return f&quot;Value(data={self.data:.4f}, grad={self.grad:.4f})&quot;</code></pre>
+      </div>
+    <p>Every <code>Value</code> stores its numeric data, its gradient (initially zero), a backward function, and pointers to child nodes that produced it.</p>
+<h3 id="step-2-arithmetic-operations-with-gradient-tracking"><a class="anchor" href="#step-2-arithmetic-operations-with-gradient-tracking">#</a> Step 2: Arithmetic operations with gradient tracking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">    def __add__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data + other.data, (self, other), &#39;+&#39;)
+        def _backward():
+            self.grad += out.grad
+            other.grad += out.grad
+        out._backward = _backward
+        return out
+
+    def __mul__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data * other.data, (self, other), &#39;*&#39;)
+        def _backward():
+            self.grad += other.data * out.grad
+            other.grad += self.data * out.grad
+        out._backward = _backward
+        return out
+
+    def relu(self):
+        out = Value(max(0, self.data), (self,), &#39;relu&#39;)
+        def _backward():
+            self.grad += (1.0 if out.data &gt; 0 else 0.0) * out.grad
+        out._backward = _backward
+        return out</code></pre>
+      </div>
+    <p>Each operation creates a closure that knows how to compute local gradients and multiply by the upstream gradient (<code>out.grad</code>). The <code>+=</code> handles the case where a value is used in multiple operations.</p>
+<h3 id="step-3-the-backward-pass"><a class="anchor" href="#step-3-the-backward-pass">#</a> Step 3: The backward pass</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">    def backward(self):
+        topo = []
+        visited = set()
+        def build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+        build_topo(self)
+
+        self.grad = 1.0
+        for v in reversed(topo):
+            v._backward()</code></pre>
+      </div>
+    <p>Topological sort ensures every node&#39;s gradient is fully computed before it propagates to its children. The seed gradient is 1.0 (dy/dy = 1).</p>
+<h3 id="step-4-more-operations-for-a-complete-engine"><a class="anchor" href="#step-4-more-operations-for-a-complete-engine">#</a> Step 4: More operations for a complete engine</h3>
+<p>The basic Value class handles addition, multiplication, and relu. A real autograd engine needs more. Here are the operations you need to build neural networks:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">    def __neg__(self):
+        return self * -1
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __radd__(self, other):
+        return self + other
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __rsub__(self, other):
+        return other + (-self)
+
+    def __pow__(self, n):
+        out = Value(self.data ** n, (self,), f&#39;**{n}&#39;)
+        def _backward():
+            self.grad += n * (self.data ** (n - 1)) * out.grad
+        out._backward = _backward
+        return out
+
+    def __truediv__(self, other):
+        return self * (other ** -1) if isinstance(other, Value) else self * (Value(other) ** -1)
+
+    def exp(self):
+        import math
+        e = math.exp(self.data)
+        out = Value(e, (self,), &#39;exp&#39;)
+        def _backward():
+            self.grad += e * out.grad
+        out._backward = _backward
+        return out
+
+    def log(self):
+        import math
+        out = Value(math.log(self.data), (self,), &#39;log&#39;)
+        def _backward():
+            self.grad += (1.0 / self.data) * out.grad
+        out._backward = _backward
+        return out
+
+    def tanh(self):
+        import math
+        t = math.tanh(self.data)
+        out = Value(t, (self,), &#39;tanh&#39;)
+        def _backward():
+            self.grad += (1 - t ** 2) * out.grad
+        out._backward = _backward
+        return out</code></pre>
+      </div>
+    <p><strong>Why each operation matters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Backward rule</th>
+<th>Used in</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>__sub__</code></td>
+<td>Reuses add + neg</td>
+<td>Loss computation (pred - target)</td>
+</tr>
+<tr>
+<td><code>__pow__</code></td>
+<td>n * x^(n-1)</td>
+<td>Polynomial activations, MSE (error^2)</td>
+</tr>
+<tr>
+<td><code>__truediv__</code></td>
+<td>Reuses mul + pow(-1)</td>
+<td>Normalization, learning rate scaling</td>
+</tr>
+<tr>
+<td><code>exp</code></td>
+<td>exp(x) * upstream</td>
+<td>Softmax, log-likelihood</td>
+</tr>
+<tr>
+<td><code>log</code></td>
+<td>(1/x) * upstream</td>
+<td>Cross-entropy loss, log probabilities</td>
+</tr>
+<tr>
+<td><code>tanh</code></td>
+<td>(1 - tanh^2) * upstream</td>
+<td>Classic activation function</td>
+</tr>
+</tbody></table>
+<p>The clever part: <code>__sub__</code> and <code>__truediv__</code> are defined in terms of existing operations. They get correct gradients for free because the chain rule composes through the underlying add/mul/pow operations.</p>
+<h3 id="step-5-mini-mlp-from-scratch"><a class="anchor" href="#step-5-mini-mlp-from-scratch">#</a> Step 5: Mini MLP from scratch</h3>
+<p>With a complete Value class, you can build a neural network. No PyTorch. No NumPy. Just Values and the chain rule.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import random
+
+class Neuron:
+    def __init__(self, n_inputs):
+        self.w = [Value(random.uniform(-1, 1)) for _ in range(n_inputs)]
+        self.b = Value(0.0)
+
+    def __call__(self, x):
+        act = sum((wi * xi for wi, xi in zip(self.w, x)), self.b)
+        return act.tanh()
+
+    def parameters(self):
+        return self.w + [self.b]
+
+class Layer:
+    def __init__(self, n_inputs, n_outputs):
+        self.neurons = [Neuron(n_inputs) for _ in range(n_outputs)]
+
+    def __call__(self, x):
+        return [n(x) for n in self.neurons]
+
+    def parameters(self):
+        return [p for n in self.neurons for p in n.parameters()]
+
+class MLP:
+    def __init__(self, sizes):
+        self.layers = [Layer(sizes[i], sizes[i+1]) for i in range(len(sizes)-1)]
+
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x[0] if len(x) == 1 else x
+
+    def parameters(self):
+        return [p for layer in self.layers for p in layer.parameters()]</code></pre>
+      </div>
+    <p>A <code>Neuron</code> computes <code>tanh(w1*x1 + w2*x2 + ... + b)</code>. A <code>Layer</code> is a list of neurons. An <code>MLP</code> stacks layers. Every weight is a <code>Value</code>, so calling <code>loss.backward()</code> propagates gradients to every parameter.</p>
+<p><strong>Training on XOR:</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">random.seed(42)
+model = MLP([2, 4, 1])  # 2 inputs, 4 hidden neurons, 1 output
+
+xs = [[0, 0], [0, 1], [1, 0], [1, 1]]
+ys = [-1, 1, 1, -1]  # XOR pattern (using -1/1 for tanh)
+
+for step in range(100):
+    preds = [model(x) for x in xs]
+    loss = sum((p - y) ** 2 for p, y in zip(preds, ys))
+
+    for p in model.parameters():
+        p.grad = 0.0
+    loss.backward()
+
+    lr = 0.05
+    for p in model.parameters():
+        p.data -= lr * p.grad
+
+    if step % 20 == 0:
+        print(f&quot;step {step:3d}  loss = {loss.data:.4f}&quot;)
+
+print(&quot;\nPredictions after training:&quot;)
+for x, y in zip(xs, ys):
+    print(f&quot;  input={x}  target={y:2d}  pred={model(x).data:6.3f}&quot;)</code></pre>
+      </div>
+    <p>This is micrograd. A complete neural network training loop in pure Python with automatic differentiation. Every commercial deep learning framework does the same thing at massive scale.</p>
+<h3 id="step-6-gradient-checking"><a class="anchor" href="#step-6-gradient-checking">#</a> Step 6: Gradient checking</h3>
+<p>How do you know your autodiff is correct? Compare it against numerical derivatives. This is gradient checking.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def gradient_check(build_expr, x_val, h=1e-7):
+    x = Value(x_val)
+    y = build_expr(x)
+    y.backward()
+    autodiff_grad = x.grad
+
+    y_plus = build_expr(Value(x_val + h)).data
+    y_minus = build_expr(Value(x_val - h)).data
+    numerical_grad = (y_plus - y_minus) / (2 * h)
+
+    diff = abs(autodiff_grad - numerical_grad)
+    return autodiff_grad, numerical_grad, diff</code></pre>
+      </div>
+    <p>Test it on a complex expression:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def expr(x):
+    return (x ** 3 + x * 2 + 1).tanh()
+
+ad, num, diff = gradient_check(expr, 0.5)
+print(f&quot;Autodiff:  {ad:.8f}&quot;)
+print(f&quot;Numerical: {num:.8f}&quot;)
+print(f&quot;Difference: {diff:.2e}&quot;)
+# Difference should be &lt; 1e-5</code></pre>
+      </div>
+    <p>Gradient checking is essential when implementing new operations. If your backward pass has a bug, the numerical check catches it. Every serious deep learning implementation runs gradient checks during development.</p>
+<p><strong>When to use gradient checking:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Do gradient check?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Adding a new operation to your autograd</td>
+<td>Yes, always</td>
+</tr>
+<tr>
+<td>Debugging a training loop that won&#39;t converge</td>
+<td>Yes, check gradients first</td>
+</tr>
+<tr>
+<td>Production training</td>
+<td>No, too slow (2x forward passes per parameter)</td>
+</tr>
+<tr>
+<td>Unit tests for autograd code</td>
+<td>Yes, automate it</td>
+</tr>
+</tbody></table>
+<h3 id="step-7-verify-against-manual-calculation"><a class="anchor" href="#step-7-verify-against-manual-calculation">#</a> Step 7: Verify against manual calculation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">x1 = Value(2.0)
+x2 = Value(3.0)
+a = x1 * x2          # a = 6.0
+b = a + Value(1.0)    # b = 7.0
+y = b.relu()          # y = 7.0
+
+y.backward()
+
+print(f&quot;y = {y.data}&quot;)          # 7.0
+print(f&quot;dy/dx1 = {x1.grad}&quot;)   # 3.0 (= x2)
+print(f&quot;dy/dx2 = {x2.grad}&quot;)   # 2.0 (= x1)</code></pre>
+      </div>
+    <p>Manual check: <code>y = relu(x1*x2 + 1)</code>. Since <code>x1*x2 + 1 = 7 &gt; 0</code>, relu is identity.
+<code>dy/dx1 = x2 = 3</code>. <code>dy/dx2 = x1 = 2</code>. The engine matches.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="verify-against-pytorch"><a class="anchor" href="#verify-against-pytorch">#</a> Verify against PyTorch</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+x1 = torch.tensor(2.0, requires_grad=True)
+x2 = torch.tensor(3.0, requires_grad=True)
+a = x1 * x2
+b = a + 1.0
+y = torch.relu(b)
+y.backward()
+
+print(f&quot;PyTorch dy/dx1 = {x1.grad.item()}&quot;)  # 3.0
+print(f&quot;PyTorch dy/dx2 = {x2.grad.item()}&quot;)  # 2.0</code></pre>
+      </div>
+    <p>Same gradients. Your engine computes the same result as PyTorch because the math is the same: reverse-mode autodiff via the chain rule.</p>
+<h3 id="a-more-complex-expression"><a class="anchor" href="#a-more-complex-expression">#</a> A more complex expression</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">a = Value(2.0)
+b = Value(-3.0)
+c = Value(10.0)
+f = (a * b + c).relu()  # relu(2*(-3) + 10) = relu(4) = 4
+
+f.backward()
+print(f&quot;df/da = {a.grad}&quot;)  # -3.0 (= b)
+print(f&quot;df/db = {b.grad}&quot;)  #  2.0 (= a)
+print(f&quot;df/dc = {c.grad}&quot;)  #  1.0</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/skill-autodiff.md</code> -- a skill for building and debugging autograd systems</li>
+<li><code>code/autodiff.py</code> -- a minimal autograd engine you can extend</li>
+</ul>
+<p>The Value class built here is the foundation for the neural network training loop in Phase 3.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add <code>__pow__</code> to the Value class so you can compute <code>x ** n</code>. Verify that <code>d/dx(x^3)</code> at <code>x=2</code> equals <code>12.0</code>.</p>
+</li>
+<li><p>Add <code>tanh</code> as an activation function. Verify that <code>tanh&#39;(0) = 1</code> and <code>tanh&#39;(2) = 0.0707</code> (approx).</p>
+</li>
+<li><p>Build a computation graph for a single neuron: <code>y = relu(w1*x1 + w2*x2 + b)</code>. Compute all five gradients and verify against PyTorch.</p>
+</li>
+<li><p>Implement forward-mode autodiff using dual numbers. Create a <code>Dual</code> class and verify it gives the same derivatives as your reverse-mode engine.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Chain rule</td>
+<td>&quot;Multiply the derivatives&quot;</td>
+<td>The derivative of composed functions equals the product of each function&#39;s local derivative, evaluated at the right point</td>
+</tr>
+<tr>
+<td>Computational graph</td>
+<td>&quot;The network diagram&quot;</td>
+<td>A directed acyclic graph where nodes are operations and edges carry values (forward) or gradients (backward)</td>
+</tr>
+<tr>
+<td>Forward mode</td>
+<td>&quot;Push derivatives forward&quot;</td>
+<td>Autodiff that propagates derivatives from inputs to outputs. One pass per input variable.</td>
+</tr>
+<tr>
+<td>Reverse mode</td>
+<td>&quot;Backpropagation&quot;</td>
+<td>Autodiff that propagates gradients from outputs to inputs. One pass per output variable.</td>
+</tr>
+<tr>
+<td>Autograd</td>
+<td>&quot;Automatic gradients&quot;</td>
+<td>A system that records operations on values, builds a graph, and computes exact gradients via the chain rule</td>
+</tr>
+<tr>
+<td>Dual numbers</td>
+<td>&quot;Value plus derivative&quot;</td>
+<td>Numbers of the form a + b*epsilon (epsilon^2 = 0) that carry derivative information through arithmetic</td>
+</tr>
+<tr>
+<td>Topological sort</td>
+<td>&quot;Dependency order&quot;</td>
+<td>Ordering graph nodes so every node comes after all its dependencies. Required for correct gradient propagation.</td>
+</tr>
+<tr>
+<td>Gradient accumulation</td>
+<td>&quot;Add, don&#39;t replace&quot;</td>
+<td>When a value feeds into multiple operations, its gradient is the sum of all incoming gradient contributions</td>
+</tr>
+<tr>
+<td>Dynamic graph</td>
+<td>&quot;Define by run&quot;</td>
+<td>A computation graph rebuilt on every forward pass, allowing Python control flow inside models (PyTorch style)</td>
+</tr>
+<tr>
+<td>Gradient checking</td>
+<td>&quot;Numerical verification&quot;</td>
+<td>Comparing autodiff gradients against numerical finite-difference gradients to verify correctness. Essential for debugging.</td>
+</tr>
+<tr>
+<td>MLP</td>
+<td>&quot;Multi-layer perceptron&quot;</td>
+<td>A neural network with one or more hidden layers of neurons. Each neuron computes a weighted sum plus bias, then applies an activation function.</td>
+</tr>
+<tr>
+<td>Neuron</td>
+<td>&quot;Weighted sum + activation&quot;</td>
+<td>The basic unit: output = activation(w1<em>x1 + w2</em>x2 + ... + b). The weights and bias are learnable parameters.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><figure class="yt-embed">
+      <div class="yt-frame"><iframe src="https://www.youtube.com/embed/tIeHLnjs5U8"
+        title="YouTube video" frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen loading="lazy"></iframe></div>
+    </figure> -- visual explanation of the chain rule in neural networks</li>
+<li><a href="https://pytorch.org/docs/stable/notes/autograd.html">PyTorch Autograd mechanics</a> -- how the real system works</li>
+<li><a href="https://arxiv.org/abs/1502.05767">Baydin et al., Automatic Differentiation in Machine Learning: a Survey</a> -- comprehensive reference</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-calculus-for-ml.html"><span>← Previous</span><b>calculus for ml</b></a>
+      <a class="next" href="./06-probability-and-distributions.html"><span>Next →</span><b>probability and distributions</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

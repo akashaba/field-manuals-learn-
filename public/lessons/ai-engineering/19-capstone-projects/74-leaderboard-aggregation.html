@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Leaderboard Aggregation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/74-leaderboard-aggregation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning objectives</a></li><li><a href="#the-shape-of-input">The shape of input</a></li><li><a href="#the-output">The output</a></li><li><a href="#normalisation">Normalisation</a></li><li><a href="#mean-and-win-rate">Mean and win-rate</a></li><li><a href="#bootstrap-confidence-intervals">Bootstrap confidence intervals</a></li><li><a href="#categories">Categories</a></li><li><a href="#markdown-rendering">Markdown rendering</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Leaderboard Aggregation</h1>
+    <p class="lesson-sub">Per-task scores are easy. Per-model rankings across heterogeneous tasks are harder. Statistical significance on a thousand-prediction leaderboard is the part everyone skips. This lesson does not skip it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track B foundations, lessons 70, 71, 73</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 74">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M85.0,95.8 L92.8,84.1 L100.6,95.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.2,90.4 L87.4,79.7 L94.5,90.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.5,85.1 L82.0,75.4 L88.5,85.1 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.7,79.8 L76.5,71.0 L82.4,79.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.9,74.5 L71.1,66.7 L76.3,74.5 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">74</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Leaderboard</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Aggregation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning objectives</h2>
+<ul>
+<li>Aggregate per-task scores across multiple models and multiple tasks into a tidy per-model row.</li>
+<li>Normalise heterogeneous scores so that pass rates and BLEU values do not over-influence the aggregate.</li>
+<li>Rank models by mean and by win-rate, and explain when each is the right summary.</li>
+<li>Compute bootstrap confidence intervals on the mean score per model and on pairwise differences.</li>
+<li>Output the leaderboard as a JSON report and as a markdown table the runner in lesson 75 can paste into a CI comment.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ci-leaderboard-ci</code></pre>
+      </div>
+    <h2 id="the-shape-of-input"><a class="anchor" href="#the-shape-of-input">#</a> The shape of input</h2>
+<p>The aggregator consumes a list of <code>EvalRun</code> records:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@dataclass
+class EvalRun:
+    model_id: str
+    task_id: str
+    metric_name: str
+    score: float          # in [0, 1]
+    category: str</code></pre>
+      </div>
+    <p>The runner in lesson 75 emits one record per <code>(model, task)</code> pair. The aggregator does not care how the score was produced. It expects normalisation to already have happened: every score is in <code>[0, 1]</code>.</p>
+<h2 id="the-output"><a class="anchor" href="#the-output">#</a> The output</h2>
+<p>Three tables come out:</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[list of EvalRun] --&gt; B[per-task pivot model x task]
+    B --&gt; C[per-model mean]
+    B --&gt; D[per-model win rate]
+    C --&gt; E[bootstrap CI on mean]
+    D --&gt; F[pairwise CI on diff]
+    E --&gt; G[leaderboard rows]
+    F --&gt; G
+    G --&gt; H[JSON + markdown table]</pre></div><p>The leaderboard row contains: <code>model_id</code>, <code>mean_score</code>, <code>mean_ci_lo</code>, <code>mean_ci_hi</code>, <code>win_rate</code>, <code>tasks_completed</code>, and an optional <code>categories</code> map for per-category mean.</p>
+<h2 id="normalisation"><a class="anchor" href="#normalisation">#</a> Normalisation</h2>
+<p>If one task scores in <code>[0, 1]</code> and another in <code>[0, 100]</code>, the second silently dominates the mean. The aggregator validates that every input score sits in <code>[0, 1]</code> and refuses the run otherwise. The fix lives upstream: the metric should already return a fraction. Lessons 71 to 73 enforce that contract.</p>
+<h2 id="mean-and-win-rate"><a class="anchor" href="#mean-and-win-rate">#</a> Mean and win-rate</h2>
+<p>The two ranking schemes serve different goals.</p>
+<p>Mean score is the average of per-task scores for one model. It is the headline number leaderboards report. It is sensitive to outliers and to task imbalance.</p>
+<p>Win-rate counts how often a model beats every other model on the same task. For each task, the model with the highest score wins (ties split). Win rate equals wins divided by the number of tasks where the model has a score. It is less sensitive to outliers and to scale differences but loses information.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def win_rate(model_id, runs_by_task, all_models):
+    wins, total = 0, 0
+    for task_id, runs in runs_by_task.items():
+        scores = {r.model_id: r.score for r in runs if r.model_id in all_models}
+        if model_id not in scores:
+            continue
+        total += 1
+        best = max(scores.values())
+        if scores[model_id] &gt;= best:
+            wins += 1
+    return wins / total if total else 0.0</code></pre>
+      </div>
+    <p>The harness reports both. The runner in lesson 75 ranks by mean by default; the markdown column for win-rate is right there in case the user prefers it.</p>
+<h2 id="bootstrap-confidence-intervals"><a class="anchor" href="#bootstrap-confidence-intervals">#</a> Bootstrap confidence intervals</h2>
+<p>Per-model means come with a confidence interval estimated by bootstrap resampling over tasks. We resample task ids with replacement, compute the mean over the resampled set, repeat <code>B</code> times, and take the percentile interval at level <code>alpha</code>.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[per-task scores for model M] --&gt; B[loop B times]
+    B --&gt; C[sample N tasks with replacement]
+    C --&gt; D[mean of sampled scores]
+    D --&gt; E[record bootstrap mean]
+    E --&gt; B
+    E --&gt; F[sort B means]
+    F --&gt; G[take alpha/2 and 1 - alpha/2 percentiles]
+    G --&gt; H[CI lo, CI hi]</pre></div><p>For pairwise comparisons we bootstrap the per-task difference <code>score_A - score_B</code>, take the percentile interval, and report it. The user reads off whether the interval excludes zero. If it does, the difference is significant at level alpha. If it does not, the leaderboard treats the models as tied.</p>
+<p>The low-level helpers (<code>bootstrap_mean_ci</code>, <code>bootstrap_pairwise_diff</code>) default to <code>B=1000</code>; the public aggregators (<code>aggregate</code>, <code>pairwise_diffs</code>) default to <code>b=500</code> so the demo and tests stay quick. The default alpha is 0.05. The lesson keeps the bootstrap pure numpy, no scipy.</p>
+<h2 id="categories"><a class="anchor" href="#categories">#</a> Categories</h2>
+<p>If <code>EvalRun.category</code> is set, the aggregator also reports per-category mean. This is the column on every leaderboard that says <code>math</code>, <code>reasoning</code>, <code>code</code>, <code>safety</code>. It lets the runner spot whether a model is good overall but weak in code, which is information the headline mean hides.</p>
+<h2 id="markdown-rendering"><a class="anchor" href="#markdown-rendering">#</a> Markdown rendering</h2>
+<p>The leaderboard is rendered as a markdown table:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">| Rank | Model | Mean | 95% CI | Win rate | Tasks |
+|------|-------|------|--------|----------|-------|
+| 1    | gpt   | 0.78 | 0.74-0.82 | 0.62 | 50 |
+| 2    | claude| 0.75 | 0.71-0.79 | 0.34 | 50 |
+| 3    | random| 0.10 | 0.07-0.13 | 0.04 | 50 |</code></pre>
+      </div>
+    <p>The table is sorted by mean score. The CI is rendered to two decimals. Long model ids are truncated to twenty characters.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not run models. It does not call the metric layer. It does not implement adaptive ECE or other calibration variants; those are lesson 73. It does not implement task weighting. Every task counts the same here. Production leaderboards weight tasks; we leave that hook open through the <code>weight</code> field but ignore it in the aggregator. Add weighting in a follow-up lesson if you need it.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines <code>EvalRun</code>, <code>LeaderboardRow</code>, <code>aggregate</code>, <code>bootstrap_mean_ci</code>, <code>bootstrap_pairwise_diff</code>, and <code>render_markdown</code>. The demo builds a synthetic suite of three models and twelve tasks, aggregates, and prints the leaderboard plus the pairwise diff table. The tests in <code>code/tests/test_leaderboard.py</code> pin the bootstrap, the markdown rendering, the win-rate edge cases, and the empty-input behaviour.</p>
+<p>Read <code>main.py</code> top to bottom. The data shape (EvalRun, LeaderboardRow) comes first, the aggregator next, the bootstrap third, the rendering last. Each function has a focused contract.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>The natural next step is paired-task significance instead of unpaired bootstrap. If model A and B both ran the same hundred tasks, the appropriate test is the paired bootstrap on task-by-task differences, which we implement. Beyond that, you want a hierarchical bootstrap that respects task families (math problems are not independent from each other; an arithmetic error pattern affects ten of them). That is a follow-up. The point of this lesson is to get the floor right so the eval reports a number you can defend.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./73-perplexity-calibration.html"><span>← Previous</span><b>perplexity calibration</b></a>
+      <a class="next" href="./75-end-to-end-eval-runner.html"><span>Next →</span><b>end to end eval runner</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

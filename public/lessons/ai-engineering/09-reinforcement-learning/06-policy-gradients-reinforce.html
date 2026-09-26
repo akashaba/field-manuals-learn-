@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Policy Gradient — REINFORCE from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/06-policy-gradients-reinforce/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Policy Gradient — REINFORCE from Scratch</h1>
+    <p class="lesson-sub">Stop estimating value. Parameterize the policy directly, compute the gradient of expected return, step uphill. Williams (1992) wrote it in one theorem. It is why PPO, GRPO, and every LLM RL loop exist.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 3 · 03 (Backpropagation), Phase 9 · 03 (Monte Carlo), Phase 9 · 04 (TD Learning)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="16.3" y="120.3" width="26.6" height="26.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(141 29.6 133.6)"/>
+        <circle cx="24.2" cy="128.7" r="12.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="18.7" cy="123.8" r="12.0" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Policy Gradient —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">REINFORCE from…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Q-learning and DQN parameterize the <em>value</em> function. You pick actions by <code>argmax Q</code>. That is fine for discrete actions and discrete states. It breaks when actions are continuous (which <code>argmax</code> over a 10-dimensional torque?) or when you want a stochastic policy (<code>argmax</code> is deterministic by construction).</p>
+<p>Policy gradients parameterize the <em>policy</em> instead. <code>π_θ(a | s)</code> is a neural net that outputs a distribution over actions. Sample from it to act. Compute the gradient of expected return with respect to <code>θ</code>. Step uphill. No <code>argmax</code>. No Bellman recursion. Just gradient ascent on <code>J(θ) = E_{π_θ}[G]</code>.</p>
+<p>The REINFORCE theorem (Williams 1992) tells you this gradient is computable: <code>∇J(θ) = E_π[ G · ∇_θ log π_θ(a | s) ]</code>. Run an episode. Compute the return. Multiply by <code>∇ log π_θ(a | s)</code> at every step. Average. Gradient-ascent. Done.</p>
+<p>Every LLM-RL algorithm in 2026 — PPO, DPO, GRPO — is a refinement of REINFORCE. Understanding it in your fingers is the prerequisite for the rest of this phase, and for Phase 10 · 07 (RLHF implementation) and Phase 10 · 08 (DPO).</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/06-policy-gradients-reinforce/assets/policy-gradient.svg" alt="Policy gradient: softmax policy, log-π gradient, return-weighted update" loading="lazy" /></figure></p>
+<p><strong>The policy gradient theorem.</strong> For any policy <code>π_θ</code> parameterized by <code>θ</code>:</p>
+<p><code>∇J(θ) = E_{τ ~ π_θ}[ Σ_{t=0}^{T} G_t · ∇_θ log π_θ(a_t | s_t) ]</code></p>
+<p>where <code>G_t = Σ_{k=t}^{T} γ^{k-t} r_{k+1}</code> is the discounted return from step <code>t</code>. The expectation is over full trajectories <code>τ</code> sampled from <code>π_θ</code>.</p>
+<p><strong>The proof is short.</strong> Differentiate <code>J(θ) = Σ_τ P(τ; θ) G(τ)</code> under the expectation. Use <code>∇P(τ; θ) = P(τ; θ) ∇ log P(τ; θ)</code> (the log-derivative trick). Factor <code>log P(τ; θ) = Σ log π_θ(a_t | s_t) + environment terms that do not depend on θ</code>. The environment terms vanish. Two lines of algebra give you the theorem.</p>
+<p><strong>Variance reduction tricks.</strong> Vanilla REINFORCE has murderous variance — returns are noisy, <code>∇ log π</code> is noisy, their product is very noisy. Two standard fixes:</p>
+<ol>
+<li><strong>Baseline subtraction.</strong> Replace <code>G_t</code> with <code>G_t - b(s_t)</code> for any baseline <code>b(s_t)</code> that does not depend on <code>a_t</code>. Unbiased because <code>E[b(s_t) · ∇ log π(a_t | s_t)] = 0</code>. Typical choice: <code>b(s_t) = V̂(s_t)</code> learned by a critic → actor-critic (Lesson 07).</li>
+<li><strong>Reward-to-go.</strong> Replace <code>Σ_t G_t · ∇ log π_θ(a_t | s_t)</code> with <code>Σ_t G_t^{from t} · ∇ log π_θ(a_t | s_t)</code>. Only future returns matter for a given action — past rewards contribute zero-mean noise.</li>
+</ol>
+<p>Combined, you get:</p>
+<p><code>∇J ≈ (1/N) Σ_{i=1}^{N} Σ_{t=0}^{T_i} [ G_t^{(i)} - V̂(s_t^{(i)}) ] · ∇_θ log π_θ(a_t^{(i)} | s_t^{(i)})</code></p>
+<p>which is REINFORCE with a baseline — the direct ancestor of A2C (Lesson 07) and PPO (Lesson 08).</p>
+<p><strong>Softmax policy parameterization.</strong> For discrete actions, the standard choice:</p>
+<p><code>π_θ(a | s) = exp(f_θ(s, a)) / Σ_{a&#39;} exp(f_θ(s, a&#39;))</code></p>
+<p>where <code>f_θ</code> is any neural net that outputs a score per action. The gradient has a clean form:</p>
+<p><code>∇_θ log π_θ(a | s) = ∇_θ f_θ(s, a) - Σ_{a&#39;} π_θ(a&#39; | s) ∇_θ f_θ(s, a&#39;)</code></p>
+<p>i.e., score of the taken action minus its expected value under the policy.</p>
+<p><strong>Gaussian policy for continuous actions.</strong> <code>π_θ(a | s) = N(μ_θ(s), σ_θ(s))</code>. <code>∇ log N(a; μ, σ)</code> has a closed form. That is all Phase 9 · 07&#39;s SAC needs.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">policy-gradient-landscape</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-softmax-policy-network"><a class="anchor" href="#step-1-softmax-policy-network">#</a> Step 1: softmax policy network</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def policy_logits(theta, state_features):
+    return [dot(theta[a], state_features) for a in range(N_ACTIONS)]
+
+def softmax(logits):
+    m = max(logits)
+    exps = [exp(l - m) for l in logits]
+    Z = sum(exps)
+    return [e / Z for e in exps]</code></pre>
+      </div>
+    <p>Use a linear policy (one weight vector per action) for a tabular env. For Atari, swap in a CNN and keep the softmax head.</p>
+<h3 id="step-2-sampling-and-log-probability"><a class="anchor" href="#step-2-sampling-and-log-probability">#</a> Step 2: sampling and log-probability</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def sample_action(probs, rng):
+    x = rng.random()
+    cum = 0
+    for a, p in enumerate(probs):
+        cum += p
+        if x &lt;= cum:
+            return a
+    return len(probs) - 1
+
+def log_prob(probs, a):
+    return log(probs[a] + 1e-12)</code></pre>
+      </div>
+    <h3 id="step-3-rollout-with-log-probs-captured"><a class="anchor" href="#step-3-rollout-with-log-probs-captured">#</a> Step 3: rollout with log-probs captured</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rollout(theta, env, rng, gamma):
+    trajectory = []
+    s = env.reset()
+    while not done:
+        logits = policy_logits(theta, s)
+        probs = softmax(logits)
+        a = sample_action(probs, rng)
+        s_next, r, done = env.step(s, a)
+        trajectory.append((s, a, r, probs))
+        s = s_next
+    return trajectory</code></pre>
+      </div>
+    <h3 id="step-4-reinforce-update"><a class="anchor" href="#step-4-reinforce-update">#</a> Step 4: REINFORCE update</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def reinforce_step(theta, trajectory, gamma, lr, baseline=0.0):
+    returns = compute_returns(trajectory, gamma)
+    for (s, a, _, probs), G in zip(trajectory, returns):
+        advantage = G - baseline
+        grad_log_pi_a = [-p for p in probs]
+        grad_log_pi_a[a] += 1.0
+        for i in range(N_ACTIONS):
+            for j in range(len(s)):
+                theta[i][j] += lr * advantage * grad_log_pi_a[i] * s[j]</code></pre>
+      </div>
+    <p>The gradient <code>∇ log π(a|s) = e_a - π(·|s)</code> (onehot of <code>a</code> minus probabilities) is the heart of softmax policy gradients. Burn it into muscle memory.</p>
+<h3 id="step-5-baselines"><a class="anchor" href="#step-5-baselines">#</a> Step 5: baselines</h3>
+<p>A running mean of <code>G</code> over recent episodes is enough variance reduction to get a 4×4 GridWorld running; it takes ~500 episodes to converge. Upgrade the baseline to a learned <code>V̂(s)</code> and you get actor-critic.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Exploding gradients.</strong> Returns can be huge. Always normalize <code>G</code> to <code>~N(0, 1)</code> across the batch before multiplying by <code>∇ log π</code>.</li>
+<li><strong>Entropy collapse.</strong> The policy converges to a near-deterministic action too early, stops exploring, gets stuck. Fix: add entropy bonus <code>β · H(π(·|s))</code> to the objective.</li>
+<li><strong>High variance.</strong> Vanilla REINFORCE needs thousands of episodes. A critic baseline (Lesson 07) or TRPO/PPO&#39;s trust region (Lesson 08) is the standard fix.</li>
+<li><strong>Sample inefficiency.</strong> On-policy means you throw away every transition after one update. Off-policy corrections via importance sampling bring back data, at the cost of variance (PPO&#39;s ratio is a clipped IS weight).</li>
+<li><strong>Non-stationary gradients.</strong> The same gradient from 100 episodes ago uses old <code>π</code>. On-policy methods update every few rollouts for this reason.</li>
+<li><strong>Credit assignment.</strong> Without reward-to-go, past rewards contribute noise. Always use reward-to-go.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In 2026, REINFORCE is rarely run directly but its gradient formula is everywhere:</p>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Derived method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Continuous control</td>
+<td>PPO / SAC with Gaussian policy</td>
+</tr>
+<tr>
+<td>LLM RLHF</td>
+<td>PPO with KL penalty, running on token-level policy</td>
+</tr>
+<tr>
+<td>LLM reasoning (DeepSeek)</td>
+<td>GRPO — REINFORCE with group-relative baseline, no critic</td>
+</tr>
+<tr>
+<td>Multi-agent</td>
+<td>Centralized-critic REINFORCE (MADDPG, COMA)</td>
+</tr>
+<tr>
+<td>Discrete action robotics</td>
+<td>A2C, A3C, PPO</td>
+</tr>
+<tr>
+<td>Preference-only settings</td>
+<td>DPO — REINFORCE rewritten as a preference-likelihood loss, no sampling</td>
+</tr>
+</tbody></table>
+<p>When you read <code>loss = -advantage * log_prob</code> in a 2026 training script, that is REINFORCE with a baseline. Entire papers (DPO, GRPO, RLOO) are variance-reduction tricks on top of this one line.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-policy-gradient-trainer.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: policy-gradient-trainer
+description: Produce a REINFORCE / actor-critic / PPO training config for a given task and diagnose variance issues.
+version: 1.0.0
+phase: 9
+lesson: 6
+tags: [rl, policy-gradient, reinforce]
+---
+
+Given an environment (discrete / continuous actions, horizon, reward stats), output:
+
+1. Policy head. Softmax (discrete) or Gaussian (continuous) with parameter counts.
+2. Baseline. None (vanilla), running mean, learned `V̂(s)`, or A2C critic.
+3. Variance controls. Reward-to-go on by default, return normalization, gradient clip value.
+4. Entropy bonus. Coefficient β and decay schedule.
+5. Batch size. Episodes per update; on-policy data freshness contract.
+
+Refuse REINFORCE-no-baseline on horizons &gt; 500 steps. Refuse continuous-action control with a softmax head. Flag any run with `β = 0` and observed policy entropy &lt; 0.1 as entropy-collapsed.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Implement REINFORCE on 4×4 GridWorld with a linear softmax policy. Train for 1,000 episodes without a baseline. Plot the learning curve; measure variance (std of returns).</li>
+<li><strong>Medium.</strong> Add a running-mean baseline. Train again. Compare sample efficiency and variance to the vanilla run. By how much does the baseline reduce steps to convergence?</li>
+<li><strong>Hard.</strong> Add an entropy bonus <code>β · H(π)</code>. Sweep <code>β ∈ {0, 0.01, 0.1, 1.0}</code>. Plot final return and policy entropy. Where is the sweet spot on this task?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Policy gradient</td>
+<td>&quot;Train the policy directly&quot;</td>
+<td><code>∇J(θ) = E[G · ∇ log π_θ(a|s)]</code>; derived from the log-derivative trick.</td>
+</tr>
+<tr>
+<td>REINFORCE</td>
+<td>&quot;The original PG algorithm&quot;</td>
+<td>Williams (1992); Monte Carlo returns multiplied by log-policy gradient.</td>
+</tr>
+<tr>
+<td>Log-derivative trick</td>
+<td>&quot;Score function estimator&quot;</td>
+<td><code>∇P(τ;θ) = P(τ;θ) · ∇ log P(τ;θ)</code>; makes gradients of expectations tractable.</td>
+</tr>
+<tr>
+<td>Baseline</td>
+<td>&quot;Variance reduction&quot;</td>
+<td>Any <code>b(s)</code> subtracted from <code>G</code>; unbiased because <code>E[b · ∇ log π] = 0</code>.</td>
+</tr>
+<tr>
+<td>Reward-to-go</td>
+<td>&quot;Only future returns count&quot;</td>
+<td><code>G_t^{from t}</code> instead of the full <code>G_0</code>; correct and lower-variance.</td>
+</tr>
+<tr>
+<td>Entropy bonus</td>
+<td>&quot;Encourage exploration&quot;</td>
+<td><code>+β · H(π(·|s))</code> term keeps the policy from collapsing.</td>
+</tr>
+<tr>
+<td>On-policy</td>
+<td>&quot;Train on what you just saw&quot;</td>
+<td>Gradient expectation is w.r.t. the current policy — cannot reuse old data directly.</td>
+</tr>
+<tr>
+<td>Advantage</td>
+<td>&quot;How much better than average&quot;</td>
+<td><code>A(s, a) = G(s, a) - V(s)</code>; the signed quantity REINFORCE-with-baseline multiplies.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://link.springer.com/article/10.1007/BF00992696">Williams (1992). Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning</a> — the original REINFORCE paper.</li>
+<li><a href="https://papers.nips.cc/paper_files/paper/1999/hash/464d828b85b0bed98e80ade0a5c43b0f-Abstract.html">Sutton et al. (2000). Policy Gradient Methods for Reinforcement Learning with Function Approximation</a> — the modern policy-gradient theorem with function approximation.</li>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 13 — Policy Gradient Methods</a> — textbook presentation.</li>
+<li><a href="https://spinningup.openai.com/en/latest/algorithms/vpg.html">OpenAI Spinning Up — VPG / REINFORCE</a> — clear pedagogical exposition with PyTorch code.</li>
+<li><a href="https://homes.cs.washington.edu/~todorov/courses/amath579/reading/PolicyGradient.pdf">Peters &amp; Schaal (2008). Reinforcement Learning of Motor Skills with Policy Gradients</a> — variance-reduction and the natural-gradient view that connects REINFORCE to the trust-region family (TRPO, PPO).</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-dqn.html"><span>← Previous</span><b>dqn</b></a>
+      <a class="next" href="./07-actor-critic-a2c-a3c.html"><span>Next →</span><b>actor critic a2c a3c</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

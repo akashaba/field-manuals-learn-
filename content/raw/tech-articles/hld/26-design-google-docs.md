@@ -1,0 +1,15 @@
+# Design Google Docs
+
+> System design for a real-time collaborative platform like Google Docs
+
+**Category:** HLD
+**Date:** 2026-08-11
+**Author:** [@Harry_The_Nerd](https://x.com/Harry_The_Nerd)
+**Source:** [Original thread on X](https://x.com/Harry_The_Nerd/status/2084263186199638124)
+
+<blockquote class="twitter-tweet" data-conversation="none" data-dnt="true">
+  <p lang="en" dir="ltr">Loading thread from X&hellip;</p>
+  &mdash; <a href="https://x.com/Harry_The_Nerd/status/2084263186199638124">Design Google Docs</a>
+</blockquote>
+
+The thread renders live from X above. If it doesn't load — X sometimes blocks embeds for signed-out viewers — the [full thread is here](https://x.com/Harry_The_Nerd/status/2084263186199638124).

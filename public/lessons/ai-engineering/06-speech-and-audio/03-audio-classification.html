@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audio Classification — From k-NN on MFCCs to AST and BEATs — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/03-audio-classification/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Audio Classification — From k-NN on MFCCs to AST and BEATs</h1>
+    <p class="lesson-sub">Everything from &quot;dog barking vs siren&quot; to &quot;which language is this&quot; is audio classification. The features are mels. The architecture moves each decade. The evaluation stays AUC, F1, and per-class recall.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 02 (Spectrograms &amp; Mel), Phase 3 · 06 (CNNs), Phase 5 · 08 (CNNs &amp; RNNs for Text)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M82.5,93.0 L90.0,81.8 L97.4,93.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.9" y="118.1" width="26.0" height="26.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(132 26.8 131.1)"/>
+        <circle cx="21.4" cy="126.2" r="12.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.0" cy="121.3" r="11.7" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.6" cy="116.3" r="11.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Audio Classification</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— From k-NN on MFCCs…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You get a 10-second clip. You want to know: &quot;what is it?&quot; Urban sound (siren, drill, dog), speech command (yes/no/stop), language ID (en/es/ar), speaker emotion (angry/neutral), or environmental sound (indoor/outdoor, babble). All of these are <em>audio classification</em>, and in 2026 the baseline architecture is mature: log-mel → CNN or Transformer → softmax.</p>
+<p>The core difficulty is not the network. It is data. Audio datasets have brutal class imbalance, strong domain shift (clean vs noisy), and label noise (who decided &quot;urban babble&quot; vs &quot;restaurant noise&quot;?). The 80% of the problem is curation, augmentation, and evaluation, not swapping CNN for Transformer.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/03-audio-classification/assets/audio-classification.svg" alt="Audio classification ladder: k-NN on MFCCs to AST to BEATs" loading="lazy" /></figure></p>
+<p><strong>k-NN on MFCCs (the 1990s baseline).</strong> Flatten MFCCs per clip, compute cosine similarity to a labeled bank, return majority vote of the top K. Surprisingly strong on clean, small datasets (Speech Commands, ESC-50). Runs with no GPU.</p>
+<p><strong>2D CNN on log-mels (2015-2019).</strong> Treat the <code>(T, n_mels)</code> log-mel as an image. Apply ResNet-18 or VGG-style. Global mean pool the time axis. Softmax over classes. Still the baseline in most 2026 kaggle competitions.</p>
+<p><strong>Audio Spectrogram Transformer, AST (2021-2024).</strong> Patchify the log-mel (e.g. 16×16 patches), add position embeddings, feed to a ViT. State of the art on AudioSet (mAP 0.485) for supervised learning.</p>
+<p><strong>BEATs and WavLM-base (2024-2026).</strong> Self-supervised pretraining on millions of hours. Fine-tune on your task with 1-10% of the supervised data you would have needed. In 2026 this is the default starting point for non-speech audio. BEATs-iter3 beats AST by 1-2 mAP on AudioSet while using 1/4 the compute.</p>
+<p><strong>Whisper-encoder as a frozen backbone (2024).</strong> Take Whisper&#39;s encoder, drop the decoder, attach a linear classifier. Near-SOTA on language ID and simple event classification with zero audio augmentation. The &quot;free lunch&quot; baseline.</p>
+<h3 id="class-imbalance-is-the-real-challenge"><a class="anchor" href="#class-imbalance-is-the-real-challenge">#</a> Class imbalance is the real challenge</h3>
+<p>ESC-50: 50 classes, 40 clips each — balanced, easy. UrbanSound8K: 10 classes, imbalanced 10:1. AudioSet: 632 classes with a 100,000:1 long tail. Techniques that work:</p>
+<ul>
+<li>Balanced sampling during training (not in evaluation).</li>
+<li>Mixup: linearly interpolate two clips (and their labels) as augmentation.</li>
+<li>SpecAugment: mask random time and frequency bands. Simple; critical.</li>
+</ul>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<ul>
+<li>Multiclass exclusive (Speech Commands): top-1 accuracy, top-5 accuracy.</li>
+<li>Multiclass multi-label (AudioSet, UrbanSound-style): mean average precision (mAP).</li>
+<li>Heavily imbalanced: per-class recall + macro F1.</li>
+</ul>
+<p>2026 numbers you should know:</p>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Baseline</th>
+<th>SOTA 2026</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ESC-50</td>
+<td>82% (AST)</td>
+<td>97.0% (BEATs-iter3)</td>
+<td>BEATs paper (2024)</td>
+</tr>
+<tr>
+<td>AudioSet mAP</td>
+<td>0.485 (AST)</td>
+<td>0.548 (BEATs-iter3)</td>
+<td>HEAR leaderboard 2026</td>
+</tr>
+<tr>
+<td>Speech Commands v2</td>
+<td>98% (CNN)</td>
+<td>99.0% (Audio-MAE)</td>
+<td>HEAR v2 results</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mfcc-pipeline</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-featurize"><a class="anchor" href="#step-1-featurize">#</a> Step 1: featurize</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def featurize_mfcc(signal, sr, n_mfcc=13, n_mels=40, frame_len=400, hop=160):
+    mag = stft_magnitude(signal, frame_len, hop)
+    fb = mel_filterbank(n_mels, frame_len, sr)
+    mels = apply_filterbank(mag, fb)
+    log = log_transform(mels)
+    return [dct_ii(frame, n_mfcc) for frame in log]</code></pre>
+      </div>
+    <h3 id="step-2-fixed-length-summary"><a class="anchor" href="#step-2-fixed-length-summary">#</a> Step 2: fixed-length summary</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def summarize(mfcc_frames):
+    n = len(mfcc_frames[0])
+    mean = [sum(f[i] for f in mfcc_frames) / len(mfcc_frames) for i in range(n)]
+    var = [
+        sum((f[i] - mean[i]) ** 2 for f in mfcc_frames) / len(mfcc_frames) for i in range(n)
+    ]
+    return mean + var</code></pre>
+      </div>
+    <p>Simple but strong: mean + variance across time gives a 26-dim fixed embedding for a 13-coef MFCC. Runs instantly. Beat state-of-the-art NN baselines on ESC-50 as recently as 2017.</p>
+<h3 id="step-3-k-nn"><a class="anchor" href="#step-3-k-nn">#</a> Step 3: k-NN</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1e-12
+    nb = math.sqrt(sum(x * x for x in b)) or 1e-12
+    return dot / (na * nb)
+
+def knn_classify(q, bank, labels, k=5):
+    sims = sorted(range(len(bank)), key=lambda i: -cosine(q, bank[i]))[:k]
+    votes = Counter(labels[i] for i in sims)
+    return votes.most_common(1)[0][0]</code></pre>
+      </div>
+    <h3 id="step-4-upgrade-to-cnn-on-log-mels"><a class="anchor" href="#step-4-upgrade-to-cnn-on-log-mels">#</a> Step 4: upgrade to CNN on log-mels</h3>
+<p>In PyTorch:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn as nn
+
+class AudioCNN(nn.Module):
+    def __init__(self, n_mels=80, n_classes=50):
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.head = nn.Linear(128, n_classes)
+
+    def forward(self, x):  # x: (B, 1, T, n_mels)
+        return self.head(self.body(x).flatten(1))</code></pre>
+      </div>
+    <p>3M parameters. Trains in ~10 min on ESC-50 with a single RTX 4090. 80%+ accuracy.</p>
+<h3 id="step-5-the-2026-default-fine-tune-beats"><a class="anchor" href="#step-5-the-2026-default-fine-tune-beats">#</a> Step 5: the 2026 default — fine-tune BEATs</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import ASTFeatureExtractor, ASTForAudioClassification
+
+ext = ASTFeatureExtractor.from_pretrained(&quot;MIT/ast-finetuned-audioset-10-10-0.4593&quot;)
+model = ASTForAudioClassification.from_pretrained(
+    &quot;MIT/ast-finetuned-audioset-10-10-0.4593&quot;,
+    num_labels=50,
+    ignore_mismatched_sizes=True,
+)
+
+inputs = ext(audio, sampling_rate=16000, return_tensors=&quot;pt&quot;)
+logits = model(**inputs).logits</code></pre>
+      </div>
+    <p>For BEATs, use <code>microsoft/BEATs-base</code> via the <code>beats</code> library; the transformers API is the same shape.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Start with</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tiny dataset (&lt;1000 clips)</td>
+<td>k-NN on MFCC means (your baseline) + audio augmentation</td>
+</tr>
+<tr>
+<td>Medium dataset (1K–100K)</td>
+<td>BEATs or AST fine-tune</td>
+</tr>
+<tr>
+<td>Large dataset (&gt;100K)</td>
+<td>Train from scratch or fine-tune Whisper-encoder</td>
+</tr>
+<tr>
+<td>Real-time, edge</td>
+<td>40-MFCC CNN, quantized to int8 (KWS-style)</td>
+</tr>
+<tr>
+<td>Multi-label (AudioSet)</td>
+<td>BEATs-iter3 with BCE loss + mixup + SpecAugment</td>
+</tr>
+<tr>
+<td>Language ID</td>
+<td>MMS-LID, SpeechBrain VoxLingua107 baseline</td>
+</tr>
+</tbody></table>
+<p>Decision rule: <strong>start with a frozen backbone, not a fresh model</strong>. Fine-tuning a BEATs head gets you 95% of SOTA in hours, not weeks.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-classifier-designer.md</code>. Pick architecture, augmentations, class-balance strategy, and eval metric for a given audio classification task.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. It trains the k-NN MFCC baseline on a 4-class synthetic dataset (pure tones at different pitches). Report confusion matrix.</li>
+<li><strong>Medium.</strong> Replace <code>summarize</code> with [mean, var, skew, kurtosis]. Does 4-moment pooling beat mean+var on the same synthetic dataset?</li>
+<li><strong>Hard.</strong> Using <code>torchaudio</code>, train a 2D CNN on ESC-50 fold 1. Report 5-fold cross-validation accuracy. Add SpecAugment (time mask = 20, freq mask = 10) and report the delta.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>AudioSet</td>
+<td>The ImageNet of audio</td>
+<td>Google&#39;s 2M-clip, 632-class weakly-labeled YouTube dataset.</td>
+</tr>
+<tr>
+<td>ESC-50</td>
+<td>Small classification benchmark</td>
+<td>50 classes × 40 clips of environmental sounds.</td>
+</tr>
+<tr>
+<td>AST</td>
+<td>Audio Spectrogram Transformer</td>
+<td>ViT on log-mel patches; 2021 SOTA.</td>
+</tr>
+<tr>
+<td>BEATs</td>
+<td>Self-supervised audio</td>
+<td>Microsoft model, iter3 leads AudioSet as of 2026.</td>
+</tr>
+<tr>
+<td>Mixup</td>
+<td>Pair augmentation</td>
+<td><code>x = λ·x1 + (1-λ)·x2; y = λ·y1 + (1-λ)·y2</code>.</td>
+</tr>
+<tr>
+<td>SpecAugment</td>
+<td>Mask-based augmentation</td>
+<td>Zero-out random time and frequency bands of the spectrogram.</td>
+</tr>
+<tr>
+<td>mAP</td>
+<td>Main multi-label metric</td>
+<td>Mean average precision across classes and thresholds.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2104.01778">Gong, Chung, Glass (2021). AST: Audio Spectrogram Transformer</a> — the architecture of record from 2021–2024.</li>
+<li><a href="https://arxiv.org/abs/2212.09058">Chen et al. (2022, rev. 2024). BEATs: Audio Pre-Training with Acoustic Tokenizers</a> — the 2024+ default.</li>
+<li><a href="https://arxiv.org/abs/1904.08779">Park et al. (2019). SpecAugment</a> — the dominant audio augmentation.</li>
+<li><a href="https://github.com/karolpiczak/ESC-50">Piczak (2015). ESC-50 dataset</a> — 50-class benchmark that lives on.</li>
+<li><a href="https://research.google.com/audioset/">Gemmeke et al. (2017). AudioSet</a> — 632-class YouTube taxonomy; still the gold standard.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-spectrograms-mel-features.html"><span>← Previous</span><b>spectrograms mel features</b></a>
+      <a class="next" href="./04-speech-recognition-asr.html"><span>Next →</span><b>speech recognition asr</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

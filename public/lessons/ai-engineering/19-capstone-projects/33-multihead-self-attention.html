@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multi-Head Self-Attention — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/33-multihead-self-attention/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-frame">The frame</a></li><li><a href="#the-shape-contract">The shape contract</a></li><li><a href="#the-qkv-split">The QKV split</a></li><li><a href="#the-head-reshape">The head reshape</a></li><li><a href="#scaling">Scaling</a></li><li><a href="#the-causal-mask">The causal mask</a></li><li><a href="#the-output-projection">The output projection</a></li><li><a href="#attention-weight-inspection">Attention weight inspection</a></li><li><a href="#the-training-demo">The training demo</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Multi-Head Self-Attention</h1>
+    <p class="lesson-sub">One linear projection, three views, H parallel heads, one mask. The attention block as the model actually uses it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 04 lessons, Phase 07 transformer lessons, Lessons 30 through 32 of this phase</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 33">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="23.9" y="127.2" width="28.7" height="28.7" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(170 38.3 141.5)"/>
+        <rect x="19.2" y="122.9" width="27.4" height="27.4" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(152 32.9 136.6)"/>
+        <rect x="14.4" y="118.6" width="26.1" height="26.1" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.4 131.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">33</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multi-Head</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Self-Attention</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement a batched Query/Key/Value projection as a single linear layer split into H heads.</li>
+<li>Compute scaled dot-product attention with the correct normalization and dtype handling.</li>
+<li>Apply a causal mask that prevents a position from attending to future positions.</li>
+<li>Inspect per-head attention weights for a fixed input and reason about what each head looks at.</li>
+<li>Train a small attention block on a toy task and watch the loss fall as the heads specialize.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-multihead-attention</code></pre>
+      </div>
+    <h2 id="the-frame"><a class="anchor" href="#the-frame">#</a> The frame</h2>
+<p>Attention is the function that lets a token&#39;s representation pull information from other tokens in the same sequence. Self-attention means queries, keys, and values are all derived from the same input. Multi-head means the projection is split into H parallel attention problems whose outputs are concatenated and projected back.</p>
+<p>The efficient implementation pattern is one linear layer that projects from <code>D</code> to <code>3 * D</code> and gets sliced into three views, then reshaped into H heads of size <code>D // H</code> each. The matmul, softmax, and weighted sum happen as batched tensor operations so the heads run in parallel on the accelerator.</p>
+<p>This lesson builds that block. It also adds the causal mask so the same code works as the attention layer in a decoder-only language model. The next lesson stacks the block into a full transformer and the lesson after trains it.</p>
+<h2 id="the-shape-contract"><a class="anchor" href="#the-shape-contract">#</a> The shape contract</h2>
+<p>The input is <code>(B, T, D)</code>. The output is <code>(B, T, D)</code>. The mask is <code>(T, T)</code> or broadcastable to it. Inside the block the intermediate tensors have shape <code>(B, H, T, d_head)</code> where <code>d_head = D // H</code>. The constraint is <code>D % H == 0</code>.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[&quot;(B, T, D) input&quot;] --&gt; B[Linear D -&gt; 3D]
+    B --&gt; C[&quot;split into Q, K, V&quot;]
+    C --&gt; D[&quot;reshape to (B, H, T, d_head)&quot;]
+    D --&gt; E[&quot;scores = Q @ K.T / sqrt(d_head)&quot;]
+    E --&gt; F[apply causal mask]
+    F --&gt; G[softmax over keys]
+    G --&gt; H[&quot;context = weights @ V&quot;]
+    H --&gt; I[&quot;reshape to (B, T, D)&quot;]
+    I --&gt; J[output Linear D -&gt; D]
+    J --&gt; K[&quot;(B, T, D) output&quot;]</pre></div><p>The two linear layers (the QKV projection and the output projection) are the only parameters in the block. The mask, the softmax, the matmuls, and the reshapes are all parameter-free.</p>
+<h2 id="the-qkv-split"><a class="anchor" href="#the-qkv-split">#</a> The QKV split</h2>
+<p>The naive implementation has three separate linear layers, one each for Q, K, and V. The efficient one has a single layer that outputs <code>3 * D</code> features and splits the result. The two are mathematically equivalent because three separate matrix multiplications by <code>(D, D)</code> weights are exactly one matrix multiplication by a <code>(3D, D)</code> weight stacked from them.</p>
+<p>The efficient version is faster because the accelerator launches one matmul instead of three. It is also easier to initialize because the three sub-matrices live in the same parameter tensor and can be initialized together.</p>
+<h2 id="the-head-reshape"><a class="anchor" href="#the-head-reshape">#</a> The head reshape</h2>
+<p>After the split, each of Q, K, V is <code>(B, T, D)</code>. To turn that into H parallel attention problems, we reshape to <code>(B, T, H, d_head)</code> and transpose to <code>(B, H, T, d_head)</code>. The head dimension now sits next to the batch dimension so PyTorch treats the per-head attention as a batched operation across <code>B * H</code> independent instances.</p>
+<p>The d_head dimension stays last so the score matmul <code>Q @ K.transpose(-2, -1)</code> contracts it. The result is <code>(B, H, T, T)</code> per-head attention scores.</p>
+<h2 id="scaling"><a class="anchor" href="#scaling">#</a> Scaling</h2>
+<p>The scores get divided by <code>sqrt(d_head)</code> before softmax. Without that scaling, dot products grow as <code>d_head</code> grows and push the softmax into a regime where one entry has almost all the mass and the others are vanishingly small. The gradients in that regime are tiny and learning stalls. Dividing by <code>sqrt(d_head)</code> keeps the variance of the scores roughly constant across head sizes.</p>
+<h2 id="the-causal-mask"><a class="anchor" href="#the-causal-mask">#</a> The causal mask</h2>
+<p>A decoder-only language model can only condition on the past when predicting the next token. The mask enforces that. Concretely, before the softmax, every entry above the diagonal of the <code>(T, T)</code> score matrix gets replaced by negative infinity. After softmax those positions get weight zero.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    participant Q
+    participant K
+    participant Scores
+    participant Mask
+    participant Softmax
+    participant V
+    Q-&gt;&gt;Scores: Q @ K.T (B, H, T, T)
+    Scores-&gt;&gt;Scores: divide by sqrt(d_head)
+    Mask-&gt;&gt;Scores: set upper triangle to -inf
+    Scores-&gt;&gt;Softmax: row-wise softmax over keys
+    Softmax-&gt;&gt;V: weights @ V -&gt; (B, H, T, d_head)</pre></div><p>We register the mask as a buffer at construction so it lives on the same device as the model and is not part of the gradient graph. The mask covers the maximum context length the block will ever see. At forward time we slice the top-left <code>(T, T)</code> corner.</p>
+<h2 id="the-output-projection"><a class="anchor" href="#the-output-projection">#</a> The output projection</h2>
+<p>After per-head context vectors <code>(B, H, T, d_head)</code>, we transpose back to <code>(B, T, H, d_head)</code>, reshape to <code>(B, T, D)</code>, and apply a final <code>(D, D)</code> linear projection. The output projection lets the model mix the heads. Without it, the H heads would only ever recombine through later layers and the block would be artificially constrained.</p>
+<h2 id="attention-weight-inspection"><a class="anchor" href="#attention-weight-inspection">#</a> Attention weight inspection</h2>
+<p>The lesson exposes a <code>return_weights=True</code> flag on the forward pass. When set, the block returns the per-head attention weights of shape <code>(B, H, T, T)</code> alongside the output. The demo prints a heatmap of one head&#39;s weights on a short input so you can see the causal-triangle structure and the per-position focus.</p>
+<p>In a trained model, different heads learn different patterns. Some heads attend to the immediately previous token. Some heads attend to the start of the sequence. Some heads spread attention almost uniformly. The inspection hook is the entry point for that interpretability work.</p>
+<h2 id="the-training-demo"><a class="anchor" href="#the-training-demo">#</a> The training demo</h2>
+<p>The demo at the bottom of <code>main.py</code> wires the attention block to a tiny LM head and trains the whole thing on a repeat task. Each row of the input is a single random id replicated across the context. The target is the input shifted by one, so the model must learn that the next token is the same as the previous token. The loss is cross-entropy. With H=4, D=32, T=12, and a vocabulary of 64, the loss falls from random (around <code>log(64) ~ 4.16</code>) down to well under <code>1.0</code> over three epochs on CPU.</p>
+<p>The point of the demo is not to train a useful model. The point is to confirm the gradients flow through every piece of the block and the heads learn something on a problem where the answer is obvious.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not add a feed-forward block. The transformer layer in a real model is attention followed by a two-layer MLP with a residual connection and layer norm around each. The next lesson adds those.</p>
+<p>It does not implement rotary or AliBi positional encoding. Both apply at the QKV projection step in the same block, but they are a separate teaching unit. The block as built here is compatible with either by transforming Q and K before the matmul.</p>
+<p>It does not implement KV cache for inference. Caching keys and values across forward passes is the optimization that makes autoregressive decoding fast. It changes the shape contract on the K and V tensors but not on Q. It belongs in the inference lesson.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines <code>MultiHeadSelfAttention</code>. The class holds two linear layers and a registered mask buffer. The forward pass projects, reshapes, scores, masks, softmaxes, weights, reshapes, and projects again. The demo at the bottom builds a small model that wraps the attention with token and positional embeddings and an LM head, trains it on a copy task for three epochs, and prints the loss curve and a per-head attention heatmap. The tests in <code>code/tests/test_attention.py</code> pin the shape contract, the causality property, the softmax property, the head-split property, and the gradient flow.</p>
+<p>Run the demo. Then increase <code>n_heads</code> from 4 to 8 (keeping <code>d_model=32</code>, so <code>d_head=4</code>) and watch the heatmap change.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./32-token-positional-embeddings.html"><span>← Previous</span><b>token positional embeddings</b></a>
+      <a class="next" href="./34-transformer-block.html"><span>Next →</span><b>transformer block</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

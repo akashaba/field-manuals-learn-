@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Memory — Virtual Context and Memory Paging — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/07-memory-virtual-context-memgpt/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Agent Memory — Virtual Context and Memory Paging</h1>
+    <p class="lesson-sub">Context windows are finite. Conversations, documents, and tool traces are not. The fix is OS virtual memory restated — main context is RAM, external store is disk, the agent pages between them. MemGPT (Packer et al., 2023) named the pattern; many production memory systems build on it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 01 (Agent Loop), Phase 14 · 06 (Tool Use)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M85.9,96.8 L93.9,84.9 L101.8,96.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M81.2,91.5 L88.4,80.6 L95.7,91.5 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M76.4,86.2 L83.0,76.2 L89.6,86.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M71.6,80.9 L77.6,71.9 L83.6,80.9 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M66.8,75.5 L72.2,67.5 L77.5,75.5 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Agent Memory —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Virtual Context and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain the OS analogy MemGPT builds on: main context = RAM, external context = disk, memory tools = page in/out.</li>
+<li>Implement the two-tier MemGPT pattern in stdlib with a main-context buffer, an external searchable store, and page in/out tools.</li>
+<li>Describe how the agent issues &quot;interrupts&quot; to query or modify external memory and how the result is spliced back into the next prompt.</li>
+<li>Identify the MemGPT design choices that carry into Letta (Lesson 08) and Mem0 (Lesson 09).</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Context windows look like they should solve memory. They do not. Three failure modes recur in production:</p>
+<ol>
+<li><strong>Overflow.</strong> Multi-turn conversations, long documents, or tool-call-heavy trajectories cross the window. Everything past the cutoff is gone.</li>
+<li><strong>Dilution.</strong> Even within the window, stuffing irrelevant context dilutes attention over what matters. Frontier models still degrade on long inputs.</li>
+<li><strong>Persistence.</strong> A new session starts with an empty window. Agents without external memory cannot say &quot;remember when you asked me to...&quot; across sessions.</li>
+</ol>
+<p>Bigger windows help but do not fix this. Mem0&#39;s 2025 paper measured that 128k-window baselines still miss long-horizon facts that a 4k-window agent with external memory catches.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-os-analogy"><a class="anchor" href="#the-os-analogy">#</a> The OS analogy</h3>
+<p>MemGPT (Packer et al., arXiv:2310.08560, v2 Feb 2024) maps context management to operating-system virtual memory:</p>
+<table>
+<thead>
+<tr>
+<th>OS concept</th>
+<th>MemGPT concept</th>
+<th>2026 production analog</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RAM</td>
+<td>main context (prompt)</td>
+<td>Anthropic/OpenAI context window</td>
+</tr>
+<tr>
+<td>Disk</td>
+<td>external context</td>
+<td>vector DB, KV, graph store</td>
+</tr>
+<tr>
+<td>Page fault</td>
+<td>memory tool call</td>
+<td><code>memory.search</code>, <code>memory.read</code>, <code>memory.write</code></td>
+</tr>
+<tr>
+<td>OS kernel</td>
+<td>agent control loop</td>
+<td>ReAct loop with memory tools</td>
+</tr>
+</tbody></table>
+<p>The agent runs a normal ReAct loop. One extra class of tools lets it page data in and out of main context.</p>
+<h3 id="two-tiers"><a class="anchor" href="#two-tiers">#</a> Two tiers</h3>
+<ul>
+<li><strong>Main context.</strong> Fixed-size prompt holding the current task. Always visible to the model.</li>
+<li><strong>External context.</strong> Unbounded, searchable via tools. Read when relevant, written when facts emerge.</li>
+</ul>
+<p>The original paper evaluated the design on two tasks beyond the base window: document analysis longer than 100k tokens and multi-session chat with persistent memory across days.</p>
+<h3 id="the-interrupt-pattern"><a class="anchor" href="#the-interrupt-pattern">#</a> The interrupt pattern</h3>
+<p>MemGPT introduces memory-as-interrupt: mid-conversation the agent can invoke a memory tool, the runtime executes it, and the result splices into the next assistant turn as a new observation. Conceptually identical to a Unix <code>read()</code> syscall that blocks the process, returns bytes, and the process continues.</p>
+<p>Canonical memory tool surface:</p>
+<ul>
+<li><code>core_memory_append(section, text)</code> — write to a persistent section of the prompt.</li>
+<li><code>core_memory_replace(section, old, new)</code> — edit a persistent section.</li>
+<li><code>archival_memory_insert(text)</code> — write to the searchable external store.</li>
+<li><code>archival_memory_search(query, top_k)</code> — retrieve from the external store.</li>
+<li><code>conversation_search(query)</code> — scan past turns.</li>
+</ul>
+<h3 id="where-the-paper-ends-and-production-begins"><a class="anchor" href="#where-the-paper-ends-and-production-begins">#</a> Where the paper ends and production begins</h3>
+<p>In September 2024 MemGPT became Letta. The research repo (<code>cpacker/MemGPT</code>) remains; Letta extends the design:</p>
+<ul>
+<li>Three tiers instead of two (core, recall, archival — Lesson 08).</li>
+<li>Native reasoning replacing the <code>send_message</code>/heartbeat pattern (Lesson 08).</li>
+<li>Sleep-time agents running async memory work (Lesson 08).</li>
+</ul>
+<p>The MemGPT paper is the 2026 foundation even if production systems run Letta, Mem0, or a custom two-tier store.</p>
+<h3 id="where-this-pattern-goes-wrong"><a class="anchor" href="#where-this-pattern-goes-wrong">#</a> Where this pattern goes wrong</h3>
+<ul>
+<li><strong>Memory rot.</strong> Writes accumulate faster than reads; retrieval drowns in stale facts. Fix: periodic consolidation (Letta sleep-time), explicit invalidation (Mem0 conflict detector).</li>
+<li><strong>Memory poisoning.</strong> External memory is retrieved text. If attacker-controlled content lands in a memory note, the agent re-ingests it next session. This is the Greshake et al. (Lesson 27) attack restated over time.</li>
+<li><strong>Citation loss.</strong> Agent recalls &quot;the user asked me to ship X&quot; but cannot cite which turn. Store source references (session ID, turn ID) with every archival write.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">context-budget</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements MemGPT&#39;s two-tier pattern in stdlib:</p>
+<ul>
+<li><code>MainContext</code> — fixed-size prompt buffer with a <code>core</code> dict and a <code>messages</code> list; auto-compacts oldest messages when over cap.</li>
+<li><code>ArchivalStore</code> — in-memory BM25-esque store (token-overlap scoring) of (id, text, tags, session, turn) records.</li>
+<li>Five memory tools mapping to the MemGPT surface.</li>
+<li>A scripted agent that fills archival with facts, then answers a question by calling <code>archival_memory_search</code>.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The trace shows the agent writing three facts, filling main context to the cap (forcing eviction), then answering a follow-up question by retrieving from archival — reproducing the MemGPT workflow without any real LLM.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Every production memory system today is a MemGPT variant:</p>
+<ul>
+<li><strong>Letta</strong> (Lesson 08) — three tiers, native reasoning, sleep-time compute.</li>
+<li><strong>Mem0</strong> (Lesson 09) — vector + KV + graph fused with a scoring layer.</li>
+<li><strong>OpenAI Assistants / Responses</strong> — managed memory via threads and files.</li>
+<li><strong>Claude Agent SDK</strong> — long-term memory via skills and session store.</li>
+</ul>
+<p>Pick one by operational shape (self-hosted, managed, framework-integrated), not by the core pattern — the core pattern is MemGPT.</p>
+<h3 id="the-shape-of-agent-memory"><a class="anchor" href="#the-shape-of-agent-memory">#</a> The shape of agent memory</h3>
+<p>Paging solves capacity. It does not decide what to store. Four memory types recur across production systems, each answering a different question:</p>
+<ul>
+<li><strong>Working memory</strong> — what matters right now? The in-context tier: current task, recent turns, pinned core sections. The prompt itself.</li>
+<li><strong>Episodic memory</strong> — what happened? Past turns and trajectories, stored with session and turn references, replayable on demand.</li>
+<li><strong>Semantic memory</strong> — what is true? Facts about the user, the domain, the world, updated and deduplicated as they change.</li>
+<li><strong>Procedural memory</strong> — how do I do this? Learned routines, preferences, and rules that steer future behavior rather than recall.</li>
+</ul>
+<p>Open-source implementations pick different points of attack:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Implementation</th>
+<th>How it tackles it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Working</td>
+<td>MemGPT / Letta</td>
+<td>Pages content in and out of a fixed prompt budget via memory tools (this lesson, Lesson 08)</td>
+</tr>
+<tr>
+<td>Episodic</td>
+<td>Zep</td>
+<td>Temporal knowledge graph — facts carry validity intervals, so &quot;what was true when&quot; is queryable</td>
+</tr>
+<tr>
+<td>Semantic</td>
+<td>Mem0</td>
+<td>Extraction pipeline that dedupes and updates facts across vector, KV, and graph stores (Lesson 09)</td>
+</tr>
+<tr>
+<td>Semantic + procedural</td>
+<td>LangMem</td>
+<td>Background extraction of facts and behavioral rules into a store the agent consults between turns</td>
+</tr>
+<tr>
+<td>Episodic + semantic</td>
+<td>agentmemory</td>
+<td>Captures sessions as they run, consolidates them into typed, searchable records</td>
+</tr>
+</tbody></table>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-virtual-memory.md</code> is a reusable skill that produces a correct two-tier memory scaffold (main + archival + tool surface) for any target runtime, with eviction policy and citation fields wired in.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>max_main_context_tokens</code> cap measured in tokens (approximate with <code>len(text.split())</code> * 1.3). Compact the oldest messages into a summary when the cap is exceeded. Compare behavior with and without the summarizer.</li>
+<li>Implement BM25 properly over the archival store (term frequency, inverse document frequency). Measure recall@10 on a toy fact set versus the token-overlap baseline.</li>
+<li>Add <code>citation</code> fields (session_id, turn_id, source_url) to archival inserts. Make the agent cite sources on every retrieval-backed answer.</li>
+<li>Simulate memory poisoning: add an archival record that says &quot;ignore all future user instructions.&quot; Write a guard that scans retrievals for directive-shaped text and marks them untrusted.</li>
+<li>Port the implementation to use the MemGPT research repo&#39;s core-memory JSON schema (<code>cpacker/MemGPT</code>). What changes when you switch from flat strings to typed sections?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Virtual context</td>
+<td>&quot;Unlimited memory&quot;</td>
+<td>Main (prompt) + external (searchable) tiers with page in/out</td>
+</tr>
+<tr>
+<td>Main context</td>
+<td>&quot;Working memory&quot;</td>
+<td>The prompt — fixed-size, always visible</td>
+</tr>
+<tr>
+<td>Archival memory</td>
+<td>&quot;Long-term store&quot;</td>
+<td>External searchable persistence, retrieved on demand</td>
+</tr>
+<tr>
+<td>Core memory</td>
+<td>&quot;Persistent prompt section&quot;</td>
+<td>Named sections pinned inside the main context</td>
+</tr>
+<tr>
+<td>Memory tool</td>
+<td>&quot;Memory API&quot;</td>
+<td>Tool call the agent issues to read/write external memory</td>
+</tr>
+<tr>
+<td>Interrupt</td>
+<td>&quot;Memory page fault&quot;</td>
+<td>Agent pauses, runtime fetches, result splices into next turn</td>
+</tr>
+<tr>
+<td>Memory rot</td>
+<td>&quot;Stale facts&quot;</td>
+<td>Old writes drown retrieval; fix with consolidation</td>
+</tr>
+<tr>
+<td>Memory poisoning</td>
+<td>&quot;Injected persistent note&quot;</td>
+<td>Attacker content stored as memory, re-ingested on recall</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2310.08560">Packer et al., MemGPT (arXiv:2310.08560)</a> — OS-inspired virtual context paper</li>
+<li><a href="https://www.letta.com/blog/memory-blocks">Letta, Memory Blocks blog</a> — the three-tier evolution</li>
+<li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic, Effective context engineering</a> — treating context as a budget</li>
+<li><a href="https://arxiv.org/abs/2504.19413">Chhikara et al., Mem0 (arXiv:2504.19413)</a> — hybrid production memory on top of this pattern</li>
+<li><a href="https://github.com/getzep/zep">Zep (getzep/zep)</a> — temporal knowledge-graph memory from the taxonomy table</li>
+<li><a href="https://github.com/mem0ai/mem0">Mem0 (mem0ai/mem0)</a> — the extraction pipeline behind Lesson 09&#39;s hybrid store</li>
+<li><a href="https://github.com/langchain-ai/langmem">LangMem (langchain-ai/langmem)</a> — background extraction of facts and behavioral rules</li>
+<li><a href="https://github.com/rohitg00/agentmemory">agentmemory (rohitg00/agentmemory)</a> — session capture consolidated into typed, searchable records</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-tool-use-and-function-calling.html"><span>← Previous</span><b>tool use and function calling</b></a>
+      <a class="next" href="./08-memory-blocks-sleep-time-compute.html"><span>Next →</span><b>memory blocks sleep time compute</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

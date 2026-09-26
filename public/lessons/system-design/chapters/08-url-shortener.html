@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 8: Design a URL Shortener — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/08.%20URL%20Shortener/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-high-level-design">Step 1: High-Level Design</a></li><li><a href="#step-2-deep-dive-into-design">Step 2: Deep Dive into Design</a></li><li><a href="#additional-considerations">Additional Considerations</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 8: Design a URL Shortener</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="108.8" cy="105.6" r="9.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.3" cy="100.7" r="9.0" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="97.9" cy="95.7" r="8.4" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.7,95.5 L92.5,83.8 L100.2,95.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.0,90.1 L87.1,79.5 L94.2,90.1 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.2,84.8 L81.7,75.1 L88.1,84.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 8: Design a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">URL Shortener</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>This chapter discusses the design of a URL shortening service like TinyURL. The system&#39;s main goals include <strong>URL shortening</strong>, <strong>redirecting</strong>, and <strong>high scalability</strong> to handle large traffic volumes.</p>
+<h3 id="requirements"><a class="anchor" href="#requirements">#</a> Requirements</h3>
+<ul>
+<li>Shortened URLs must be <strong>unique</strong> and as <strong>short as possible</strong>.</li>
+<li>Handle <strong>100 million URL generations per day</strong> with a 10-year support capacity.</li>
+<li>Support <strong>efficient read operations</strong> with a 10:1 read-to-write ratio.</li>
+<li>Store 365 billion records, requiring approximately <strong>365 TB</strong> of storage over 10 years.</li>
+</ul>
+<hr>
+<h2 id="step-1-high-level-design"><a class="anchor" href="#step-1-high-level-design">#</a> Step 1: High-Level Design</h2>
+<h3 id="api-endpoints"><a class="anchor" href="#api-endpoints">#</a> API Endpoints</h3>
+<ol>
+<li><p><strong>URL Shortening:</strong>  </p>
+<ul>
+<li>Endpoint: <code>POST api/v1/data/shorten</code>  </li>
+<li>Parameters: <code>{longUrl: longURLString}</code>  </li>
+<li>Returns: <code>shortURL</code></li>
+</ul>
+</li>
+<li><p><strong>URL Redirecting:</strong>  </p>
+<ul>
+<li>Endpoint: <code>GET api/v1/shortUrl</code>  </li>
+<li>Returns: <code>longURL</code> for redirection.</li>
+</ul>
+ <p align="center">
+ <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/url-redirection.png" alt="URL Redirection" width="600">
+ </p></li>
+</ol>
+<h3 id="url-redirection"><a class="anchor" href="#url-redirection">#</a> URL Redirection</h3>
+<ul>
+<li><strong>301 Redirect:</strong>  A 301 redirect shows that the requested URL is “permanently” moved to the long URL. The browser caches the response, and
+subsequent requests for the same URL will not be sent to the URL shortening service.</li>
+<li><strong>302 Redirect:</strong> Temporary; useful for analytics like tracking clicks.</li>
+</ul>
+<h3 id="url-shortening"><a class="anchor" href="#url-shortening">#</a> URL Shortening</h3>
+<p align="center">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/url-shortening.png" alt="URL Shortening" width="400">
+</p>
+
+<ul>
+<li>Use a <strong>hash function</strong> to generate a short URL, mapping long URLs to unique shortened versions.</li>
+<li>The hash function must satisfy the following requirements:<ul>
+<li>Each longURL must be hashed to one hashValue.</li>
+<li>Each hashValue can be mapped back to the longURL.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="step-2-deep-dive-into-design"><a class="anchor" href="#step-2-deep-dive-into-design">#</a> Step 2: Deep Dive into Design</h2>
+<h3 id="data-model"><a class="anchor" href="#data-model">#</a> Data Model</h3>
+<p>Store <code>&lt;shortURL, longURL&gt;</code> mappings in a relational database to optimize memory usage. The table schema includes:</p>
+<ul>
+<li><p><code>id</code> (primary key),</p>
+</li>
+<li><p><code>shortURL</code>,</p>
+</li>
+<li><p><code>longURL</code>.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/table-schema.png" alt="Table Schema" width="300"></li>
+</ul>
+<h3 id="hash-function"><a class="anchor" href="#hash-function">#</a> Hash Function</h3>
+<h4 id="1-base-62-conversion"><a class="anchor" href="#1-base-62-conversion">#</a> 1. Base 62 Conversion:</h4>
+<ul>
+<li>Encodes numbers using characters <code>[0-9, a-z, A-Z]</code>, providing <strong>62 possible characters</strong>.</li>
+<li>Base conversion is another approach commonly used for URL shorteners. </li>
+<li>A unique id can be assigned to the short url and ID can be base 62 converted to get the short URL.</li>
+<li>A 7-character hash supports up to <strong>3.5 trillion unique URLs</strong>, enough for 365 billion URLs.</li>
+</ul>
+<p><strong>Example:</strong><br>Convert ID <code>2009215674938</code> to Base 62:</p>
+<ul>
+<li><code>2009215674938</code> → <code>zn9edcu</code>.</li>
+</ul>
+<h4 id="2-hash-collision-resolution"><a class="anchor" href="#2-hash-collision-resolution">#</a> 2. Hash + Collision Resolution:</h4>
+<ul>
+<li><p>Use hash functions like CRC32, MD5, or SHA-1.</p>
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/hash-function.png" alt="Hash Function" width="500">
+</li>
+<li><p>One approach is to collect the first 7 characters of a hash value; however, this method can lead to hash collisions.</p>
+</li>
+<li><p>To resolve collisions,recursively append a new predefined string until no more collision but this can be expensive.</p>
+</li>
+<li><p>Resolve collisions with <strong>Bloom Filters</strong> for efficient lookup.</p>
+  <p align="center">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/url-lookup.png" alt="URL Lookup" width="500">
+  </p></li>
+</ul>
+<h3 id="comparison"><a class="anchor" href="#comparison">#</a> Comparison</h3>
+<ul>
+<li><p><strong>Hash + Collision Resolution:</strong></p>
+<ul>
+<li>Fixed short URL length</li>
+<li>Does not need a unique ID generator</li>
+<li>Collision is possbile and needs resolution</li>
+<li>Not possible to find the next available short URL because it does not depend on ID</li>
+</ul>
+</li>
+<li><p><strong>Base 62 Conversion</strong></p>
+<ul>
+<li>The length is not fixed and goes up with ID</li>
+<li>It needs a unique ID generator</li>
+<li>Collision is not possbile</li>
+<li>Easy to find the next short URL if ID increments by 1 (Can be a security concern)</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h3 id="url-shortening-flow"><a class="anchor" href="#url-shortening-flow">#</a> URL Shortening Flow</h3>
+<p align="center">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/url-shortening-flow.png" alt="URL Shortening" width="500">
+</p>
+
+<ol>
+<li>Check if <code>longURL</code> exists in the database.</li>
+<li>If found, return the existing <code>shortURL</code>.</li>
+<li>Otherwise:<ul>
+<li>Generate a unique ID using a <strong>distributed ID generator</strong>.</li>
+<li>Convert the ID to <code>shortURL</code> using Base 62.</li>
+<li>Store the <code>&lt;id, shortURL, longURL&gt;</code> mapping in the database.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="url-redirecting-flow"><a class="anchor" href="#url-redirecting-flow">#</a> URL Redirecting Flow</h3>
+<p align="center">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/08.%20URL%20Shortener/images/url-redirecting-flow.png" alt="URL Shortening" width="600">
+</p>
+
+<ol>
+<li>User clicks a <code>shortURL</code>.</li>
+<li>Query <code>&lt;shortURL, longURL&gt;</code> mapping:<ul>
+<li>Check the <strong>cache</strong> first for faster access.</li>
+<li>If not in the cache, query the database.</li>
+</ul>
+</li>
+<li>Redirect the user to <code>longURL</code>.</li>
+</ol>
+<hr>
+<h2 id="additional-considerations"><a class="anchor" href="#additional-considerations">#</a> Additional Considerations</h2>
+<h3 id="rate-limiter"><a class="anchor" href="#rate-limiter">#</a> Rate Limiter</h3>
+<ul>
+<li>Prevent abuse by setting limits on requests per IP.</li>
+</ul>
+<h3 id="scalability"><a class="anchor" href="#scalability">#</a> Scalability</h3>
+<ol>
+<li><strong>Web Tier:</strong> Stateless, scalable by adding/removing web servers.</li>
+<li><strong>Database Tier:</strong> Use replication and sharding.</li>
+</ol>
+<h3 id="analytics"><a class="anchor" href="#analytics">#</a> Analytics</h3>
+<ul>
+<li>Collect data like click rates, source, and timestamps for business insights.</li>
+</ul>
+<h3 id="high-availability-and-reliability"><a class="anchor" href="#high-availability-and-reliability">#</a> High Availability and Reliability</h3>
+<ul>
+<li>Ensure consistent and reliable services using database replication and fault-tolerant design.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-unique-id-generator.html"><span>← Previous</span><b>unique id generator</b></a>
+      <a class="next" href="./09-web-crawler.html"><span>Next →</span><b>web crawler</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

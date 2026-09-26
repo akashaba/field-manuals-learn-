@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Self-Supervised Vision — SimCLR, DINO, MAE — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/17-self-supervised-vision/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Self-Supervised Vision — SimCLR, DINO, MAE</h1>
+    <p class="lesson-sub">Labels are the bottleneck of supervised vision. Self-supervised pretraining removes them: learn visual features from 100M unlabelled images, fine-tune on 10k labelled ones.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 04 (Image Classification), Phase 4 Lesson 14 (ViT)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 17">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="106.8" cy="103.8" r="9.4" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="101.4" cy="98.9" r="8.8" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M87.8,98.8 L95.9,86.6 L104.1,98.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.0,93.5 L90.5,82.2 L98.0,93.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.3" y="118.6" width="26.1" height="26.1" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.4 131.6)"/>
+        <circle cx="22.0" cy="126.7" r="12.4" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">17</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Self-Supervised</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Vision — SimCLR…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Trace the three major self-supervised families — contrastive (SimCLR), teacher-student (DINO), masked reconstruction (MAE) — and state what each one optimises</li>
+<li>Implement an InfoNCE loss from scratch and explain why a batch of 512 works but a batch of 32 fails</li>
+<li>Explain why MAE&#39;s 75% masking ratio is not arbitrary and how it differs from BERT&#39;s 15% for text</li>
+<li>Use DINOv2 or MAE ImageNet checkpoints for linear probing and zero-shot retrieval</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Supervised ImageNet has 1.3M labelled images, which cost an estimated $10M to annotate. Medical and industrial datasets are smaller and even more expensive to label. Every vision team asks: can we pretrain on cheap unlabelled data — YouTube frames, web crawls, webcam footage, satellite sweeps — and then fine-tune on a small labelled set?</p>
+<p>Self-supervised learning is the answer. A modern self-supervised ViT trained on LAION or JFT reaches or beats supervised ImageNet accuracy when fine-tuned. It also transfers better to downstream tasks (detection, segmentation, depth) than supervised pretraining. DINOv2 (Meta, 2023) and MAE (Meta, 2022) are the current production defaults for transferable vision features.</p>
+<p>The conceptual shift is that the pretext task — the thing the model is trained to do — does not have to be the downstream task. What matters is that it forces the model to learn useful features. Predict the colour of grayscale images, rotate images and ask the model to classify the rotation, mask patches and reconstruct them — all have worked. The three approaches that scale are contrastive learning, teacher-student distillation, and masked reconstruction.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="three-families"><a class="anchor" href="#three-families">#</a> Three families</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[&quot;Contrastive&lt;br/&gt;SimCLR, MoCo, CLIP&quot;] --&gt; AT[&quot;positive pairs&lt;br/&gt;(same image, 2 augs)&lt;br/&gt;pulled together,&lt;br/&gt;negatives pushed apart&quot;]
+    B[&quot;Teacher-student&lt;br/&gt;DINO, BYOL, iBOT&quot;] --&gt; BT[&quot;student predicts&lt;br/&gt;teacher&#39;s output;&lt;br/&gt;teacher is EMA of student&quot;]
+    C[&quot;Masked reconstruction&lt;br/&gt;MAE, BEiT, SimMIM&quot;] --&gt; CT[&quot;mask 75% of patches;&lt;br/&gt;reconstruct pixel or&lt;br/&gt;token targets&quot;]
+
+    style A fill:#dbeafe,stroke:#2563eb
+    style B fill:#fef3c7,stroke:#d97706
+    style C fill:#dcfce7,stroke:#16a34a</pre></div><h3 id="contrastive-learning-simclr"><a class="anchor" href="#contrastive-learning-simclr">#</a> Contrastive learning (SimCLR)</h3>
+<p>Take one image, apply two random augmentations, get two views. Feed both through the same encoder plus a projection head. Minimise a loss that says &quot;these two embeddings should be close&quot; and &quot;this embedding should be far from every other image&#39;s embeddings in the batch.&quot;</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Loss for positive pair (z_i, z_j) among 2N views per batch:
+
+   L_ij = -log( exp(sim(z_i, z_j) / tau) / sum_k in batch \ {i} exp(sim(z_i, z_k) / tau) )
+
+sim = cosine similarity
+tau = temperature (0.1 standard)</code></pre>
+      </div>
+    <p>This is the InfoNCE loss. It requires many negatives per positive, so batch size matters — SimCLR needs 512-8192. MoCo introduced a momentum queue of past batches to decouple negative count from batch size.</p>
+<h3 id="teacher-student-dino"><a class="anchor" href="#teacher-student-dino">#</a> Teacher-student (DINO)</h3>
+<p>Two networks with the same architecture: student and teacher. The teacher is an exponential moving average (EMA) of the student&#39;s weights. Both see augmented views of the image. The student&#39;s output is trained to match the teacher&#39;s — no explicit negatives.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">loss = CE( student_output(view_1),  teacher_output(view_2) )
+     + CE( student_output(view_2),  teacher_output(view_1) )
+
+teacher_weights = m * teacher_weights + (1 - m) * student_weights   (m ≈ 0.996)</code></pre>
+      </div>
+    <p>Why it does not collapse to &quot;predict a constant&quot;: the teacher&#39;s output is centred (subtract per-dimension mean) and sharpened (divide by small temperature). Centering prevents one dimension from dominating; sharpening prevents output collapse to uniform.</p>
+<p>DINO is what DINOv2 scales up, on 142M curated images. The resulting features are the current SOTA for zero-shot visual retrieval and dense prediction.</p>
+<h3 id="masked-reconstruction-mae"><a class="anchor" href="#masked-reconstruction-mae">#</a> Masked reconstruction (MAE)</h3>
+<p>Mask 75% of patches of a ViT input. Pass only the visible 25% through the encoder. A small decoder receives the encoder&#39;s output plus mask tokens at masked positions, and is trained to reconstruct the pixels of the masked patches.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Encoder:  visible 25% of patches -&gt; features
+Decoder:  features + mask tokens at masked positions -&gt; reconstructed pixels
+Loss:     MSE between reconstructed and original pixels on masked patches only</code></pre>
+      </div>
+    <p>Key design choices that make MAE work:</p>
+<ul>
+<li><strong>75% mask ratio</strong> — high. Forces the encoder to learn semantic features; reconstructing 25% would be near-trivial (neighbouring pixels are so correlated that a CNN could nail it).</li>
+<li><strong>Asymmetric encoder/decoder</strong> — the big ViT encoder only sees visible patches; a small decoder (8-layer, 512-dim) handles reconstruction. 3x faster pretraining than naive BEiT.</li>
+<li><strong>Pixel-space reconstruction target</strong> — simpler than BEiT&#39;s tokenised target and works better on ViT.</li>
+</ul>
+<p>After pretraining, discard the decoder. The encoder is the feature extractor.</p>
+<h3 id="why-75-and-not-15"><a class="anchor" href="#why-75-and-not-15">#</a> Why 75% and not 15%</h3>
+<p>BERT masks 15% of tokens. MAE masks 75%. The difference is information density.</p>
+<ul>
+<li>Natural language has high entropy per token. Predicting 15% of tokens is still hard because each masked position has many plausible completions.</li>
+<li>Image patches have low entropy — an unmasked neighbourhood often determines the masked patch&#39;s pixels almost exactly. To make prediction require semantic understanding, you have to mask aggressively.</li>
+</ul>
+<p>75% is high enough that simple spatial extrapolation cannot solve the task; the encoder must represent the image content.</p>
+<h3 id="linear-probe-evaluation"><a class="anchor" href="#linear-probe-evaluation">#</a> Linear-probe evaluation</h3>
+<p>After self-supervised pretraining, the standard evaluation is a <strong>linear probe</strong>: freeze the encoder, train a single linear classifier on top on ImageNet labels. Reports top-1 accuracy.</p>
+<ul>
+<li>SimCLR ResNet-50: ~71% (2020)</li>
+<li>DINO ViT-S/16: ~77% (2021)</li>
+<li>MAE ViT-L/16: ~76% (2022)</li>
+<li>DINOv2 ViT-g/14: ~86% (2023)</li>
+</ul>
+<p>Linear probe is a pure measure of feature quality; fine-tuning typically adds 2-5 points but also mixes in the effect of head retraining.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">data-augmentation</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-two-view-augmentation-pipeline"><a class="anchor" href="#step-1-two-view-augmentation-pipeline">#</a> Step 1: Two-view augmentation pipeline</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torchvision.transforms as T
+
+two_view_train = lambda: T.Compose([
+    T.RandomResizedCrop(96, scale=(0.2, 1.0)),
+    T.RandomHorizontalFlip(),
+    T.ColorJitter(0.4, 0.4, 0.4, 0.1),
+    T.RandomGrayscale(p=0.2),
+    T.ToTensor(),
+])
+
+
+class TwoViewDataset(torch.utils.data.Dataset):
+    def __init__(self, base):
+        self.base = base
+        self.aug = two_view_train()
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        img, _ = self.base[i]
+        v1 = self.aug(img)
+        v2 = self.aug(img)
+        return v1, v2</code></pre>
+      </div>
+    <p>Each <strong>getitem</strong> returns two augmented views of the same image; labels are not needed.</p>
+<h3 id="step-2-infonce-loss"><a class="anchor" href="#step-2-infonce-loss">#</a> Step 2: InfoNCE loss</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn.functional as F
+
+def info_nce(z1, z2, tau=0.1):
+    &quot;&quot;&quot;
+    z1, z2: (N, D) L2-normalised embeddings of paired views
+    &quot;&quot;&quot;
+    N, D = z1.shape
+    z = torch.cat([z1, z2], dim=0)  # (2N, D)
+    sim = z @ z.T / tau              # (2N, 2N)
+
+    mask = torch.eye(2 * N, dtype=torch.bool, device=z.device)
+    sim = sim.masked_fill(mask, float(&quot;-inf&quot;))
+
+    targets = torch.cat([torch.arange(N, 2 * N), torch.arange(0, N)]).to(z.device)
+    return F.cross_entropy(sim, targets)</code></pre>
+      </div>
+    <p>L2-normalise embeddings before calling. <code>tau=0.1</code> is the SimCLR default; lower makes the loss sharper and requires more negatives.</p>
+<h3 id="step-3-sanity-check-infonce"><a class="anchor" href="#step-3-sanity-check-infonce">#</a> Step 3: Sanity check InfoNCE</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">z1 = F.normalize(torch.randn(16, 32), dim=-1)
+z2 = z1.clone()
+loss_same = info_nce(z1, z2, tau=0.1).item()
+z2_random = F.normalize(torch.randn(16, 32), dim=-1)
+loss_random = info_nce(z1, z2_random, tau=0.1).item()
+print(f&quot;InfoNCE with identical pairs:  {loss_same:.3f}&quot;)
+print(f&quot;InfoNCE with random pairs:     {loss_random:.3f}&quot;)</code></pre>
+      </div>
+    <p>Identical pairs should give a low loss (close to 0 for a large batch and cold temperature). Random pairs should give log(2N-1) = ~log(31) = ~3.4 with a 16-pair batch.</p>
+<h3 id="step-4-mae-style-masking"><a class="anchor" href="#step-4-mae-style-masking">#</a> Step 4: MAE-style masking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def random_mask_indices(num_patches, mask_ratio=0.75, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    n_keep = int(num_patches * (1 - mask_ratio))
+    perm = torch.randperm(num_patches, generator=g)
+    visible = perm[:n_keep]
+    masked = perm[n_keep:]
+    return visible.sort().values, masked.sort().values
+
+
+num_patches = 196
+visible, masked = random_mask_indices(num_patches, mask_ratio=0.75)
+print(f&quot;visible: {len(visible)} / {num_patches}&quot;)
+print(f&quot;masked:  {len(masked)} / {num_patches}&quot;)</code></pre>
+      </div>
+    <p>Simple, fast, and deterministic for a given seed. Real MAE implementations batch this and keep per-sample masks.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>DINOv2 is the production standard in 2026:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+from transformers import AutoImageProcessor, AutoModel
+
+processor = AutoImageProcessor.from_pretrained(&quot;facebook/dinov2-base&quot;)
+model = AutoModel.from_pretrained(&quot;facebook/dinov2-base&quot;)
+model.eval()
+
+# Per-image embeddings for zero-shot retrieval
+with torch.no_grad():
+    inputs = processor(images=[pil_image], return_tensors=&quot;pt&quot;)
+    outputs = model(**inputs)
+    embedding = outputs.last_hidden_state[:, 0]  # CLS token</code></pre>
+      </div>
+    <p>The resulting 768-dim embedding is the backbone of modern image retrieval, dense correspondence, and zero-shot transfer pipelines. Fine-tuning on a downstream task rarely needs more than a linear head.</p>
+<p>For image-text embeddings, SigLIP or OpenCLIP is the equivalent; for MAE-style fine-tuning, the <code>timm</code> repo ships every MAE checkpoint.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-ssl-pretraining-picker.md</code> — a prompt that picks SimCLR / MAE / DINOv2 given dataset size, compute, and downstream task.</li>
+<li><code>outputs/skill-linear-probe-runner.md</code> — a skill that writes the linear-probe evaluation for any frozen encoder + labelled dataset.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Verify that InfoNCE loss drops when you decrease temperature for well-aligned embeddings and rises when you decrease temperature for random embeddings. Produce a plot <code>tau in [0.05, 0.1, 0.2, 0.5]</code> vs loss.</li>
+<li><strong>(Medium)</strong> Implement a DINO-style centre buffer. Show that without the centring, the student collapses to a constant vector within a few epochs.</li>
+<li><strong>(Hard)</strong> Train MAE on CIFAR-100 using the TinyUNet from Lesson 10 as the backbone. Report linear-probe accuracy at 10, 50, and 200 epochs. Show that a MAE-pretrained linear probe beats a from-scratch supervised linear probe on the same 1,000-image subset.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Self-supervised</td>
+<td>&quot;Label-free&quot;</td>
+<td>A pretext task that produces useful representations from unlabelled data</td>
+</tr>
+<tr>
+<td>Pretext task</td>
+<td>&quot;The fake task&quot;</td>
+<td>The objective used during SSL (reconstruct patches, match views); discarded after pretraining</td>
+</tr>
+<tr>
+<td>Linear probe</td>
+<td>&quot;Frozen encoder + linear head&quot;</td>
+<td>Standard SSL evaluation: train only a linear classifier on top of frozen features</td>
+</tr>
+<tr>
+<td>InfoNCE</td>
+<td>&quot;Contrastive loss&quot;</td>
+<td>softmax over cosine similarities; positive pair is the target class, all others are negatives</td>
+</tr>
+<tr>
+<td>EMA teacher</td>
+<td>&quot;Moving-average teacher&quot;</td>
+<td>Teacher whose weights are an exponential moving average of the student&#39;s; used by BYOL, MoCo, DINO</td>
+</tr>
+<tr>
+<td>Mask ratio</td>
+<td>&quot;% of patches hidden&quot;</td>
+<td>Fraction of patches masked during MAE; 75% for vision, 15% for text</td>
+</tr>
+<tr>
+<td>Representation collapse</td>
+<td>&quot;Constant output&quot;</td>
+<td>SSL failure where the encoder outputs a constant vector for all inputs; prevented by centring, sharpening, or negatives</td>
+</tr>
+<tr>
+<td>DINOv2</td>
+<td>&quot;Production SSL backbone&quot;</td>
+<td>Meta&#39;s 2023 self-supervised ViT; strongest general-purpose image features in 2026</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2002.05709">SimCLR (Chen et al., 2020)</a> — contrastive learning reference</li>
+<li><a href="https://arxiv.org/abs/2104.14294">DINO (Caron et al., 2021)</a> — teacher-student with momentum, centring, sharpening</li>
+<li><a href="https://arxiv.org/abs/2111.06377">MAE (He et al., 2022)</a> — masked autoencoder pretraining for ViT</li>
+<li><a href="https://arxiv.org/abs/2304.07193">DINOv2 (Oquab et al., 2023)</a> — scaling self-supervised ViT to production features</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./16-vision-pipeline-capstone.html"><span>← Previous</span><b>vision pipeline capstone</b></a>
+      <a class="next" href="./18-open-vocab-clip.html"><span>Next →</span><b>open vocab clip</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

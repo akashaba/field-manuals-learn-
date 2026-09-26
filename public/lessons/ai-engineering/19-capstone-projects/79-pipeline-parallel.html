@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline Parallel and Bubble Analysis — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/79-pipeline-parallel/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Pipeline Parallel and Bubble Analysis</h1>
+    <p class="lesson-sub">Tensor parallelism splits the matrix multiply across ranks. Pipeline parallelism splits the model across ranks, one stage per rank. Microbatches flow through the pipeline. The empty time at the start and end is the bubble; minimising it is the whole craft.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track C lessons 42-49</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 79">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="119.4" cy="115.3" r="10.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="114.0" cy="110.4" r="10.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.6" cy="105.4" r="9.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.2" cy="100.5" r="9.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.4,100.6 L97.7,88.0 L106.1,100.6 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.6,95.3 L92.3,83.7 L100.0,95.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">79</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Pipeline Parallel</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">and Bubble Analysis</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Split a sequential model into N stages and simulate a forward pipeline across N ranks.</li>
+<li>Schedule M microbatches through the pipeline using the GPipe schedule (forward-only fill, then backward) and compute the bubble fraction.</li>
+<li>Compare bubble against the interleaved 1F1B schedule used in Megatron-LM and PipeDream.</li>
+<li>Defend stage assignment: equal compute per stage matters more than equal parameter count per stage.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A 70B-parameter model in fp16 needs 140 GB of parameters alone. No consumer GPU holds it. ZeRO-3 shards parameters across ranks but still needs every rank to allgather the full layer for each forward step, paying log(N) hops per layer. Pipeline parallel takes a different route: cut the model into N stages and put one stage on each rank. Forward of layer 1 finishes on rank 0 and hands the activation tensor to rank 1; rank 1 runs layer 2 and hands to rank 2; and so on. Backward flows in reverse. Memory drops linearly because each rank only holds one stage; compute is sequential, which is the bubble problem.</p>
+<p>The bubble is the idle time at the start of the pipeline (waiting for the first microbatch to reach the last stage) and at the end (waiting for the last microbatch to drain back through). With M microbatches and N stages the per-stage bubble fraction is (N-1)/(M+N-1). At M=8, N=4 that is 27%. At M=64, N=4 it is 4.5%. The bubble shrinks when you have many microbatches per step, which means small per-microbatch batch sizes, which is the constraint that drives microbatch design.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  R0[rank 0: stage 0 / layer 0] --&gt; R1[rank 1: stage 1 / layer 1]
+  R1 --&gt; R2[rank 2: stage 2 / layer 2]
+  R2 --&gt; R3[rank 3: stage 3 / loss]
+  R3 -.backward.-&gt; R2
+  R2 -.backward.-&gt; R1
+  R1 -.backward.-&gt; R0</pre></div><h3 id="gpipe-schedule"><a class="anchor" href="#gpipe-schedule">#</a> GPipe schedule</h3>
+<p>Fill the pipeline forward with all M microbatches before starting any backward; then drain backward in reverse. Activations from every microbatch must be held until its backward, so memory grows linearly with M. Forward takes M+N-1 cycles, backward takes another M+N-1 cycles. Per-stage useful work is 2M cycles; per-stage bubble is 2(N-1) cycles. Bubble fraction is (N-1)/(M+N-1) when each forward and backward takes one unit of time. Picking M much greater than N hides the bubble.</p>
+<h3 id="1f1b-schedule"><a class="anchor" href="#1f1b-schedule">#</a> 1F1B schedule</h3>
+<p>Interleave: as soon as a microbatch&#39;s forward reaches the last stage, start its backward and let it stream back. The schedule alternates one forward and one backward per stage. Bubble is still N-1 but activation memory is bounded by the pipeline depth, not the microbatch count. Production pipelines use 1F1B (Megatron, PipeDream). The lesson implements GPipe first because it is simpler, and 1F1B as an exercise.</p>
+<h3 id="why-equal-compute-per-stage-matters"><a class="anchor" href="#why-equal-compute-per-stage-matters">#</a> Why equal compute per stage matters</h3>
+<p>If stage 0 takes 50 ms and stage 1 takes 100 ms, every cycle is gated on stage 1. The other stages idle 50 ms per cycle waiting for stage 1 to release. Equal parameter count is the wrong axis: a transformer&#39;s compute is dominated by attention plus MLP per layer, and embedding layers have many parameters but little compute. Stage assignment should equalise FLOPs per stage, not weights per stage.</p>
+<h3 id="microbatch-versus-batch"><a class="anchor" href="#microbatch-versus-batch">#</a> Microbatch versus batch</h3>
+<p>A pipeline runs M microbatches of size B each. The effective batch size is M<em>B. The gradient at the end of a pipeline step is the gradient on the combined M</em>B examples. Bubble fraction depends on M; the optimiser sees M*B. Tuning M means trading bubble (lower with high M) against per-microbatch memory (higher activation memory with high M for GPipe).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cd-pipeline-bubble</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>PipelineStage</code>: a small <code>nn.Module</code> that holds one stage&#39;s parameters and exposes <code>forward(activation)</code>.</li>
+<li><code>Pipeline(stages, num_microbatches)</code>: orchestrates the GPipe schedule on simulated stages using simulated wall-clock per stage.</li>
+<li><code>bubble_fraction(num_stages, num_microbatches)</code>: closed-form (N-1)/(M+N-1).</li>
+<li>A 4-stage demo that prints the per-microbatch trace and the measured bubble fraction.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: a stage-by-microbatch Gantt chart and the bubble percentage against the closed-form prediction.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Three patterns harden pipeline parallel enough to ship.</p>
+<p><strong>Activation checkpointing pairs with pipeline.</strong> With M microbatches in flight on GPipe, activation memory is M times one microbatch. Activation checkpointing recomputes the forward at backward time, trading compute for memory; the combination is what makes pipeline tractable for long sequences.</p>
+<p><strong>Stage balance is measured, not assumed.</strong> Production teams run a profiling pass that measures actual per-layer compute (FLOPs and wall-clock) on the target hardware, then partition by that measurement. The Megatron-LM <code>--num-layers-per-stage</code> flag accepts a list to allow uneven layer counts when stages have different per-layer cost.</p>
+<p><strong>Send-recv schedule must avoid deadlock.</strong> A pipeline that has every stage send before receive deadlocks on the wire. The standard fix is to interleave: even-rank stages send first then recv, odd-rank stages recv first then send. The lesson schedules ranks explicitly so the pattern is visible.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Megatron-LM.</strong> The reference for pipeline parallel at scale. Uses 1F1B and supports tensor + pipeline + data parallel combined.</li>
+<li><strong>DeepSpeed Pipeline.</strong> Integrates with ZeRO; ZeRO-1 + pipeline is a common combo for the largest open models.</li>
+<li><strong>PyTorch Pipe.</strong> The PyTorch-native pipeline wrapper, built on <code>torch.distributed.pipeline.sync.Pipe</code>.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Lesson 80 stores the per-stage parameter shards in the sharded checkpoint. Lesson 81 composes DDP + ZeRO + pipeline on the end-to-end demo (in spirit; the demo keeps the pipeline simulated for runtime).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Implement 1F1B and verify the bubble fraction matches GPipe but activation memory is bounded.</li>
+<li>Profile real per-stage time on a deeper model and rebalance stages by measured wall-clock.</li>
+<li>Add gradient accumulation across pipeline microbatches and check the gradient equals the gradient of the equivalent full-batch forward.</li>
+<li>Pair the pipeline with activation checkpointing and measure the memory drop versus compute cost.</li>
+<li>Combine pipeline with DDP (each pipeline rank is replicated across a data-parallel group) and reason through the 2D schedule.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pipeline</td>
+<td>&quot;Model parallel along depth&quot;</td>
+<td>One stage per rank, activations flow stage to stage</td>
+</tr>
+<tr>
+<td>Bubble</td>
+<td>&quot;Pipeline idle time&quot;</td>
+<td>(N-1) steps at start + end where some stages have no work</td>
+</tr>
+<tr>
+<td>Microbatch</td>
+<td>&quot;Slice of the batch&quot;</td>
+<td>One forward/backward unit; bubble shrinks as M grows</td>
+</tr>
+<tr>
+<td>GPipe</td>
+<td>&quot;Fill then drain&quot;</td>
+<td>All M forwards before any backward; high activation memory</td>
+</tr>
+<tr>
+<td>1F1B</td>
+<td>&quot;Interleaved schedule&quot;</td>
+<td>One forward one backward per stage; bounded activation memory</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1811.06965">Huang et al, GPipe: Efficient Training of Giant Neural Networks</a></li>
+<li><a href="https://arxiv.org/abs/1806.03377">Narayanan et al, PipeDream: Generalized Pipeline Parallelism for DNN Training</a></li>
+<li><a href="https://github.com/NVIDIA/Megatron-LM">Megatron-LM pipeline parallel docs</a></li>
+<li>Phase 19 Lesson 76 - the send/recv primitives the schedule uses</li>
+<li>Phase 19 Lesson 78 - ZeRO is orthogonal to pipeline and often combined</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./78-zero-parameter-sharding.html"><span>← Previous</span><b>zero parameter sharding</b></a>
+      <a class="next" href="./80-checkpoint-sharded-resume.html"><span>Next →</span><b>checkpoint sharded resume</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP Reliability, Cancellation, and Flow Control — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/29-mcp-reliability-cancellation-and-flow-control/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#request-cancellation-is-transport-specific">Request Cancellation Is Transport-Specific</a></li><li><a href="#cancellation-is-a-race">Cancellation Is a Race</a></li><li><a href="#timeouts-need-two-clocks">Timeouts Need Two Clocks</a></li><li><a href="#request-cancellation-is-not-taskscancel">Request Cancellation Is Not `tasks/cancel`</a></li><li><a href="#a-new-json-rpc-id-is-not-idempotency">A New JSON-RPC ID Is Not Idempotency</a></li><li><a href="#backpressure-is-part-of-correctness">Backpressure Is Part of Correctness</a></li><li><a href="#reconnect-means-refetch">Reconnect Means Refetch</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#interactive-lab">Interactive Lab</a></li><li><a href="#practice-lab">Practice Lab</a></li><li><a href="#shipped-artifact">Shipped Artifact</a></li><li><a href="#verify-it">Verify It</a></li><li><a href="#production-failure-modes">Production Failure Modes</a></li><li><a href="#capstone-connection">Capstone Connection</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">MCP Reliability, Cancellation, and Flow Control</h1>
+    <p class="lesson-sub">A request ID correlates a message. It does not make a side effect safe, stop a worker, or protect a stream from a slow consumer.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13, Lessons 09 and 13</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 29">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="102.2" cy="99.6" r="8.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.5,99.6 L96.7,87.2 L105.0,99.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.7,94.3 L91.3,82.9 L98.9,94.3 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <rect x="15.0" y="119.2" width="26.3" height="26.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.2 132.3)"/>
+        <circle cx="22.8" cy="127.4" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">29</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">MCP Reliability,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Cancellation, and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement the correct cancellation signal for stdio and Streamable HTTP.</li>
+<li>Resolve completion and cancellation races without sending messages after cancellation.</li>
+<li>Separate request cancellation from durable <code>tasks/cancel</code> semantics.</li>
+<li>Build retry decisions from side effects and explicit idempotency keys.</li>
+<li>Bound progress queues while preserving final responses.</li>
+<li>Recover streams through reconnect, refetch, and jittered backoff.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The happy path hides the most expensive distributed-systems bugs.</p>
+<p>A client calls a tool. The server starts work. Progress arrives. A proxy buffers the stream. The client reaches its timeout and disconnects. The server finishes one millisecond later. The client retries with a new JSON-RPC id. The mutation runs twice.</p>
+<p>Every component behaved locally. The system failed globally.</p>
+<p>MCP defines message and transport behavior, but your application still owns:</p>
+<ul>
+<li>time budgets;</li>
+<li>business idempotency;</li>
+<li>bounded queues;</li>
+<li>retry classification;</li>
+<li>durable task state;</li>
+<li>reconnect and refetch policy.</li>
+</ul>
+<p>This lesson builds those decisions into a deterministic simulator. There are
+no sleeps, sockets, or random failures. You control cancellation event order
+directly. One synchronized thread test forces two ledger clients to compete
+for the same idempotency key.</p>
+<h2 id="request-cancellation-is-transport-specific"><a class="anchor" href="#request-cancellation-is-transport-specific">#</a> Request Cancellation Is Transport-Specific</h2>
+<p>The intent is the same on every transport: the client no longer needs an in-flight result. The wire signal is different.</p>
+<h3 id="stdio"><a class="anchor" href="#stdio">#</a> stdio</h3>
+<p>stdio uses one shared bidirectional channel. A client sends a notification:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;method&quot;: &quot;notifications/cancelled&quot;,
+  &quot;params&quot;: {
+    &quot;requestId&quot;: 41,
+    &quot;reason&quot;: &quot;User closed the operation&quot;
+  }
+}</code></pre>
+      </div>
+    <p>The notification is fire-and-forget. The server emits no JSON-RPC response to it.</p>
+<p>The server should stop work, free resources, and avoid sending a response for the cancelled request. It may ignore cancellation when the request is unknown, already finished, or cannot be stopped safely.</p>
+<p>Malformed, unknown, and already completed cancellation notifications are ignored. Turning those races into new errors would create more races.</p>
+<h3 id="streamable-http"><a class="anchor" href="#streamable-http">#</a> Streamable HTTP</h3>
+<p>Modern Streamable HTTP gives each request its own HTTP response or SSE response stream. The client cancels by closing that request&#39;s response stream.</p>
+<p>Do not POST <code>notifications/cancelled</code> for an ordinary HTTP request. Stream closure is the cancellation signal.</p>
+<p>Once the server observes the disconnect, it should stop work and must not send more messages for that request.</p>
+<h3 id="server-sent-cancellation-is-narrow"><a class="anchor" href="#server-sent-cancellation-is-narrow">#</a> Server-sent cancellation is narrow</h3>
+<p>A server does not use <code>notifications/cancelled</code> to cancel arbitrary client calls. On stdio, server-sent cancellation is reserved for terminating a <code>subscriptions/listen</code> request. Keep that path separate from ordinary client-request cancellation.</p>
+<h2 id="cancellation-is-a-race"><a class="anchor" href="#cancellation-is-a-race">#</a> Cancellation Is a Race</h2>
+<p>Two event orders are both valid.</p>
+<h3 id="cancellation-wins"><a class="anchor" href="#cancellation-wins">#</a> Cancellation wins</h3>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">request starts
+client sends cancellation signal
+server marks request cancelled
+worker reaches completion
+server suppresses the response</code></pre>
+      </div>
+    <h3 id="completion-wins"><a class="anchor" href="#completion-wins">#</a> Completion wins</h3>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">request starts
+worker commits the result
+server sends the response
+cancellation arrives late
+server ignores the late notification</code></pre>
+      </div>
+    <p>The client must also ignore a late response for a request it already abandoned. Network latency means neither side can prove which event the other side observed first.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mcp-reliability-race</code></pre>
+      </div>
+    <p>The lesson&#39;s <code>RequestCoordinator</code> stores one terminal state. <code>complete()</code> returns no response after cancellation. A late cancellation cannot change a completed record.</p>
+<h2 id="timeouts-need-two-clocks"><a class="anchor" href="#timeouts-need-two-clocks">#</a> Timeouts Need Two Clocks</h2>
+<p>A single inactivity timer is not enough.</p>
+<p>Use two limits:</p>
+<ol>
+<li><strong>Idle timeout.</strong> How long the request may produce no useful activity.</li>
+<li><strong>Maximum timeout.</strong> The absolute wall-clock budget from request start.</li>
+</ol>
+<p>Progress may reset the idle clock. It must never remove the maximum deadline.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">start: 0 ms
+progress: 400 ms
+progress: 800 ms
+progress: 1200 ms
+idle timeout: 500 ms
+maximum timeout: 2000 ms</code></pre>
+      </div>
+    <p>At 1500 ms, the request is still active because the latest progress is only 300 ms old. At 2000 ms, the maximum deadline cancels it even if another progress event arrived at 1999 ms.</p>
+<p>Progress is optional. A server can accept a progress token and emit no updates. Never turn the presence of a token into an infinite timeout.</p>
+<p>MCP progress values must increase. Notifications stop after completion or cancellation. Rate-limit progress so a fast worker cannot flood the transport.</p>
+<h2 id="request-cancellation-is-not-taskscancel"><a class="anchor" href="#request-cancellation-is-not-taskscancel">#</a> Request Cancellation Is Not <code>tasks/cancel</code></h2>
+<p>These mechanisms solve different lifetimes.</p>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Target</th>
+<th>Signal</th>
+<th>What success means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Request cancellation on stdio</td>
+<td>One in-flight RPC</td>
+<td><code>notifications/cancelled</code></td>
+<td>Client abandoned the request; server should stop if practical</td>
+</tr>
+<tr>
+<td>Request cancellation on HTTP</td>
+<td>One in-flight response stream</td>
+<td>Close the stream</td>
+<td>Client abandoned the request; server should stop if practical</td>
+</tr>
+<tr>
+<td><code>tasks/cancel</code></td>
+<td>One durable Task</td>
+<td>Ordinary MCP request</td>
+<td>Server acknowledged cancellation intent</td>
+</tr>
+</tbody></table>
+<p>A successful <code>tasks/cancel</code> result does not prove the worker stopped. The task may remain <code>working</code> until a worker checkpoint observes the flag. Work may complete before that checkpoint.</p>
+<p>Do not erase durable task state when the HTTP connection closes. The reason to create a Task is that its lifecycle outlives one request and one connection.</p>
+<h2 id="a-new-json-rpc-id-is-not-idempotency"><a class="anchor" href="#a-new-json-rpc-id-is-not-idempotency">#</a> A New JSON-RPC ID Is Not Idempotency</h2>
+<p>JSON-RPC ids correlate requests and responses. They do not identify a business operation.</p>
+<p>Suppose a client submits a charge with id <code>41</code>, loses the response, and retries with id <code>42</code>. The server sees two different messages. Without an application key, it cannot know they represent one checkout.</p>
+<p>An idempotency key identifies the business intent:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;name&quot;: &quot;charge_account&quot;,
+  &quot;arguments&quot;: {
+    &quot;account&quot;: &quot;acct-7&quot;,
+    &quot;cents&quot;: 1200,
+    &quot;idempotencyKey&quot;: &quot;checkout-7&quot;
+  }
+}</code></pre>
+      </div>
+    <p>The server stores:</p>
+<ul>
+<li>the key;</li>
+<li>a fingerprint of operation arguments;</li>
+<li>the committed result.</li>
+</ul>
+<p>The same key and same arguments return the stored result. The same key with different arguments is rejected. This prevents accidental key reuse from mutating a different business operation.</p>
+<h3 id="the-ledger-boundary-must-be-atomic-and-durable"><a class="anchor" href="#the-ledger-boundary-must-be-atomic-and-durable">#</a> The ledger boundary must be atomic and durable</h3>
+<p>This sequence is unsafe:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">check key
+run mutation
+store result</code></pre>
+      </div>
+    <p>Two workers can both observe a missing key and both run the mutation. A crash
+after the effect but before the store creates the same ambiguity on retry.</p>
+<p>The lesson uses a file-backed SQLite ledger. <code>BEGIN IMMEDIATE</code> serializes the
+key check, simulated business effect, execution counter, and stored result into
+one transaction. Two independent ledger connections racing with the same key
+therefore observe one committed result and one execution. Closing and reopening
+the ledger keeps that record.</p>
+<p>Every return value is reconstructed from stored JSON. The caller never receives
+the mutable object held by the ledger, so changing a returned dictionary cannot
+corrupt later replay results.</p>
+<p>The simulator&#39;s business effect is the receipt and execution counter inside the
+same SQLite transaction. A real payment, deployment, or external API call is
+not made atomic merely by writing a local table. Production needs a durable
+shared database transaction, a transactional outbox, or an upstream provider
+that enforces the same idempotency key. A process lock alone does not protect
+multiple replicas or survive a restart.</p>
+<h3 id="retry-matrix"><a class="anchor" href="#retry-matrix">#</a> Retry matrix</h3>
+<p>Classify retries before implementing them.</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Example</th>
+<th>Retry rule</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Safe</td>
+<td>Deterministic read with no side effect</td>
+<td>Retry with a new JSON-RPC id after the failure boundary is understood</td>
+</tr>
+<tr>
+<td>Conditional</td>
+<td>Mutation with a durable idempotency key</td>
+<td>Retry with the same key and identical arguments</td>
+</tr>
+<tr>
+<td>Unsafe</td>
+<td>Mutation without business deduplication</td>
+<td>Do not retry automatically; reconcile first</td>
+</tr>
+</tbody></table>
+<p>Tool annotations such as <code>readOnlyHint</code> and <code>idempotentHint</code> remain untrusted hints. The application contract and server implementation decide retry safety.</p>
+<h2 id="backpressure-is-part-of-correctness"><a class="anchor" href="#backpressure-is-part-of-correctness">#</a> Backpressure Is Part of Correctness</h2>
+<p>An SSE producer can generate progress faster than a client, proxy, or network can consume it. An unbounded queue converts slowness into memory exhaustion.</p>
+<p>Use a bounded queue and define what can be lost.</p>
+<p>Progress is replaceable. A later progress value supersedes an earlier one for the same token. A final JSON-RPC response is not replaceable.</p>
+<p>The lesson buffer applies this policy:</p>
+<ol>
+<li>Coalesce adjacent progress for the same token.</li>
+<li>Drop the oldest progress when capacity is reached.</li>
+<li>Mark the stream as needing authoritative refetch.</li>
+<li>Preserve the final response.</li>
+<li>Refuse a state where preserving the final response would require dropping another final response.</li>
+</ol>
+<p>This is bounded loss with explicit recovery. Silent loss is not a strategy.</p>
+<h3 id="proxy-buffering"><a class="anchor" href="#proxy-buffering">#</a> Proxy buffering</h3>
+<p>A server can stream correctly while a reverse proxy holds events in a buffer.</p>
+<p>For an SSE response, send:</p>
+
+      <div class="codeblock" data-lang="http">
+        <span class="cb-label">http</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-http hljs">Content-Type: text/event-stream
+Cache-Control: no-cache
+X-Accel-Buffering: no</code></pre>
+      </div>
+    <p>The 2026 Streamable HTTP specification recommends <code>X-Accel-Buffering: no</code> so compatible proxies deliver events immediately.</p>
+<p>For quiet long-lived streams, periodically emit an SSE comment:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">:</code></pre>
+      </div>
+    <p>The client ignores comment lines. Intermediaries see traffic and are less likely to close an idle connection.</p>
+<p>Keepalive is not progress. Do not reset an operation&#39;s semantic idle timeout merely because a transport comment arrived.</p>
+<h2 id="reconnect-means-refetch"><a class="anchor" href="#reconnect-means-refetch">#</a> Reconnect Means Refetch</h2>
+<p>Modern Streamable HTTP does not support resumable SSE through <code>Last-Event-ID</code>.</p>
+<p>After a <code>subscriptions/listen</code> stream drops:</p>
+<ol>
+<li>Open a new listen request with a new JSON-RPC id.</li>
+<li>Restore the desired subscription filter.</li>
+<li>Refetch affected tools, resources, prompts, or Tasks from authoritative methods.</li>
+<li>Deduplicate application state by stable identifiers.</li>
+<li>Do not replay an unsafe mutation just because its response was lost.</li>
+</ol>
+<p>The sample recovery plan explicitly sets <code>sendLastEventId</code> to false and lists resources to refetch.</p>
+<h3 id="prevent-a-reconnect-herd"><a class="anchor" href="#prevent-a-reconnect-herd">#</a> Prevent a reconnect herd</h3>
+<p>If 10,000 clients reconnect at exactly one second, the recovering server fails again.</p>
+<p>Use exponential backoff with jitter and a cap. The lesson computes deterministic jitter from client id and attempt number so tests remain reproducible:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">attempt 0: up to 250 ms
+attempt 1: up to 500 ms
+attempt 2: up to 1000 ms
+...
+cap: 8000 ms</code></pre>
+      </div>
+    <p>Production can use cryptographically secure or runtime randomness. The invariant is distribution, not a specific formula.</p>
+<h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> builds five small reliability components.</p>
+<h3 id="requestcoordinator"><a class="anchor" href="#requestcoordinator">#</a> <code>RequestCoordinator</code></h3>
+<ul>
+<li>starts an in-flight request with idle and maximum deadlines;</li>
+<li>emits monotonic progress notifications;</li>
+<li>produces the correct stdio or HTTP cancellation signal;</li>
+<li>ignores invalid cancellation notifications;</li>
+<li>makes cancellation and completion terminal races explicit;</li>
+<li>reserves server-sent cancellation for stdio subscriptions.</li>
+</ul>
+<h3 id="mutationledger"><a class="anchor" href="#mutationledger">#</a> <code>MutationLedger</code></h3>
+<ul>
+<li>proves that two JSON-RPC ids execute twice without a business key;</li>
+<li>uses a file-backed SQLite transaction for the key check, simulated effect,
+execution counter, and result commit;</li>
+<li>deduplicates matching arguments under one idempotency key across independent
+ledger connections;</li>
+<li>rejects one key reused with different arguments;</li>
+<li>returns defensive copies and preserves committed records across reopen.</li>
+</ul>
+<h3 id="durabletaskservice"><a class="anchor" href="#durabletaskservice">#</a> <code>DurableTaskService</code></h3>
+<ul>
+<li>acknowledges a cancellation request;</li>
+<li>keeps the task <code>working</code> until a worker checkpoint;</li>
+<li>demonstrates why acknowledgement is not final status.</li>
+</ul>
+<h3 id="boundedssebuffer"><a class="anchor" href="#boundedssebuffer">#</a> <code>BoundedSseBuffer</code></h3>
+<ul>
+<li>coalesces or drops progress under pressure;</li>
+<li>records that authoritative refetch is required;</li>
+<li>never drops the final response.</li>
+</ul>
+<h3 id="recovery-helpers"><a class="anchor" href="#recovery-helpers">#</a> Recovery helpers</h3>
+<ul>
+<li>return proxy-safe SSE headers and keepalive comments;</li>
+<li>create a reconnect and refetch plan;</li>
+<li>spread retries with deterministic exponential backoff and jitter.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>From the repository root:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/29-mcp-reliability-cancellation-and-flow-control/code
+python3 main.py
+python3 -m unittest discover tests -v</code></pre>
+      </div>
+    <p>The demo runs both sides of the central race, executes a transactionally
+deduplicated mutation in a temporary file-backed ledger, overloads a bounded
+progress buffer, and shows a durable Task moving from acknowledged cancellation
+to worker-observed cancellation.</p>
+<h2 id="interactive-lab"><a class="anchor" href="#interactive-lab">#</a> Interactive Lab</h2>
+<p>Run four event orderings without adding sleeps.</p>
+<ol>
+<li>Start request <code>A</code>, cancel it, then call <code>complete()</code>.</li>
+<li>Start request <code>B</code>, complete it, then deliver cancellation.</li>
+<li>Start request <code>C</code>, emit progress before every idle deadline, then cross the maximum deadline.</li>
+<li>Start request <code>D</code> over Streamable HTTP and close its response stream.</li>
+</ol>
+<p>Record for each scenario:</p>
+<ul>
+<li>the terminal request state;</li>
+<li>whether a final response exists;</li>
+<li>the cancellation signal placed on the wire;</li>
+<li>which event the client should ignore.</li>
+</ul>
+<p>Then change <code>D</code> to stdio. The operation is identical, but the cancellation signal must change.</p>
+<h2 id="practice-lab"><a class="anchor" href="#practice-lab">#</a> Practice Lab</h2>
+<p>Add a <code>reserve_inventory</code> mutation to <code>MutationLedger</code>.</p>
+<p>Requirements:</p>
+<ol>
+<li>The key binds SKU, quantity, tenant, and operation name.</li>
+<li>A retry with the same key and same arguments returns the first reservation.</li>
+<li>A retry with changed quantity fails without another reservation.</li>
+<li>An execution that committed but lost its response can be reconciled by key.</li>
+<li>The result records no secret or payment data.</li>
+<li>Automatic retry is disabled when the client did not provide a key.</li>
+<li>Add a simulated subscription drop and refetch the inventory record before deciding what to do next.</li>
+<li>Start two ledger connections at a barrier and submit the same key
+concurrently. Assert one reservation was committed.</li>
+<li>Mutate the first returned reservation object. Replay the key and prove the
+stored result did not change.</li>
+<li>Close and reopen the ledger file, then reconcile the reservation by key.</li>
+</ol>
+<p>Keep the lab honest: if inventory lives in another service, explain whether
+that service accepts the same idempotency key or whether a transactional outbox
+bridges the local commit to the remote effect.</p>
+<h2 id="shipped-artifact"><a class="anchor" href="#shipped-artifact">#</a> Shipped Artifact</h2>
+<p><code>outputs/skill-mcp-reliability-reviewer.md</code> is a flat reliability review skill. Give it an MCP operation, transport, timeout policy, retry behavior, queue policy, and recovery plan. It returns a race table, retry classification, idempotency boundary, flow-control checks, and failure fixtures.</p>
+<h2 id="verify-it"><a class="anchor" href="#verify-it">#</a> Verify It</h2>
+<p>The lesson is complete when these statements are true:</p>
+<ul>
+<li>stdio cancellation sends <code>notifications/cancelled</code> and receives no response.</li>
+<li>Streamable HTTP cancellation closes the request stream and sends no cancellation POST.</li>
+<li>Cancel-before-complete suppresses the final response.</li>
+<li>Complete-before-cancel preserves the response and ignores the late cancellation.</li>
+<li>Progress can reset idle timeout but never maximum timeout.</li>
+<li>A new JSON-RPC id alone executes the mutation again.</li>
+<li>One idempotency key and identical arguments execute once under a concurrent
+two-connection race.</li>
+<li>A committed record survives reopen and replay returns a defensive copy.</li>
+<li>Mutating one returned result cannot alter the stored result.</li>
+<li>The bounded buffer stays within capacity and preserves the final response.</li>
+<li>Reconnect uses a new request, does not send <code>Last-Event-ID</code>, and refetches affected state.</li>
+<li><code>tasks/cancel</code> acknowledgement leaves the task non-terminal until the worker observes it.</li>
+</ul>
+<h2 id="production-failure-modes"><a class="anchor" href="#production-failure-modes">#</a> Production Failure Modes</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Observable symptom</th>
+<th>Correct response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>HTTP client POSTs cancellation notification</td>
+<td>Server and client disagree about request lifetime</td>
+<td>Close the request&#39;s SSE response stream</td>
+</tr>
+<tr>
+<td>Server responds after accepted cancellation</td>
+<td>Client receives an unusable late result</td>
+<td>Stop work and suppress further messages when cancellation wins</td>
+</tr>
+<tr>
+<td>Progress resets every deadline</td>
+<td>Hung work survives forever</td>
+<td>Keep a separate absolute maximum timeout</td>
+</tr>
+<tr>
+<td>New RPC id treated as deduplication</td>
+<td>Charge, deployment, or deletion runs twice</td>
+<td>Add a durable application idempotency key</td>
+</tr>
+<tr>
+<td>Key check and effect are separate</td>
+<td>Concurrent workers both observe a missing key</td>
+<td>Commit key claim, effect record, and result atomically</td>
+</tr>
+<tr>
+<td>In-memory ledger used across replicas</td>
+<td>Restart or another worker forgets prior commits</td>
+<td>Use shared durable storage or upstream idempotency</td>
+</tr>
+<tr>
+<td>Stored mutable result returned directly</td>
+<td>Caller mutation corrupts later replays</td>
+<td>Serialize committed results and return defensive copies</td>
+</tr>
+<tr>
+<td>Key reused with changed arguments</td>
+<td>One key aliases two business intents</td>
+<td>Store and compare an argument fingerprint</td>
+</tr>
+<tr>
+<td>Unbounded progress queue</td>
+<td>Memory rises with a slow consumer</td>
+<td>Coalesce and drop replaceable progress within a bound</td>
+</tr>
+<tr>
+<td>Final response dropped under pressure</td>
+<td>Client cannot know the request outcome</td>
+<td>Reserve capacity or evict progress, never the final response</td>
+</tr>
+<tr>
+<td>Proxy buffers SSE</td>
+<td>Progress arrives in bursts or after timeout</td>
+<td>Disable buffering and configure compatible proxy timeouts</td>
+</tr>
+<tr>
+<td><code>Last-Event-ID</code> assumed</td>
+<td>Client resumes from state the server does not support</td>
+<td>Reconnect with a new request and refetch</td>
+</tr>
+<tr>
+<td>Every client reconnects immediately</td>
+<td>Recovery creates another outage</td>
+<td>Use capped exponential backoff with jitter</td>
+</tr>
+<tr>
+<td>Task ack treated as final cancellation</td>
+<td>Worker keeps running after UI says stopped</td>
+<td>Poll the Task until a terminal status</td>
+</tr>
+</tbody></table>
+<h2 id="capstone-connection"><a class="anchor" href="#capstone-connection">#</a> Capstone Connection</h2>
+<p>The tool-ecosystem capstone should treat reliability as executable evidence, not a paragraph in an architecture diagram.</p>
+<p>Require these artifacts:</p>
+<ul>
+<li>one cancellation race transcript for each transport;</li>
+<li>a retry table for every exposed mutation;</li>
+<li>an idempotency-key record and mismatch fixture;</li>
+<li>a concurrent same-key transcript, a reopen check, and a mutation-alias check;</li>
+<li>a bounded-buffer overload result;</li>
+<li>reverse-proxy SSE headers and idle policy;</li>
+<li>a reconnect plan that names authoritative refetch methods;</li>
+<li>a durable Task cancellation trace when the capstone uses Tasks.</li>
+</ul>
+<p>A green request in a local process proves only the happy path. The capstone is production-ready when lost responses, late cancellation, slow consumers, and reconnect herds have deterministic outcomes.</p>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Request cancellation</td>
+<td>Abandonment of one in-flight MCP request</td>
+</tr>
+<tr>
+<td>Cancellation race</td>
+<td>Competition between terminal completion and cancellation events</td>
+</tr>
+<tr>
+<td>Idle timeout</td>
+<td>Limit since the last useful request activity</td>
+</tr>
+<tr>
+<td>Maximum timeout</td>
+<td>Absolute limit from request start, unaffected by progress</td>
+</tr>
+<tr>
+<td>Idempotency key</td>
+<td>Application identifier that deduplicates one business intent</td>
+</tr>
+<tr>
+<td>Atomic ledger</td>
+<td>Durable boundary that commits the key claim, effect record, and result as one unit</td>
+</tr>
+<tr>
+<td>Backpressure</td>
+<td>Control applied when producers outpace consumers</td>
+</tr>
+<tr>
+<td>Progress coalescing</td>
+<td>Replacing older progress with a newer authoritative value</td>
+</tr>
+<tr>
+<td>Refetch</td>
+<td>Reading current state again after a stream gap</td>
+</tr>
+<tr>
+<td>Jitter</td>
+<td>Deliberate variation that spreads retries across time</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation">MCP Cancellation</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress">MCP Progress</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http">MCP Streamable HTTP</a></li>
+<li><a href="https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks">MCP Tasks Extension</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./28-mcp-tool-contracts-and-content.html"><span>← Previous</span><b>mcp tool contracts and content</b></a>
+      <a class="next" href="./30-mcp-registry-supply-chain-and-drift.html"><span>Next →</span><b>mcp registry supply chain and drift</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

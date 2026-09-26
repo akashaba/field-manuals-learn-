@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RLHF — Reward Model + PPO · Field Manual</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>
+  /* flagship-specific tweaks */
+  .flagship-ribbon {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    background: var(--accent);
+    color: var(--paper);
+    border-radius: 2px;
+    margin-bottom: 14px;
+  }
+  figure.diagram {
+    margin: 40px -20px;
+    padding: 28px 24px 22px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    text-align: center;
+  }
+  figure.diagram svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figure.diagram figcaption {
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    color: var(--ink-soft);
+    text-align: left;
+  }
+  figure.diagram figcaption b { color: var(--ink); }
+  .callout {
+    margin: 28px 0;
+    padding: 16px 20px 14px;
+    background: var(--paper-3);
+    border-left: 3px solid var(--gold);
+    font-size: 15.5px;
+  }
+  .callout .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 6px;
+  }
+  .drop-first::first-letter {
+    font-family: var(--serif);
+    font-weight: 900;
+    font-size: 3.4em;
+    float: left;
+    line-height: 0.9;
+    padding: 4px 10px 0 0;
+    color: var(--accent);
+  }
+  svg .mono { font-family: var(--mono); }
+  svg .serif { font-family: var(--serif); }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+
+<header class="topbar">
+  <a class="home" href="/">AI Engineering · <b>from first principles</b></a>
+  <nav>
+    <a href="/ai-engineering">All phases</a>
+    <a href="/lessons/ai-engineering/10-llms-from-scratch/index.html">Phase 10</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/07-rlhf/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/lessons/ai-engineering/10-llms-from-scratch/index.html">Phase 10</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc">
+      <li><a href="#learning-objectives">Learning Objectives</a></li>
+      <li><a href="#the-problem">The Problem</a></li>
+      <li><a href="#the-three-stages">The Three Stages</a></li>
+      <li><a href="#the-reward-model">The Reward Model</a></li>
+      <li><a href="#bradley-terry">Bradley-Terry Loss</a></li>
+      <li><a href="#ppo">PPO — the Leash</a></li>
+      <li><a href="#reward-hacking">Reward Hacking</a></li>
+      <li><a href="#build-it">Build It</a></li>
+      <li><a href="#use-it">Use It</a></li>
+      <li><a href="#exercises">Exercises</a></li>
+      <li><a href="#key-terms">Key Terms</a></li>
+    </ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <span class="flagship-ribbon">Field Manual · Deep Dive</span>
+    <div class="eyebrow">Phase 10 · Lesson 07</div>
+    <h1 class="lesson-title">RLHF — the reward model<br>and the leash.</h1>
+    <p class="lesson-sub">SFT teaches the model to follow instructions. It does not teach the model which response is <em>better</em>. RLHF is how you encode human judgment into behavior — and it is what makes a modern assistant feel modern.</p>
+
+    <div class="meta-strip">
+      <div><span>Type</span><b>Build</b></div>
+      <div><span>Language</span><b>Python + NumPy</b></div>
+      <div><span>Prereq</span><b>Lesson 06 (SFT)</b></div>
+      <div><span>Time</span><b>~90 min</b></div>
+    </div>
+
+    <h2 id="learning-objectives"># Learning Objectives</h2>
+    <ul>
+      <li>Build a <b>reward model</b> that scores response quality from human preference pairs (chosen vs. rejected).</li>
+      <li>Implement the <b>PPO training loop</b> that optimizes a language-model policy against the reward model with a <b>KL penalty</b>.</li>
+      <li>Explain why RLHF needs <b>three</b> models (SFT, reward, policy) and how the KL constraint prevents reward hacking.</li>
+      <li>Evaluate the effect of RLHF by comparing response quality before and after preference optimization.</li>
+    </ul>
+
+    <h2 id="the-problem"># The Problem</h2>
+    <p class="drop-first">Ask a model &ldquo;Explain quantum computing&rdquo; and it might produce two answers that are both factually correct and grammatically sound — but a human would still pick one over the other every single time.</p>
+
+    <p><b>Response A.</b> &ldquo;Quantum computing uses qubits that can exist in superposition, meaning they can be 0, 1, or both simultaneously. This allows quantum computers to process certain calculations exponentially faster than classical computers. Key algorithms include Shor&rsquo;s algorithm for factoring large numbers and Grover&rsquo;s algorithm for searching unsorted databases.&rdquo;</p>
+
+    <p><b>Response B.</b> &ldquo;Quantum computing is a type of computing that uses quantum mechanical phenomena. It was first proposed in the 1980s. Richard Feynman suggested that quantum systems could be simulated by quantum computers. The field has grown significantly since then. Many companies are now working on quantum computers. IBM, Google, and others have made progress. Quantum supremacy was claimed by Google in 2019.&rdquo;</p>
+
+    <p>Both are correct. A is clearly better — more concise, better structured, more informative. And <b>SFT cannot see the difference</b>. SFT trains on &ldquo;correct&rdquo; responses; it has no mechanism to say &ldquo;this one is better than that one.&rdquo; If both A and B appeared in the SFT dataset, the model would learn from both equally.</p>
+
+    <p>RLHF solves this by training a <b>reward model</b> to predict which response a human prefers, and then using that reward signal to push the language model toward higher-quality outputs. InstructGPT — the precursor to ChatGPT — used RLHF to make GPT-3 dramatically more helpful. OpenAI&rsquo;s evaluators preferred InstructGPT outputs over GPT-3 outputs <b>85% of the time</b>, despite InstructGPT being <b>135× smaller</b> (1.3 B vs. 175 B parameters). That is the entire pitch.</p>
+
+    <h2 id="the-three-stages"># The Three Stages</h2>
+    <p>RLHF is a pipeline of three sequential stages, each building on the previous one. Every stage produces a model, and the last two produce the model artifacts you actually ship.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 900 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Three-stage RLHF pipeline: SFT produces a supervised model; preference pairs train a reward model; PPO optimizes a policy against the reward model with a KL leash back to the frozen SFT reference.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#55503f"/>
+          </marker>
+          <marker id="arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#2a4c72"/>
+          </marker>
+          <marker id="arr-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#a97817"/>
+          </marker>
+        </defs>
+
+        <!-- stage titles -->
+        <text x="150" y="26" class="mono" font-size="11" font-weight="700" fill="#37613b" text-anchor="middle" letter-spacing="1.4">STAGE 1 · SFT</text>
+        <text x="450" y="26" class="mono" font-size="11" font-weight="700" fill="#a97817" text-anchor="middle" letter-spacing="1.4">STAGE 2 · REWARD MODEL</text>
+        <text x="770" y="26" class="mono" font-size="11" font-weight="700" fill="#2a4c72" text-anchor="middle" letter-spacing="1.4">STAGE 3 · PPO</text>
+
+        <!-- stage frames -->
+        <rect x="24" y="42" width="252" height="316" rx="4" fill="#f2ede4" stroke="#c4baa1"/>
+        <rect x="296" y="42" width="308" height="316" rx="4" fill="#f2ede4" stroke="#c4baa1"/>
+        <rect x="624" y="42" width="252" height="316" rx="4" fill="#f2ede4" stroke="#c4baa1"/>
+
+        <!-- STAGE 1 -->
+        <rect x="60" y="72" width="180" height="46" rx="3" fill="#ffffff" stroke="#55503f"/>
+        <text x="150" y="94" class="serif" font-size="14" font-weight="600" fill="#1c1a17" text-anchor="middle">Base model</text>
+        <text x="150" y="110" class="mono" font-size="10" fill="#55503f" text-anchor="middle">next-token pretrained</text>
+
+        <path d="M150,118 L150,158" stroke="#55503f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="164" y="140" class="mono" font-size="10" fill="#55503f">+ instructions</text>
+
+        <rect x="60" y="160" width="180" height="46" rx="3" fill="#eaf1e9" stroke="#37613b" stroke-width="1.5"/>
+        <text x="150" y="182" class="serif" font-size="14" font-weight="700" fill="#37613b" text-anchor="middle">SFT model</text>
+        <text x="150" y="198" class="mono" font-size="10" fill="#37613b" text-anchor="middle">follows instructions</text>
+
+        <text x="150" y="238" class="mono" font-size="10" fill="#8a8272" text-anchor="middle">27 K instruction-response pairs</text>
+        <text x="150" y="252" class="mono" font-size="10" fill="#8a8272" text-anchor="middle">(InstructGPT: 40 contractors)</text>
+
+        <text x="150" y="304" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">Now the model can</text>
+        <text x="150" y="322" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">follow instructions — but</text>
+        <text x="150" y="340" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">not judge its own answers.</text>
+
+        <!-- STAGE 2 -->
+        <!-- SFT feeds in from stage 1 -->
+        <path d="M256,183 L296,183" stroke="#55503f" stroke-width="1.5" marker-end="url(#arr)" stroke-dasharray="3 3"/>
+
+        <rect x="316" y="70" width="120" height="34" rx="3" fill="#ffffff" stroke="#37613b"/>
+        <text x="376" y="91" class="mono" font-size="11" fill="#37613b" text-anchor="middle">SFT · sampling</text>
+
+        <!-- two candidate responses -->
+        <rect x="316" y="120" width="120" height="30" rx="3" fill="#eaf1e9" stroke="#a97817"/>
+        <text x="376" y="140" class="mono" font-size="11" fill="#1c1a17" text-anchor="middle">Response A</text>
+        <rect x="316" y="158" width="120" height="30" rx="3" fill="#f4e9d5" stroke="#a97817"/>
+        <text x="376" y="178" class="mono" font-size="11" fill="#1c1a17" text-anchor="middle">Response B</text>
+
+        <!-- human picks -->
+        <circle cx="484" cy="154" r="18" fill="#f2ede4" stroke="#a97817" stroke-width="1.5"/>
+        <text x="484" y="149" class="mono" font-size="9" fill="#a97817" text-anchor="middle">human</text>
+        <text x="484" y="162" class="mono" font-size="9" fill="#a97817" text-anchor="middle">judge</text>
+
+        <path d="M438,135 L466,148" stroke="#a97817" stroke-width="1.3" marker-end="url(#arr-g)"/>
+        <path d="M438,173 L466,160" stroke="#a97817" stroke-width="1.3" marker-end="url(#arr-g)"/>
+
+        <text x="510" y="140" class="mono" font-size="11" fill="#37613b">↑ chosen</text>
+        <text x="510" y="172" class="mono" font-size="11" fill="#8f2f20">↓ rejected</text>
+
+        <!-- feed into reward model -->
+        <path d="M484,174 L484,220" stroke="#a97817" stroke-width="1.5" marker-end="url(#arr-g)"/>
+        <rect x="336" y="222" width="240" height="52" rx="4" fill="#faf1de" stroke="#a97817" stroke-width="2"/>
+        <text x="456" y="244" class="serif" font-size="15" font-weight="700" fill="#a97817" text-anchor="middle">Reward model  R(prompt, response) → ℝ</text>
+        <text x="456" y="264" class="mono" font-size="10" fill="#55503f" text-anchor="middle">transformer with scalar head</text>
+
+        <text x="456" y="300" class="mono" font-size="10" fill="#8a8272" text-anchor="middle">Bradley-Terry loss on 33 K pairs</text>
+        <text x="456" y="314" class="mono" font-size="10" fill="#8a8272" text-anchor="middle">~72% held-out accuracy</text>
+        <text x="456" y="340" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">A cheap proxy for human taste.</text>
+
+        <!-- STAGE 3 -->
+        <path d="M584,248 L624,248" stroke="#a97817" stroke-width="1.5" marker-end="url(#arr-g)" stroke-dasharray="3 3"/>
+
+        <!-- policy + reference sit side-by-side -->
+        <rect x="644" y="70" width="100" height="42" rx="3" fill="#e6ecf5" stroke="#2a4c72" stroke-width="2"/>
+        <text x="694" y="88" class="serif" font-size="13" font-weight="700" fill="#2a4c72" text-anchor="middle">Policy π</text>
+        <text x="694" y="102" class="mono" font-size="9" fill="#2a4c72" text-anchor="middle">trainable</text>
+
+        <rect x="756" y="70" width="100" height="42" rx="3" fill="#f2ede4" stroke="#8a8272" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="806" y="88" class="serif" font-size="13" font-weight="700" fill="#55503f" text-anchor="middle">Reference</text>
+        <text x="806" y="102" class="mono" font-size="9" fill="#55503f" text-anchor="middle">frozen SFT</text>
+
+        <!-- KL leash: horizontal double-headed arrow between them -->
+        <path d="M744,140 C 770,124 786,124 812,140" stroke="#8f2f20" stroke-width="1.4" fill="none"/>
+        <text x="778" y="118" class="mono" font-size="10" fill="#8f2f20" text-anchor="middle">β · KL leash</text>
+
+        <!-- policy generates response -->
+        <path d="M694,112 L694,158" stroke="#2a4c72" stroke-width="1.5" marker-end="url(#arr-a)"/>
+        <rect x="644" y="160" width="188" height="30" rx="3" fill="#ffffff" stroke="#2a4c72"/>
+        <text x="738" y="180" class="mono" font-size="11" fill="#2a4c72" text-anchor="middle">generated response</text>
+
+        <!-- response → reward -->
+        <path d="M738,190 L738,224" stroke="#a97817" stroke-width="1.5" marker-end="url(#arr-g)"/>
+        <rect x="668" y="226" width="140" height="30" rx="3" fill="#faf1de" stroke="#a97817"/>
+        <text x="738" y="246" class="mono" font-size="11" fill="#a97817" text-anchor="middle">R(prompt, response)</text>
+
+        <!-- objective node -->
+        <rect x="668" y="272" width="140" height="34" rx="3" fill="#e6ecf5" stroke="#2a4c72" stroke-width="1.5"/>
+        <text x="738" y="286" class="mono" font-size="11" fill="#2a4c72" text-anchor="middle">reward − β · KL</text>
+        <text x="738" y="298" class="mono" font-size="9" fill="#2a4c72" text-anchor="middle">clipped PPO update</text>
+
+        <!-- feedback loop up to policy -->
+        <path d="M668,289 C 620,289 620,90 644,90" stroke="#2a4c72" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arr-a)"/>
+        <text x="616" y="196" class="mono" font-size="10" fill="#2a4c72" text-anchor="end">gradient</text>
+
+        <text x="750" y="336" class="serif" font-size="12" font-style="italic" fill="#55503f" text-anchor="middle">Improve the reward. Do not</text>
+        <text x="750" y="352" class="serif" font-size="12" font-style="italic" fill="#55503f" text-anchor="middle">stray from the reference.</text>
+      </svg>
+      <figcaption><b>Fig. 1 — the pipeline.</b> Three models, three stages. The SFT model appears in all three: it initializes stage 2&rsquo;s sampler, it initializes stage 3&rsquo;s trainable policy, and it becomes the <em>frozen reference</em> that PPO measures divergence against.</figcaption>
+    </figure>
+
+    <p><b>Stage 1 · SFT.</b> Train a base model on instruction-response pairs (Lesson 06). Output: a model that follows instructions but does not know which response is better than another.</p>
+    <p><b>Stage 2 · Reward Model.</b> Show annotators two responses to the same prompt and ask &ldquo;which is better?&rdquo; Train a model to predict these preferences. The reward model takes <code>(prompt, response)</code> as input and outputs a scalar score.</p>
+    <p><b>Stage 3 · PPO.</b> Use the reward model to generate a training signal for the language model. The language model generates responses, the reward model scores them, and PPO updates the language model to produce higher-scoring responses. A <b>KL divergence penalty</b> prevents the language model from straying too far from the SFT checkpoint.</p>
+
+    <h2 id="the-reward-model"># The Reward Model</h2>
+    <p>The reward model is a language model repurposed as a scorer. Take the SFT model, replace the language-modeling head (which outputs a distribution over vocabulary) with a <b>scalar head</b> (which outputs a single number). The architecture is identical up to the final layer.</p>
+
+    <p>Input: a prompt concatenated with a response. Output: one scalar. Training data: human preference triples <code>(prompt, preferred_response, rejected_response)</code>.</p>
+
+    <h3 id="bradley-terry">The Bradley-Terry loss, visually</h3>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 780 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bradley-Terry loss: reward for preferred minus reward for rejected is passed through a sigmoid to produce the probability that the preferred response wins; the negative log of that probability is the loss.">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#55503f"/>
+          </marker>
+        </defs>
+
+        <!-- preferred bar -->
+        <text x="90" y="34" class="mono" font-size="11" font-weight="700" fill="#37613b" letter-spacing="1">R(pref) = +1.4</text>
+        <rect x="90" y="42" width="200" height="18" fill="#eaf1e9" stroke="#37613b"/>
+        <rect x="90" y="42" width="140" height="18" fill="#37613b"/>
+        <text x="94" y="80" class="serif" font-size="12" font-style="italic" fill="#37613b">preferred response</text>
+
+        <!-- rejected bar -->
+        <text x="90" y="122" class="mono" font-size="11" font-weight="700" fill="#8f2f20" letter-spacing="1">R(rej) = −0.3</text>
+        <rect x="90" y="130" width="200" height="18" fill="#f6ece8" stroke="#8f2f20"/>
+        <rect x="200" y="130" width="30" height="18" fill="#8f2f20"/>
+        <text x="94" y="168" class="serif" font-size="12" font-style="italic" fill="#8f2f20">rejected response</text>
+
+        <!-- difference -->
+        <path d="M296,80 L340,80 L340,140 L296,140" stroke="#55503f" fill="none" stroke-width="1.3"/>
+        <text x="352" y="114" class="mono" font-size="12" fill="#55503f">Δ = R(pref) − R(rej) = 1.7</text>
+
+        <!-- arrow to sigmoid -->
+        <path d="M356,148 L356,182" stroke="#55503f" stroke-width="1.3" marker-end="url(#arr2)"/>
+
+        <!-- sigmoid curve -->
+        <g transform="translate(500 40)">
+          <rect x="0" y="0" width="240" height="180" fill="#f2ede4" stroke="#c4baa1"/>
+          <text x="120" y="16" class="mono" font-size="10" fill="#55503f" text-anchor="middle">P(pref ≻ rej) = σ(Δ)</text>
+          <!-- axes -->
+          <line x1="20" y1="150" x2="220" y2="150" stroke="#8a8272"/>
+          <line x1="120" y1="30" x2="120" y2="150" stroke="#8a8272"/>
+          <!-- sigmoid path from x=-4 to x=4 -->
+          <path d="M20,148 C 60,148 90,145 100,140 C 110,135 115,128 120,90 C 125,52 130,45 140,40 C 150,35 180,32 220,32" stroke="#2a4c72" stroke-width="2" fill="none"/>
+          <!-- Δ marker -->
+          <line x1="164" y1="150" x2="164" y2="42" stroke="#8f2f20" stroke-width="1" stroke-dasharray="3 3"/>
+          <circle cx="164" cy="42" r="4" fill="#8f2f20"/>
+          <text x="170" y="38" class="mono" font-size="10" fill="#8f2f20">σ(1.7) ≈ 0.85</text>
+          <text x="20" y="170" class="mono" font-size="9" fill="#8a8272">Δ = −4</text>
+          <text x="200" y="170" class="mono" font-size="9" fill="#8a8272">+4</text>
+        </g>
+
+        <text x="356" y="212" class="mono" font-size="12" fill="#1c1a17" text-anchor="middle">loss  =  − log σ(Δ)</text>
+        <text x="356" y="234" class="mono" font-size="11" fill="#55503f" text-anchor="middle">high when preferred barely wins,</text>
+        <text x="356" y="250" class="mono" font-size="11" fill="#55503f" text-anchor="middle">near zero when it wins by a mile</text>
+      </svg>
+      <figcaption><b>Fig. 2 — Bradley-Terry loss.</b> <code>sigmoid(R(pref) − R(rej))</code> is the probability the preferred response wins. The negative log of that probability is the loss. Every gradient step widens the gap.</figcaption>
+    </figure>
+
+    <div class="callout">
+      <span class="tag">Why pairwise, not absolute?</span>
+      Humans are terrible at assigning absolute scores (&ldquo;is this a 7.3 or a 7.5?&rdquo;) but very good at relative comparisons. Bradley-Terry converts those relative comparisons into a consistent scalar scoring function. InstructGPT collected <b>33 K comparison pairs from 40 contractors</b>, roughly <b>2 750 hours of human labor</b> — for one reward model.
+    </div>
+
+    <h2 id="ppo"># PPO — the leash</h2>
+    <p>PPO is a reinforcement-learning algorithm. In RLHF, the &ldquo;environment&rdquo; is the reward model, the &ldquo;agent&rdquo; is the language model, and the &ldquo;action&rdquo; is generating a token. The objective PPO maximizes is:</p>
+    <div class="codeblock" data-lang="math">
+      <span class="cb-label">objective</span>
+      <pre><code class="hljs">maximize:  E[ R(prompt, response) ]  −  β · KL( π_policy  ||  π_reference )</code></pre>
+    </div>
+
+    <p>The first term pushes the model to generate high-reward responses. The second term — <b>the leash</b> — prevents the model from deviating too far from the SFT checkpoint. Without it, the model finds degenerate solutions: repeating &ldquo;I&rsquo;m so helpful and harmless!&rdquo; because that phrase happens to score high on the reward model, or drifting into verbose, formal-sounding but empty responses that pattern-match to &ldquo;quality.&rdquo;</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 820 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PPO training loop: prompt goes into policy, policy generates a response, reward model scores it, KL divergence is measured against the frozen reference, and the clipped surrogate objective updates the policy.">
+        <defs>
+          <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#2a4c72"/>
+          </marker>
+          <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#a97817"/>
+          </marker>
+          <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8f2f20"/>
+          </marker>
+        </defs>
+
+        <!-- prompt -->
+        <rect x="30" y="140" width="120" height="46" rx="4" fill="#ffffff" stroke="#55503f"/>
+        <text x="90" y="162" class="serif" font-size="13" font-weight="600" fill="#1c1a17" text-anchor="middle">Prompt</text>
+        <text x="90" y="178" class="mono" font-size="10" fill="#55503f" text-anchor="middle">sampled from dataset</text>
+
+        <!-- policy -->
+        <rect x="200" y="120" width="150" height="86" rx="6" fill="#e6ecf5" stroke="#2a4c72" stroke-width="2"/>
+        <text x="275" y="150" class="serif" font-size="15" font-weight="700" fill="#2a4c72" text-anchor="middle">Policy  π</text>
+        <text x="275" y="170" class="mono" font-size="10" fill="#2a4c72" text-anchor="middle">trainable transformer</text>
+        <text x="275" y="188" class="mono" font-size="10" fill="#2a4c72" text-anchor="middle">initialized from SFT</text>
+
+        <path d="M152,163 L200,163" stroke="#2a4c72" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+        <!-- generated response -->
+        <rect x="400" y="140" width="150" height="46" rx="4" fill="#ffffff" stroke="#2a4c72"/>
+        <text x="475" y="160" class="serif" font-size="13" font-weight="600" fill="#2a4c72" text-anchor="middle">Response</text>
+        <text x="475" y="176" class="mono" font-size="10" fill="#2a4c72" text-anchor="middle">tokens sampled from π</text>
+
+        <path d="M352,163 L400,163" stroke="#2a4c72" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+        <!-- reward model -->
+        <rect x="600" y="90" width="180" height="50" rx="4" fill="#faf1de" stroke="#a97817" stroke-width="2"/>
+        <text x="690" y="112" class="serif" font-size="14" font-weight="700" fill="#a97817" text-anchor="middle">Reward model</text>
+        <text x="690" y="128" class="mono" font-size="10" fill="#a97817" text-anchor="middle">frozen · from Stage 2</text>
+
+        <path d="M552,155 C 600,155 600,120 620,120" stroke="#a97817" stroke-width="1.5" fill="none" marker-end="url(#arr4)"/>
+
+        <!-- reference model -->
+        <rect x="200" y="248" width="150" height="52" rx="6" fill="#f2ede4" stroke="#8a8272" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="275" y="272" class="serif" font-size="14" font-weight="700" fill="#55503f" text-anchor="middle">Reference  π₀</text>
+        <text x="275" y="288" class="mono" font-size="10" fill="#55503f" text-anchor="middle">frozen SFT</text>
+
+        <!-- KL leash: from reference up to policy -->
+        <path d="M275,246 C 275,225 275,220 275,206" stroke="#8f2f20" stroke-width="1.6" fill="none" marker-end="url(#arr5)"/>
+        <text x="290" y="230" class="mono" font-size="10" fill="#8f2f20">β · KL leash</text>
+
+        <!-- response also fed to reference -->
+        <path d="M475,186 C 475,240 400,272 356,272" stroke="#8a8272" stroke-width="1" stroke-dasharray="3 3" fill="none" marker-end="url(#arr3)"/>
+        <text x="430" y="240" class="mono" font-size="9" fill="#8a8272">token probs</text>
+
+        <!-- objective node -->
+        <rect x="600" y="180" width="180" height="60" rx="6" fill="#e6ecf5" stroke="#2a4c72" stroke-width="2"/>
+        <text x="690" y="204" class="serif" font-size="13" font-weight="700" fill="#2a4c72" text-anchor="middle">PPO objective</text>
+        <text x="690" y="222" class="mono" font-size="10" fill="#2a4c72" text-anchor="middle">reward − β · KL</text>
+        <text x="690" y="234" class="mono" font-size="10" fill="#2a4c72" text-anchor="middle">clipped ratio, ε = 0.2</text>
+
+        <!-- from RM into obj -->
+        <path d="M690,142 L690,178" stroke="#a97817" stroke-width="1.5" marker-end="url(#arr4)"/>
+
+        <!-- feedback into policy -->
+        <path d="M600,210 C 480,210 400,110 350,150" stroke="#2a4c72" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arr3)"/>
+        <text x="470" y="102" class="mono" font-size="10" fill="#2a4c72">gradient step</text>
+
+        <text x="410" y="326" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">One episode of the loop. In practice: 256 K episodes, 4 PPO epochs per batch, β = 0.02.</text>
+      </svg>
+      <figcaption><b>Fig. 3 — one PPO episode.</b> The reference model is a frozen copy of the SFT checkpoint. It never trains. Its only job is to compute the token distribution that the leash measures against. If the policy&rsquo;s distribution wanders, the KL penalty grows and cancels the reward — the model gets pulled back toward its old, sensible self.</figcaption>
+    </figure>
+
+    <h3>The clipped surrogate, in one paragraph</h3>
+    <p>PPO&rsquo;s stability trick is the <b>clipped surrogate objective</b>. The ratio between the new policy&rsquo;s and the old policy&rsquo;s probabilities is clipped to <code>[1 − ε, 1 + ε]</code>, typically <code>ε = 0.2</code>. If a single response gets an unusually high reward, the unclipped ratio could be huge, causing the model to dramatically shift toward that one response. Clipping caps the update so a single lucky sample cannot rewrite the policy.</p>
+
+    <div class="codeblock" data-lang="python">
+      <span class="cb-label">python</span>
+      <pre><code class="language-python hljs">ratio         = pi_new(action | state) / pi_old(action | state)
+clipped_ratio = clip(ratio, 1 - epsilon, 1 + epsilon)
+loss          = -min(ratio * advantage, clipped_ratio * advantage)
+
+# advantage is how much better this response was than the baseline
+advantage     = reward(prompt, response) - baseline</code></pre>
+    </div>
+
+    <h2 id="reward-hacking"># Reward Hacking — the dark side</h2>
+    <p>The language model is optimizing against the reward model — which is an <em>imperfect proxy</em> for human preferences. As the language model gets better at maximizing reward, it starts to exploit the reward model&rsquo;s weaknesses. This is <b>reward hacking</b>, and it&rsquo;s the reason the leash exists.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Reward-hacking landscape: the policy starts near the SFT checkpoint in the aligned region, drifts toward high reward-model score but away from true human quality, until the KL leash yanks it back.">
+        <!-- axes -->
+        <line x1="80" y1="260" x2="740" y2="260" stroke="#55503f" stroke-width="1.2"/>
+        <line x1="80" y1="260" x2="80" y2="40"  stroke="#55503f" stroke-width="1.2"/>
+        <text x="740" y="278" class="mono" font-size="11" fill="#55503f" text-anchor="end">reward-model score →</text>
+        <text x="60"  y="46"  class="mono" font-size="11" fill="#55503f" transform="rotate(-90 60,46)" text-anchor="end">↑ true human quality</text>
+
+        <!-- aligned region -->
+        <ellipse cx="240" cy="130" rx="150" ry="80" fill="#eaf1e9" opacity="0.55" stroke="#37613b" stroke-dasharray="4 3"/>
+        <text x="240" y="80" class="mono" font-size="11" fill="#37613b" text-anchor="middle" letter-spacing="1">ALIGNED  REGION</text>
+
+        <!-- hacking region -->
+        <ellipse cx="600" cy="220" rx="120" ry="60" fill="#f6ece8" opacity="0.6" stroke="#8f2f20" stroke-dasharray="4 3"/>
+        <text x="600" y="200" class="mono" font-size="11" fill="#8f2f20" text-anchor="middle" letter-spacing="1">REWARD-HACKING  REGION</text>
+
+        <!-- SFT start point -->
+        <circle cx="200" cy="150" r="6" fill="#37613b"/>
+        <text x="200" y="140" class="mono" font-size="10" fill="#37613b" text-anchor="middle">SFT start</text>
+
+        <!-- drift path -->
+        <path d="M200,150 C 320,150 420,180 560,220" stroke="#8f2f20" stroke-width="2" fill="none" stroke-dasharray="6 4"/>
+        <circle cx="560" cy="220" r="5" fill="#8f2f20"/>
+        <text x="586" y="222" class="mono" font-size="11" fill="#8f2f20">unleashed policy</text>
+
+        <!-- leashed path -->
+        <path d="M200,150 C 260,132 320,120 360,112" stroke="#2a4c72" stroke-width="2" fill="none"/>
+        <circle cx="360" cy="112" r="5" fill="#2a4c72"/>
+        <text x="374" y="108" class="mono" font-size="11" fill="#2a4c72">leashed policy</text>
+
+        <!-- leash -->
+        <path d="M360,112 L200,150" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 3"/>
+        <text x="270" y="145" class="mono" font-size="10" fill="#2a4c72" transform="rotate(-14 270,145)">β · KL leash</text>
+
+        <!-- annotations along the drift path -->
+        <text x="330" y="200" class="mono" font-size="10" fill="#8f2f20">verbosity ↑</text>
+        <text x="420" y="222" class="mono" font-size="10" fill="#8f2f20">sycophancy ↑</text>
+        <text x="510" y="244" class="mono" font-size="10" fill="#8f2f20">bullet-list spam ↑</text>
+
+        <text x="410" y="304" class="serif" font-size="13" font-style="italic" fill="#55503f" text-anchor="middle">Higher on the proxy. Lower on the thing we actually cared about.</text>
+      </svg>
+      <figcaption><b>Fig. 4 — the drift.</b> The x-axis is what the reward model measures; the y-axis is what humans actually want. Perfect alignment would put them on the same line. They&rsquo;re not. Without the leash, PPO climbs the reward axis until it walks off the quality axis entirely.</figcaption>
+    </figure>
+
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Failure</th><th>What happens</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Verbosity</td><td>Responses get longer and longer</td><td>Annotators preferred longer, more detailed responses, so the RM learned length ≈ quality.</td></tr>
+        <tr><td>Sycophancy</td><td>Model agrees with everything the user says</td><td>Annotators preferred responses that agreed with the question&rsquo;s premise.</td></tr>
+        <tr><td>Hedging</td><td>Model refuses to commit to an answer</td><td>&ldquo;Complex topic with many perspectives…&rdquo; rarely gets marked as wrong.</td></tr>
+        <tr><td>Format gaming</td><td>Bullet-list spam</td><td>Formatted responses looked more &ldquo;polished&rdquo; to annotators.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p><b>Mitigations:</b> a stronger KL penalty (prevents straying far enough to exploit weaknesses), training the RM on adversarial examples (patch known failure modes), and ensembling multiple RMs with different architectures (harder to hack them all simultaneously).</p>
+
+    <h3>What real pipelines look like</h3>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Model</th><th>Comparison pairs</th><th>Annotators</th><th>RM size</th><th>PPO steps</th><th>β (KL)</th></tr></thead>
+      <tbody>
+        <tr><td>InstructGPT</td><td>33 K</td><td>40</td><td>6 B</td><td>256 K</td><td>0.02</td></tr>
+        <tr><td>Llama 2 Chat</td><td>~1 M</td><td>undisclosed</td><td>70 B</td><td>undisclosed</td><td>0.01</td></tr>
+        <tr><td>Anthropic HH paper</td><td>22 K</td><td>20</td><td>52 B</td><td>50 K</td><td>0.001</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="build-it"># Build It</h2>
+
+    <h3>Step 1 · Synthetic preference data</h3>
+    <p>In production, human annotators create preference data. We&rsquo;ll create synthetic pairs where the preferred response is objectively better — more concise, more accurate, more helpful — exactly the distinctions SFT cannot make.</p>
+    <div class="codeblock" data-lang="python">
+      <span class="cb-label">python</span>
+      <pre><code class="language-python hljs">import numpy as np
+
+PREFERENCE_DATA = [
+    {
+        "prompt": "What is the capital of France?",
+        "preferred": "The capital of France is Paris.",
+        "rejected": "France is a country in Europe. It has many cities. The capital is Paris. Paris is known for the Eiffel Tower.",
+    },
+    {
+        "prompt": "Explain gravity in one sentence.",
+        "preferred": "Gravity is the force that attracts objects with mass toward each other.",
+        "rejected": "Gravity is something that makes things fall down when you drop them.",
+    },
+    {
+        "prompt": "What is 15 times 7?",
+        "preferred": "15 times 7 is 105.",
+        "rejected": "Let me think about this. 15 times 7. Well, 10 times 7 is 70, and 5 times 7 is 35, so the answer might be around 105.",
+    },
+    {
+        "prompt": "Name three programming languages.",
+        "preferred": "Python, Rust, and TypeScript.",
+        "rejected": "There are many programming languages. Some popular ones include various languages like Python and others.",
+    },
+]</code></pre>
+    </div>
+
+    <h3>Step 2 · Reward-model architecture</h3>
+    <p>The reward model reuses the transformer from the mini-GPT, but replaces the vocabulary-sized output head with a single scalar projection. Everything else — embeddings, blocks, layer-norm — is identical.</p>
+    <div class="codeblock" data-lang="python">
+      <span class="cb-label">python</span>
+      <pre><code class="language-python hljs">class RewardModel:
+    def __init__(self, vocab_size=256, embed_dim=128, num_heads=4,
+                 num_layers=4, max_seq_len=128, ff_dim=512):
+        self.embedding   = Embedding(vocab_size, embed_dim, max_seq_len)
+        self.blocks      = [TransformerBlock(embed_dim, num_heads, ff_dim)
+                            for _ in range(num_layers)]
+        self.ln_f        = LayerNorm(embed_dim)
+        self.reward_head = np.random.randn(embed_dim) * 0.02
+
+    def forward(self, token_ids):
+        seq_len = token_ids.shape[-1]
+        mask    = np.triu(np.full((seq_len, seq_len), -1e9), k=1)
+
+        x = self.embedding.forward(token_ids)
+        for block in self.blocks:
+            x = block.forward(x, mask)
+        x = self.ln_f.forward(x)
+
+        last_hidden = x[:, -1, :]        # last position — has seen everything
+        reward      = last_hidden @ self.reward_head
+        return reward</code></pre>
+    </div>
+    <p>Why the last token? Because the causal attention mask means the last position has attended to every previous token — it has the most complete representation of the whole <code>(prompt, response)</code> sequence.</p>
+
+    <h3>Step 3 · Bradley-Terry loss</h3>
+    <div class="codeblock" data-lang="python">
+      <span class="cb-label">python</span>
+      <pre><code class="language-python hljs">def sigmoid(x):
+    return np.where(x >= 0,
+                    1.0 / (1.0 + np.exp(-x)),
+                    np.exp(x) / (1.0 + np.exp(x)))
+
+def bradley_terry_loss(reward_preferred, reward_rejected):
+    diff = reward_preferred - reward_rejected
+    return -np.log(sigmoid(diff) + 1e-8)
+
+def train_reward_model(rm, preference_data, num_epochs=10, lr=1e-4, max_seq_len=128):
+    losses, accuracies = [], []
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        correct    = 0
+        for idx in np.random.permutation(len(preference_data)):
+            pair = preference_data[idx]
+
+            pref_ids = np.array(tokenize_for_reward(pair["prompt"], pair["preferred"])[:max_seq_len]).reshape(1, -1)
+            rej_ids  = np.array(tokenize_for_reward(pair["prompt"], pair["rejected"])[:max_seq_len]).reshape(1, -1)
+
+            r_pref = rm.forward(pref_ids)[0]
+            r_rej  = rm.forward(rej_ids)[0]
+
+            loss   = bradley_terry_loss(r_pref, r_rej)
+            if r_pref > r_rej: correct += 1
+
+            grad = sigmoid(r_pref - r_rej) - 1.0
+            rm.reward_head -= lr * grad * rm.ln_f.forward(rm.embedding.forward(pref_ids))[:, -1, :].flatten()
+
+            epoch_loss += loss
+        losses.append(epoch_loss / len(preference_data))
+        accuracies.append(correct / len(preference_data))
+    return rm, losses, accuracies</code></pre>
+    </div>
+    <p>Accuracy on preference pairs is the simplest metric: what fraction does the RM rank correctly? A random model scores 50%. A well-trained RM on clean data exceeds 70%. <b>InstructGPT&rsquo;s reward model achieved ~72%</b> on held-out comparisons — which sounds low but is actually good; inter-annotator agreement was about 73%.</p>
+
+    <h3>Step 4 · A minimal PPO loop</h3>
+    <div class="codeblock" data-lang="python">
+      <span class="cb-label">python</span>
+      <pre><code class="language-python hljs">def compute_kl_divergence(policy_logits, reference_logits):
+    p = np.exp(policy_logits    - policy_logits.max(axis=-1, keepdims=True))
+    p = p / p.sum(axis=-1, keepdims=True);  p = np.clip(p, 1e-10, 1.0)
+    r = np.exp(reference_logits - reference_logits.max(axis=-1, keepdims=True))
+    r = r / r.sum(axis=-1, keepdims=True);  r = np.clip(r, 1e-10, 1.0)
+    return np.sum(p * np.log(p / r), axis=-1).mean()
+
+def ppo_training(policy, reference, reward_model, prompts,
+                 num_episodes=20, lr=1.5e-5, kl_coeff=0.02, max_seq_len=128):
+    rewards_history, kl_history = [], []
+    for episode in range(num_episodes):
+        prompt_tokens  = [min(t, 252) for t in list(prompts[episode % len(prompts)].encode("utf-8"))]
+        response       = generate_response(policy, prompt_tokens, max_new_tokens=20, temperature=0.8)
+        response_ids   = np.array(response[:max_seq_len]).reshape(1, -1)
+
+        reward         = reward_model.forward(response_ids)[0]
+        kl             = compute_kl_divergence(policy.forward(response_ids),
+                                               reference.forward(response_ids))
+        total_reward   = reward - kl_coeff * kl
+
+        # simplified gradient update — the real thing is the clipped surrogate
+        for block in policy.blocks:
+            step = lr * total_reward
+            block.ffn.W1 += step * np.random.randn(*block.ffn.W1.shape) * 0.01
+            block.ffn.W2 += step * np.random.randn(*block.ffn.W2.shape) * 0.01
+
+        rewards_history.append(float(reward));  kl_history.append(float(kl))
+    return policy, rewards_history, kl_history</code></pre>
+    </div>
+    <p>Six lines carry the entire idea: sample a prompt, generate a response, score it, measure the KL against the frozen reference, subtract the leash cost, take a step. Everything else in production PPO — the value network, GAE advantages, importance sampling, minibatches, the actual clipped surrogate — is engineering around that core.</p>
+
+    <h2 id="use-it"># Use It</h2>
+    <p>After training, the policy model&rsquo;s responses should score higher on the reward model than the original SFT model&rsquo;s responses — while KL divergence against the reference stays bounded. If reward goes up and KL stays low, you&rsquo;re winning. If reward goes up and KL explodes, you are reward-hacking; lower the temperature, raise β, or train a better reward model.</p>
+
+    <div class="callout">
+      <span class="tag">The 3 numbers to watch</span>
+      <b>Reward trend</b> — should climb, then plateau. <b>KL trend</b> — should climb slowly and settle. <b>Response length</b> — if it explodes without reward improvement, you&rsquo;re hacking.
+    </div>
+
+    <h2 id="exercises"># Exercises</h2>
+    <ol>
+      <li>Modify the reward model to average all hidden states instead of using the last position. Compare accuracy on the 6 preference pairs.</li>
+      <li>Compute reward-model calibration: average reward on preferred, on rejected, and the margin. Add 4 held-out pairs and check the margin holds.</li>
+      <li>Simulate reward hacking: use <code>reward = len(response) / 100</code>, run PPO, observe the runaway. Add <code>β = 0.1</code> and watch it get pulled back.</li>
+      <li>Multi-objective reward: train one RM for helpfulness, one for conciseness, combine <code>R = 0.7 · R_help + 0.3 · R_concise</code>, and show the verbosity trap closes.</li>
+      <li>Sweep β ∈ {0.001, 0.02, 0.5}. Plot reward and KL for each. Confirm 0.02 is the productive middle.</li>
+    </ol>
+
+    <h2 id="key-terms"># Key Terms</h2>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Term</th><th>What people say</th><th>What it actually means</th></tr></thead>
+      <tbody>
+        <tr><td>RLHF</td><td>&ldquo;Training with human feedback&rdquo;</td><td>A three-stage pipeline (SFT, reward model, PPO) that optimizes language-model outputs using human preference signals.</td></tr>
+        <tr><td>Reward model</td><td>&ldquo;A model that scores responses&rdquo;</td><td>A transformer with a scalar output head, trained on pairwise human preferences with the Bradley-Terry loss.</td></tr>
+        <tr><td>Bradley-Terry</td><td>&ldquo;The comparison model&rdquo;</td><td><code>P(A ≻ B) = σ(score(A) − score(B))</code> — converts pairwise preferences into a consistent scoring function.</td></tr>
+        <tr><td>PPO</td><td>&ldquo;The RL algorithm&rdquo;</td><td>Proximal Policy Optimization — updates the policy to maximize reward while clipping the update magnitude to keep training stable.</td></tr>
+        <tr><td>KL penalty</td><td>&ldquo;The leash on the model&rdquo;</td><td><code>β · KL(π || π₀)</code> subtracted from the reward — prevents the policy from diverging too far from the SFT checkpoint.</td></tr>
+        <tr><td>Reward hacking</td><td>&ldquo;Gaming the reward&rdquo;</td><td>When the policy finds degenerate high-reward outputs by exploiting weaknesses in the RM instead of genuinely improving.</td></tr>
+        <tr><td>Reference model</td><td>&ldquo;The frozen SFT checkpoint&rdquo;</td><td>A copy of the SFT model whose weights never change — the anchor for KL divergence computation.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="further-reading"># Further Reading</h2>
+    <ul>
+      <li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al., 2022 — Training language models to follow instructions with human feedback (InstructGPT)</a></li>
+      <li><a href="https://arxiv.org/abs/1707.06347">Schulman et al., 2017 — Proximal Policy Optimization Algorithms</a></li>
+      <li><a href="https://arxiv.org/abs/2204.05862">Bai et al., 2022 — Training a Helpful and Harmless Assistant with RLHF</a></li>
+      <li><a href="https://arxiv.org/abs/2009.01325">Stiennon et al., 2020 — Learning to summarize with human feedback</a></li>
+      <li><a href="https://arxiv.org/abs/1706.03741">Christiano et al., 2017 — Deep RL from human preferences</a></li>
+    </ul>
+
+    <nav class="paginate">
+      <a class="prev" href="./06-instruction-tuning-sft.html"><span>← Previous</span><b>Instruction Tuning (SFT)</b></a>
+      <a class="next" href="./08-dpo.html"><span>Next →</span><b>DPO — Direct Preference Optimization</b></a>
+    </nav>
+  </article>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script>
+  // auto-inject copy buttons into hand-authored codeblocks
+  document.querySelectorAll(".codeblock").forEach((cb) => {
+    if (cb.querySelector(".cb-copy")) return;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "cb-copy"; b.textContent = "copy";
+    b.setAttribute("aria-label", "Copy code");
+    cb.appendChild(b);
+  });
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multi-Token Prediction (MTP) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/18-multi-token-prediction/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Multi-Token Prediction (MTP)</h1>
+    <p class="lesson-sub">Every autoregressive LLM from GPT-2 to Llama 3 trains on one loss per position: predict the next token. DeepSeek-V3 added a second loss per position: predict the token after that. The extra 14B of parameters (on a 671B model) got distilled back into the main model through gradient flow, and the trained MTP heads were repurposed at inference as speculative-decoding drafters with 80%+ acceptance. 1.8× generation throughput came for free. This lesson builds the sequential MTP module from the DeepSeek technical report, computes the loss and the shared-head parameter layout, and explains why MTP keeps the causal chain while Gloeckle et al.&#39;s original parallel MTP broke it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 10 · 04 (pre-training a mini GPT), Phase 10 · 15 (speculative decoding)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 18">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="22.5" y="125.9" width="28.3" height="28.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(164 36.7 140.0)"/>
+        <rect x="17.7" y="121.6" width="27.0" height="27.0" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(146 31.2 135.1)"/>
+        <rect x="12.9" y="117.3" width="25.7" height="25.7" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(129 25.8 130.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">18</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multi-Token</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Prediction (MTP)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>State the MTP training objective and derive the joint loss across prediction depths.</li>
+<li>Explain the difference between Gloeckle et al.&#39;s parallel MTP heads (2024) and DeepSeek-V3&#39;s sequential MTP modules and why the sequential design preserves the causal chain.</li>
+<li>Compute the parameter and memory overhead of adding MTP modules to a pre-training run.</li>
+<li>Implement one MTP module from scratch: the shared embedding, the per-depth transformer block, the projection, and the shared output head.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Next-token prediction is the standard LLM training objective. Every hidden state is supervised to predict exactly one thing: the immediately following token. That is a surprisingly weak signal. Most of the information in a sequence extends beyond one token — structure, coherence, factuality, arithmetic flow. The model has to learn those by accumulating many one-token signals over trillions of tokens.</p>
+<p>MTP asks: what if every hidden state were supervised to predict multiple future tokens at once? Gloeckle et al. (Meta, 2024) showed this helps. Their implementation put several independent output heads on top of the backbone, each predicting a different offset. Parallel, simple, but the heads saw the same hidden state without any hierarchical refinement — and the predictions did not chain causally, so they could not be used for speculative decoding.</p>
+<p>DeepSeek-V3 (December 2024) re-designed MTP as sequential modules that keep the causal chain at each prediction depth. The model predicts <code>t+1</code> from <code>h_i^(0)</code>, then predicts <code>t+2</code> from a new hidden state <code>h_i^(1)</code> that combined <code>h_i^(0)</code> with the <code>E(t+1)</code> embedding, and so on. Each depth is its own small transformer block. The shared embedding and shared output head keep parameter overhead modest. At DeepSeek-V3&#39;s scale, 14B extra parameters across MTP modules on top of 671B main-model weights. That 2% overhead bought denser training signals AND a ready-made speculative-decoding draft at inference.</p>
+<p>This lesson builds a single MTP module and the D-depth loss from scratch. The math is tidy. The implementation is 150 lines.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-sequential-mtp-recipe"><a class="anchor" href="#the-sequential-mtp-recipe">#</a> The sequential MTP recipe</h3>
+<p>DeepSeek-V3 adds <code>D</code> MTP modules on top of the main model. Each module <code>k</code> (for <code>k = 1..D</code>) predicts the token at depth <code>k</code> — that is, <code>t_{i+k}</code> given a prefix through position <code>i</code>.</p>
+<p>Module <code>k</code> consists of:</p>
+<ul>
+<li>A transformer block <code>T_k</code> with its own attention and MLP.</li>
+<li>A projection matrix <code>M_k</code> that combines the previous-depth hidden state with the embedding of the next-depth ground-truth token.</li>
+<li>The shared embedding <code>E</code> (same as the main model).</li>
+<li>The shared output head <code>Out</code> (same as the main model).</li>
+</ul>
+<p>At training, for a prefix through position <code>i</code>, the per-depth hidden state is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">h_i^(0) = main model backbone at position i
+h_i^(k) = T_k( M_k * concat(RMSNorm(h_i^(k-1)), RMSNorm(E(t_{i+k}))) )   for k &gt;= 1</code></pre>
+      </div>
+    <p>The per-depth prediction is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">logits_{i+k} = Out(h_i^(k-1))   for k = 1..D</code></pre>
+      </div>
+    <p>The per-depth loss is cross-entropy against the ground-truth <code>t_{i+k}</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_k = CE(logits_{i+k}, t_{i+k})</code></pre>
+      </div>
+    <p>The joint loss across depths:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_MTP = (lambda / D) * sum_{k=1..D} L_k</code></pre>
+      </div>
+    <p><code>lambda</code> is a small weighting factor — DeepSeek-V3 uses 0.3 for the first 10% of training and 0.1 afterward. The total training loss is <code>L_main + L_MTP</code>.</p>
+<h3 id="why-sequential-not-parallel"><a class="anchor" href="#why-sequential-not-parallel">#</a> Why sequential, not parallel</h3>
+<p>Gloeckle&#39;s original parallel MTP had D output heads, each directly applied to <code>h_i^(0)</code>. Each head predicts <code>t_{i+k}</code> from the same backbone hidden state. That trains fine, but the predictions are not conditioned on each other. You cannot use <code>head_1</code>&#39;s output to help <code>head_2</code> — the heads fire in parallel.</p>
+<p>DeepSeek-V3&#39;s sequential design builds <code>h_i^(k)</code> from <code>h_i^(k-1)</code> plus the actual next-token embedding <code>E(t_{i+k})</code>. That preserves the causal chain: to predict <code>t_{i+k+1}</code>, the module at depth <code>k+1</code> sees what was at <code>t_{i+k}</code>. This is structurally identical to how an autoregressive decoder consumes its own output — making the MTP modules directly usable as speculative-decoding drafters.</p>
+<p>At inference: feed <code>h_i^(k-1)</code> and the drafted <code>t_{i+k}</code> into module <code>k+1</code>, get a prediction for <code>t_{i+k+1}</code>. Repeat. That is exactly an EAGLE-style draft, using the trained MTP module as the draft network. DeepSeek-V3 reports 80%+ acceptance on the first MTP module and ~1.8× speedup.</p>
+<h3 id="parameter-accounting"><a class="anchor" href="#parameter-accounting">#</a> Parameter accounting</h3>
+<p>For a model with hidden <code>h</code> and vocabulary <code>V</code>:</p>
+<ul>
+<li>Main model: billions of parameters, plus one output head of size <code>V * h</code>.</li>
+<li>Shared output head: reuse the main model&#39;s head. No extra params.</li>
+<li>Shared embedding: reuse the main model&#39;s embedding. No extra params.</li>
+<li>Per-MTP module:<ul>
+<li>Projection <code>M_k</code>: <code>(2h) * h = 2h^2</code>.</li>
+<li>Transformer block <code>T_k</code>: attention (<code>4h^2</code> for MHA) plus MLP (typically <code>8h^2</code> for SwiGLU with ratio 8/3). About <code>12h^2</code> per block.</li>
+</ul>
+</li>
+</ul>
+<p>Total extra per module: <code>~14h^2</code>. For DeepSeek-V3&#39;s <code>h = 7168</code>, D = 1 module: <code>~14 * 7168^2 = ~720M</code> parameters on paper. DeepSeek-V3 reports 14B — the difference is mostly expert layers being MoE in the MTP module too.</p>
+<h3 id="the-speculative-decoding-payoff"><a class="anchor" href="#the-speculative-decoding-payoff">#</a> The speculative-decoding payoff</h3>
+<p>During pre-training, the MTP modules slow training by about 10% (more forward compute, extra loss). The payoff is two-fold:</p>
+<ol>
+<li><p>Denser training signal. Each hidden state sees D+1 supervision targets. Measured effect on MMLU, GSM8K, MATH, HumanEval: consistent few-percentage-point improvements in DeepSeek-V3&#39;s ablations.</p>
+</li>
+<li><p>Free speculative decoding draft at inference. The MTP module is already trained to predict the next few tokens. Repurposed as a draft network, it delivers 80%+ acceptance rates. At that level, N=3 or N=5 spec decoding gives 1.8× throughput. The 10% training-time cost pays back the first time you run inference.</p>
+</li>
+</ol>
+<h3 id="relation-to-eagle"><a class="anchor" href="#relation-to-eagle">#</a> Relation to EAGLE</h3>
+<p>EAGLE trains a small draft model SEPARATELY after pre-training. MTP bakes the draft into pre-training. The two approaches converge on similar accept rates but via different pipelines:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>EAGLE-3</th>
+<th>MTP (DeepSeek-V3)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>When trained</td>
+<td>Post-pre-training</td>
+<td>During pre-training</td>
+</tr>
+<tr>
+<td>Backward-compatible with existing weights</td>
+<td>Yes</td>
+<td>No (need to re-train)</td>
+</tr>
+<tr>
+<td>Draft params</td>
+<td>1-2 transformer layers</td>
+<td>1 transformer block + projection</td>
+</tr>
+<tr>
+<td>Acceptance rate</td>
+<td>0.88-0.92</td>
+<td>0.80+ at depth 1</td>
+</tr>
+<tr>
+<td>Benefit beyond speedup</td>
+<td>Speculative decoding only</td>
+<td>Denser training signal + speedup</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">multi-token-predict</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> builds a single MTP module end to end: shared embedding, projection, transformer block, shared output head. It then computes the per-depth cross-entropy loss on a short synthetic sequence and prints the parameter count by component. A toy vocabulary of 32 tokens keeps the numbers readable.</p>
+<h3 id="step-1-shared-embedding-table"><a class="anchor" href="#step-1-shared-embedding-table">#</a> Step 1: shared embedding table</h3>
+<p>A single <code>vocab_size x hidden</code> table is used by the main model AND by every MTP module at every depth. Not a second copy — literally the same tensor.</p>
+<h3 id="step-2-the-per-depth-combination"><a class="anchor" href="#step-2-the-per-depth-combination">#</a> Step 2: the per-depth combination</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def combine(prev_hidden, next_token_embed, M_k):
+    # concat along feature dim, then project down to hidden
+    concat = rms_norm(prev_hidden) + rms_norm(next_token_embed)  # vector addition stand-in
+    projected = matvec(M_k, concat)
+    return projected</code></pre>
+      </div>
+    <p>Real DeepSeek-V3 concatenates the two RMSNormed vectors to <code>[2h]</code> and projects with an <code>h x 2h</code> matrix. The toy uses vector addition for stdlib brevity.</p>
+<h3 id="step-3-the-transformer-block-at-depth-k"><a class="anchor" href="#step-3-the-transformer-block-at-depth-k">#</a> Step 3: the transformer block at depth k</h3>
+<p>Self-attention plus MLP. In the toy, a one-layer linear attention block and a SwiGLU MLP keep the structure visible without numpy.</p>
+<h3 id="step-4-the-shared-output-head"><a class="anchor" href="#step-4-the-shared-output-head">#</a> Step 4: the shared output head</h3>
+<p>Reuse the main model&#39;s output projection. Logits over the vocabulary.</p>
+<h3 id="step-5-per-depth-loss"><a class="anchor" href="#step-5-per-depth-loss">#</a> Step 5: per-depth loss</h3>
+<p>Cross-entropy of softmax(logits) against the ground-truth token at offset <code>k</code>. Aggregate across depths with the <code>lambda / D</code> scaling factor.</p>
+<h3 id="step-6-parameter-accounting"><a class="anchor" href="#step-6-parameter-accounting">#</a> Step 6: parameter accounting</h3>
+<p>Print the total parameter count, the shared (embedding, head) count, and the per-module extra count. Show the ratio of MTP extra to main-model size.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>MTP is integrated into DeepSeek-V3 (December 2024) and the DeepSeek-R1 series. At inference:</p>
+<ul>
+<li>DeepSeek&#39;s own serving stack consumes MTP modules as speculative decoders out of the box.</li>
+<li>vLLM and SGLang have integration paths for DeepSeek-V3 MTP as of April 2026.</li>
+<li>AMD&#39;s ROCm SGLang tutorial shows a specific MTP speculative-decoding config with measured 1.8× speedup on the V3 checkpoint.</li>
+</ul>
+<p>When to use MTP in a new pre-training run:</p>
+<ul>
+<li>You control the full pre-training pipeline and want to bank denser training signal.</li>
+<li>You know you will serve the model at scale and want speculative decoding for free.</li>
+<li>Your hidden size is at least 4096. At 1B-scale the overhead hurts more than the gain helps.</li>
+</ul>
+<p>When not to:</p>
+<ul>
+<li>Fine-tuning an existing pre-trained dense model. The MTP module is not trained.</li>
+<li>Research models where you want a clean baseline to compare against. MTP changes the architecture.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-mtp-planner.md</code>. Given a pre-training run specification (model size, data, compute), it returns a plan for integrating MTP: number of depths D, <code>lambda</code> schedule, memory overhead, and the inference-time speculative-decoding wiring.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code>. Show the per-depth loss decreases monotonically as the synthetic signal strengthens. Modify the synthetic to use a fixed pattern and verify both depth-1 and depth-2 losses converge.</p>
+</li>
+<li><p>Compute the parameter overhead for a dense 70B model (hidden 8192, 80 layers) with D=1 MTP module. Compare to the DeepSeek-V3 reported 14B overhead. Explain why DeepSeek&#39;s number is higher: the MTP transformer block inherits the same MoE structure, inflating the per-module parameter count.</p>
+</li>
+<li><p>Implement D=2 in the toy: add a second MTP module that takes h^(1) and predicts <code>t_{i+2}</code>. Verify the joint loss and the parameter accounting match the DeepSeek paper&#39;s equations 19-21.</p>
+</li>
+<li><p>Switch the toy to parallel MTP (Gloeckle-style): add D output heads on top of the main hidden state, each predicting a different offset. Measure how the losses per depth compare to the sequential version on the same synthetic signal. The sequential version should produce lower depth-k loss for k &gt; 1 because it conditions on the intermediate predictions.</p>
+</li>
+<li><p>Use the trained MTP module as an EAGLE-style draft: call module k to propose <code>t_{i+k}</code> at inference. Measure the acceptance rate of these draft tokens against the main model&#39;s predictions on a held-out sequence. If you hit 50%+ on the toy, you have reproduced the empirical MTP-as-draft property.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MTP module</td>
+<td>&quot;Extra loss block&quot;</td>
+<td>A small transformer block plus projection that predicts a token <code>k</code> positions ahead of the main model</td>
+</tr>
+<tr>
+<td>Prediction depth</td>
+<td>&quot;Which offset&quot;</td>
+<td>The integer <code>k</code> such that module <code>k</code> predicts <code>t_{i+k}</code> from prefix through position <code>i</code></td>
+</tr>
+<tr>
+<td>Parallel MTP</td>
+<td>&quot;Gloeckle-style&quot;</td>
+<td>D independent heads on the same backbone hidden state, no conditional chain</td>
+</tr>
+<tr>
+<td>Sequential MTP</td>
+<td>&quot;DeepSeek-V3 style&quot;</td>
+<td>Each module conditions on the previous depth&#39;s hidden state plus the next token&#39;s embedding; preserves causal chain</td>
+</tr>
+<tr>
+<td>Shared output head</td>
+<td>&quot;Reuse the main head&quot;</td>
+<td>The MTP modules call the main model&#39;s LM head, not a separate output projection</td>
+</tr>
+<tr>
+<td>Shared embedding</td>
+<td>&quot;Reuse the main table&quot;</td>
+<td>Same vocabulary embedding table is used everywhere; no duplicate parameters</td>
+</tr>
+<tr>
+<td>Projection matrix M_k</td>
+<td>&quot;Combine hidden + next-token&quot;</td>
+<td>An <code>h x 2h</code> linear layer that folds the previous hidden state and the target-token embedding into the next depth&#39;s input</td>
+</tr>
+<tr>
+<td>Joint loss L_MTP</td>
+<td>&quot;Averaged extra losses&quot;</td>
+<td>Arithmetic mean of per-depth cross-entropy losses, scaled by <code>lambda</code></td>
+</tr>
+<tr>
+<td>Acceptance rate at depth 1</td>
+<td>&quot;How often MTP draft is right&quot;</td>
+<td>The rate at which the D=1 MTP module&#39;s top-1 prediction equals the main model&#39;s top-1 prediction; 80%+ on DeepSeek-V3</td>
+</tr>
+<tr>
+<td>Lambda weighting</td>
+<td>&quot;Extra-loss importance&quot;</td>
+<td>Per-depth scaling factor; 0.3 at start of training, 0.1 later on DeepSeek-V3</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI — DeepSeek-V3 Technical Report (arXiv:2412.19437)</a> — the full sequential MTP description (Section 2.2), including the joint-loss equations and the 1.8× speedup at inference</li>
+<li><a href="https://arxiv.org/abs/2404.19737">Gloeckle et al. — Better &amp; Faster Large Language Models via Multi-token Prediction (arXiv:2404.19737)</a> — the parallel MTP baseline DeepSeek&#39;s design improves on</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V3">DeepSeek-V3 model card on Hugging Face</a> — 685B total (671B main + 14B MTP), deployment notes</li>
+<li><a href="https://arxiv.org/abs/2211.17192">Leviathan et al. — Fast Inference from Transformers via Speculative Decoding (arXiv:2211.17192)</a> — the speculative-decoding framework MTP fits into</li>
+<li><a href="https://arxiv.org/abs/2503.01840">Li et al. — EAGLE-3 (arXiv:2503.01840)</a> — EAGLE&#39;s 2025 draft architecture, the counterpart MTP competes with</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./17-native-sparse-attention.html"><span>← Previous</span><b>native sparse attention</b></a>
+      <a class="next" href="./19-dualpipe-parallelism.html"><span>Next →</span><b>dualpipe parallelism</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

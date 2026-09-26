@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building an MCP Client: Discovery, Routing, and Dual-Era Fallback — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/08-building-an-mcp-client/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">Building an MCP Client: Discovery, Routing, and Dual-Era Fallback</h1>
+    <p class="lesson-sub">A modern MCP client repeats its contract on every request. Its hardest compatibility decision is knowing when an old server is truly old and when a modern server is reporting a correctable error.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13, Lesson 07</b></div><div><span>Time</span><b>~85 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="20.7" cy="125.5" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.3" cy="120.6" r="11.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="119.8" cy="115.7" r="11.0" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="114.4" cy="110.7" r="10.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.0" cy="105.8" r="9.7" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.6" cy="100.9" r="9.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Building an MCP</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Client: Discovery…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build every MCP <code>2026-07-28</code> request with current metadata.</li>
+<li>Probe stdio servers with <code>server/discover</code> and select a mutually supported version.</li>
+<li>Authorize a bounded legacy probe only for explicitly allowlisted peers.</li>
+<li>Accept a legacy era only after validating a positive <code>initialize</code> result for a supported revision.</li>
+<li>Merge deterministic tool lists without silently overwriting collisions.</li>
+<li>Route calls to the peer that owns each tool without inventing protocol sessions.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>An agent host usually talks to more than one MCP server. It must discover each server, merge tool catalogs, resolve duplicate names, route calls, and recover from transport failure.</p>
+<p>The <code>2026-07-28</code> revision makes the steady state simpler because each request is self-contained. Compatibility makes startup more subtle. A client may encounter:</p>
+<ul>
+<li>a modern server that supports the preferred version;</li>
+<li>a modern server that returns a recognized version or header error;</li>
+<li>a legacy server that has never heard of <code>server/discover</code>;</li>
+<li>a legacy server that stays silent until it receives <code>initialize</code>.</li>
+</ul>
+<p>Treating every probe error as legacy is dangerous. A malformed modern request, an overloaded server, a dead process, and an old server can all produce the same timeout or connection close. Those signals are ambiguous. The client must combine explicit operator intent with positive protocol evidence before it chooses the legacy era.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="a-peer-not-a-protocol-session"><a class="anchor" href="#a-peer-not-a-protocol-session">#</a> A peer, not a protocol session</h3>
+<p>Keep one transport peer record for each server process or endpoint:</p>
+<ul>
+<li>transport handle or send function;</li>
+<li>selected protocol era and version;</li>
+<li>last discovered server capabilities;</li>
+<li>last deterministic tool list;</li>
+<li>pending request ids for correlation;</li>
+<li>transport health.</li>
+</ul>
+<p>This is client bookkeeping. It is not protocol session state. On modern MCP, the server still receives current version and capabilities on every request.</p>
+<h3 id="build-every-modern-request-from-scratch"><a class="anchor" href="#build-every-modern-request-from-scratch">#</a> Build every modern request from scratch</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def modern_request(request_id, method, params, version, capabilities):
+    return {
+        &quot;jsonrpc&quot;: &quot;2.0&quot;,
+        &quot;id&quot;: request_id,
+        &quot;method&quot;: method,
+        &quot;params&quot;: {
+            **params,
+            &quot;_meta&quot;: {
+                &quot;io.modelcontextprotocol/protocolVersion&quot;: version,
+                &quot;io.modelcontextprotocol/clientCapabilities&quot;: capabilities,
+                &quot;io.modelcontextprotocol/clientInfo&quot;: CLIENT_INFO,
+            },
+        },
+    }</code></pre>
+      </div>
+    <p>Do not attach metadata once to a connection object and assume it reached the wire. Stamp and inspect the final serialized request.</p>
+<h3 id="modern-discovery"><a class="anchor" href="#modern-discovery">#</a> Modern discovery</h3>
+<p><code>server/discover</code> returns supported versions, server capabilities, instructions, cache hints, and recommended server identity. A client chooses the highest mutually supported modern version.</p>
+<p>Discovery is optional for a modern-only client, but it is recommended on stdio. Some legacy servers accept an operation before initialization, so sending <code>tools/list</code> first can produce an ambiguous success. <code>server/discover</code> creates a clean era boundary.</p>
+<h3 id="the-stdio-compatibility-probe"><a class="anchor" href="#the-stdio-compatibility-probe">#</a> The stdio compatibility probe</h3>
+<p>A dual-era stdio client sends <code>server/discover</code> with its preferred modern metadata before any other request. There are three outcome classes:</p>
+<ol>
+<li><strong>DiscoverResult.</strong> The server is modern. Select a mutually supported version and continue with per-request metadata.</li>
+<li><strong>Recognized modern error.</strong> The server is modern. For <code>-32022</code>, choose from <code>data.supported</code> and retry with a new request id. For header or capability errors, correct the request. Do not send <code>initialize</code>.</li>
+<li><strong>Ambiguous signal.</strong> An unrecognized JSON-RPC error, timeout, connection close, or empty response does not identify an era. Fail closed unless that exact peer is configured for legacy compatibility.</li>
+</ol>
+<p>Recognized modern protocol errors include:</p>
+<ul>
+<li><code>-32020</code> HeaderMismatch</li>
+<li><code>-32021</code> MissingRequiredClientCapability</li>
+<li><code>-32022</code> UnsupportedProtocolVersion</li>
+</ul>
+<p>Recognized modern errors remain modern even when the peer is on the legacy allowlist. Once a server proves that it understands the modern error vocabulary, sending <code>initialize</code> would be a downgrade.</p>
+<p>Do not treat <code>-32601</code> as positive legacy evidence. It only makes an explicitly allowlisted peer eligible for one legacy probe. The same rule applies to a timeout, connection close, or empty response.</p>
+<h3 id="allowlisting-is-operator-intent-not-evidence"><a class="anchor" href="#allowlisting-is-operator-intent-not-evidence">#</a> Allowlisting is operator intent, not evidence</h3>
+<p>Legacy compatibility must be an explicit property of one pinned peer configuration:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">client.add_server(&quot;archive&quot;, archive_transport, allow_legacy=True)</code></pre>
+      </div>
+    <p>Bind that choice to the configured command or endpoint. Do not use a wildcard that lets an arbitrary server opt itself into weaker semantics. A peer without <code>allow_legacy=True</code> fails after an ambiguous discovery outcome and never receives <code>initialize</code>.</p>
+<p>The allowlist grants permission to probe. It does not select the era. The client sends one <code>initialize</code> under a transport-enforced deadline, then requires all of the following:</p>
+<ul>
+<li>a JSON-RPC <code>2.0</code> response with the matching request id;</li>
+<li>exactly one <code>result</code> and no <code>error</code>;</li>
+<li>a <code>protocolVersion</code> in the client&#39;s configured legacy revision set;</li>
+<li>an object-valued <code>capabilities</code> field;</li>
+<li>a <code>serverInfo</code> object with non-empty string <code>name</code> and <code>version</code> fields.</li>
+</ul>
+<p>A timeout, connection close, error response, malformed result, mismatched id, or unsupported revision fails closed. Only a structurally valid positive result selects the legacy era. The code passes <code>legacy_probe_timeout_ms</code> to the transport adapter; a real stdio or HTTP adapter must enforce that deadline rather than merely record it.</p>
+<p>Cache the selected era for the transport peer. Do not probe again before every call.</p>
+<h3 id="legacy-is-a-compatibility-branch"><a class="anchor" href="#legacy-is-a-compatibility-branch">#</a> Legacy is a compatibility branch</h3>
+<p>Once the bounded probe returns valid positive legacy evidence, the client uses the selected legacy version exactly as defined by that revision:</p>
+<ol>
+<li>Verify the response envelope and correlation id.</li>
+<li>Verify the negotiated revision is in the configured legacy set.</li>
+<li>Record validated capabilities and server identity.</li>
+<li>Send <code>notifications/initialized</code> only after all checks pass.</li>
+<li>Use legacy request shapes for that transport lifetime.</li>
+</ol>
+<p>This branch exists for interoperability with known peers. It is not the default design for new servers or new requests. If the transport restarts or its endpoint changes, discard the peer-era cache and negotiate again.</p>
+<h3 id="discovering-and-caching-tools"><a class="anchor" href="#discovering-and-caching-tools">#</a> Discovering and caching tools</h3>
+<p>For each active peer, call <code>tools/list</code>. A modern result includes <code>resultType</code>, <code>ttlMs</code>, and <code>cacheScope</code>. Honor the freshness hint within the correct authorization context. Re-fetch after expiry or a subscribed list-change event.</p>
+<p>Clients must treat a missing <code>resultType</code> from a legacy server as <code>&quot;complete&quot;</code>. Do not require modern cache fields on a response from an earlier negotiated era.</p>
+<p>The server should return deterministic ordering. The client should also sort before merging so local registry order does not depend on process startup timing.</p>
+<h3 id="collision-safe-namespace-merge"><a class="anchor" href="#collision-safe-namespace-merge">#</a> Collision-safe namespace merge</h3>
+<p>Two servers may both expose <code>search</code>. Choose a declared policy:</p>
+<ol>
+<li><strong>Prefix on collision.</strong> Keep the first canonical name and expose later collisions as <code>&lt;server&gt;/&lt;tool&gt;</code>.</li>
+<li><strong>Reject on collision.</strong> Do not load the duplicate and surface a clear configuration error.</li>
+<li><strong>Silent overwrite.</strong> Never use this. It hides which server receives a model-selected action.</li>
+</ol>
+<p>Store both canonical and local names. The model sees the canonical name. The outgoing <code>tools/call</code> uses the local name the owning server declared.</p>
+<h3 id="routing-a-call"><a class="anchor" href="#routing-a-call">#</a> Routing a call</h3>
+<p>Routing is a pure lookup:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">canonical tool name
+  -&gt; peer name + local tool name
+  -&gt; new JSON-RPC request id
+  -&gt; modern request metadata or explicit legacy shape
+  -&gt; matching response id</code></pre>
+      </div>
+    <p>Do not send a call when its owning transport is unavailable. Reconnect or restart the transport, then re-run discovery and <code>tools/list</code>. Modern in-flight requests lost on a broken transport can be retried with a new JSON-RPC id when the operation&#39;s safety policy permits it.</p>
+<h3 id="notifications-and-subscriptions"><a class="anchor" href="#notifications-and-subscriptions">#</a> Notifications and subscriptions</h3>
+<p>Modern list and resource changes arrive only on a client-opened <code>subscriptions/listen</code> stream. The client sends the notification filter, waits for <code>notifications/subscriptions/acknowledged</code>, and correlates events with the listen request id in notification metadata.</p>
+<p>On disconnect, open a new listen request and refetch relevant lists or resources. Modern streams do not resume with <code>Last-Event-ID</code>.</p>
+<h3 id="no-server-initiated-requests"><a class="anchor" href="#no-server-initiated-requests">#</a> No server-initiated requests</h3>
+<p>Modern servers do not call the client with independent JSON-RPC requests for sampling, elicitation, or roots. They return <code>input_required</code>, and the client retries the original request after fulfilling the embedded input requests.</p>
+<p>Do not block the peer&#39;s response reader while fulfilling input. Preserve correlation and create a new JSON-RPC id for the retry.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">tp-client-merge</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> uses in-process peer functions so the protocol decisions stay visible. It connects to two modern peers and one intentionally allowlisted legacy peer, then merges and routes their tools. The transport callable receives a timeout budget so the compatibility branch cannot hide an unbounded probe.</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd code
+python3 main.py
+python3 -m unittest discover tests -v</code></pre>
+      </div>
+    <p>The tests prove boundaries that normal demos miss:</p>
+<ul>
+<li>modern requests repeat metadata;</li>
+<li><code>-32022</code> retries modern discovery without initialization;</li>
+<li>recognized modern errors never downgrade, even for an allowlisted peer;</li>
+<li>timeouts, connection closes, empty responses, and unrecognized errors do not trigger <code>initialize</code> without an allowlist;</li>
+<li>an allowlisted peer becomes legacy only after a valid, supported <code>initialize</code> result;</li>
+<li>malformed and unsupported legacy results leave the peer unavailable;</li>
+<li>a successfully selected era is cached for the transport lifetime.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson ships <code>outputs/skill-mcp-client-harness.md</code>. It scaffolds modern request stamping, stdio era negotiation, deterministic namespace merge, routing, and a fail-closed legacy compatibility branch.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Make a fake server return <code>-32022</code> with no mutually supported version. Confirm the client fails instead of sending <code>initialize</code>.</li>
+<li>Allowlist a fake legacy server, make its bounded <code>initialize</code> probe time out, and prove the peer stays <code>unknown</code> and unavailable.</li>
+<li>Add <code>cacheScope: &quot;private&quot;</code> tool lists for two authorization contexts. Confirm the client never shares one context&#39;s cached result with the other.</li>
+<li>Change the collision policy to rejection and make startup fail with both peer names in the error.</li>
+<li>Add a finite <code>subscriptions/listen</code> simulator. On stream loss, re-listen with a new request id and refetch tools.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Peer</td>
+<td>Client-side record for one server transport and its discovered data</td>
+</tr>
+<tr>
+<td>Protocol era</td>
+<td>Modern per-request metadata or legacy initialization semantics</td>
+</tr>
+<tr>
+<td>Discovery probe</td>
+<td>Initial <code>server/discover</code> used to identify the stdio era</td>
+</tr>
+<tr>
+<td>Recognized modern error</td>
+<td>Error that proves modern behavior and forbids legacy fallback</td>
+</tr>
+<tr>
+<td>Legacy allowlist</td>
+<td>Operator configuration permitting one bounded compatibility probe for a pinned peer</td>
+</tr>
+<tr>
+<td>Positive legacy evidence</td>
+<td>Valid, correlated <code>initialize</code> result for an explicitly supported legacy revision</td>
+</tr>
+<tr>
+<td>Merged namespace</td>
+<td>Canonical tool names across all active peers</td>
+</tr>
+<tr>
+<td>Collision policy</td>
+<td>Prefix or reject rule for duplicate tool names</td>
+</tr>
+<tr>
+<td>Era cache</td>
+<td>Selected modern or legacy behavior stored for one transport peer</td>
+</tr>
+<tr>
+<td>Transport recovery</td>
+<td>Restart or reconnect, rediscover, relist, and retry safely with a new id</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/">MCP Specification 2026-07-28</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP Server Discovery</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio">MCP stdio Transport</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning">MCP Versioning</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools">MCP Tools</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./07-building-an-mcp-server.html"><span>← Previous</span><b>building an mcp server</b></a>
+      <a class="next" href="./09-mcp-transports.html"><span>Next →</span><b>mcp transports</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

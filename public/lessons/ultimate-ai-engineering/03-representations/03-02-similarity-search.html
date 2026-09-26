@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>03.02 — Similarity Search — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/03.%20Representations/03-02-similarity-search.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Representations</div>
+    <ol class="toc"><li><a href="#1-the-problem">1. The Problem</a></li><li><a href="#2-locality-sensitive-hashing-lsh">2. Locality-Sensitive Hashing (LSH)</a></li><li><a href="#3-inverted-file-index-ivf">3. Inverted File Index (IVF)</a></li><li><a href="#4-product-quantization-pq">4. Product Quantization (PQ)</a></li><li><a href="#5-graph-based-search-hnsw-and-diskann">5. Graph-Based Search: HNSW and DiskANN</a></li><li><a href="#6-filtered-vector-search">6. Filtered Vector Search</a></li><li><a href="#7-choosing-and-tuning-an-index">7. Choosing and Tuning an Index</a></li><li><a href="#8-production-challenges-how-to-solve-them">8. Production Challenges &amp; How to Solve Them</a></li><li><a href="#9-hands-on-projects">9. Hands-On Projects</a></li><li><a href="#10-foundational-papers-exact-titles">10. Foundational Papers (exact titles)</a></li><li><a href="#11-essential-tooling">11. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Representations</div>
+    <h1 class="lesson-title">03.02 — Similarity Search</h1>
+    <p class="lesson-sub">**Module 3: Representations** · Subtopic 2 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Representations 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="26.4" y="129.3" width="29.3" height="29.3" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(179 41.0 144.0)"/>
+        <rect x="21.6" y="125.1" width="28.1" height="28.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(161 35.6 139.1)"/>
+        <rect x="16.8" y="120.8" width="26.8" height="26.8" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(143 30.2 134.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#4c1d95" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#4c1d95" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#4c1d95" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REPRESENTATIONS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">03.02 — Similarity</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Search</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 03.01 (normalised embeddings, recall metrics), k-means, heaps and graph traversal, memory hierarchy (RAM vs SSD, cache lines, SIMD).
+<strong>Outcome:</strong> you can implement the core approximate nearest neighbour (ANN) families from scratch (LSH, IVF, PQ, HNSW) and reason quantitatively about their recall, latency, memory, and build-time trade-offs. You can handle filtered search correctly, and choose and tune an index for a given scale and SLO.</p>
+</blockquote>
+<hr>
+<h2 id="1-the-problem"><a class="anchor" href="#1-the-problem">#</a> 1. The Problem</h2>
+<p>Given a database $X = {\mathbf{x}_1, \ldots, \mathbf{x}_N} \subset \mathbb{R}^d$ and a query $\mathbf{q}$, return</p>
+<p>$$
+\mathrm{kNN}(\mathbf{q}) = \mathrm*{arg,top\text{-}k}_{i \in [N]} ; -\mathrm{dist}(\mathbf{q}, \mathbf{x}_i)
+$$</p>
+<p><strong>Exact search</strong> costs $O(Nd)$ per query. With $N = 10^8$ and $d = 1024$ that is $10^{11}$ multiply-adds (~100 ms on a big GPU, and far more on a CPU), and 400 GB of fp32 vectors streamed from memory per query. ANN trades a little recall for orders of magnitude in speed:</p>
+<p>$$
+\text{Recall@}k = \frac{|\mathrm{ANN}_k(\mathbf{q}) \cap \mathrm{kNN}_k(\mathbf{q})|}{k}
+$$</p>
+<p>Note that this is recall <strong>against exact search</strong>, which is different from relevance recall in 03.01. A retrieval system&#39;s end-to-end quality is bounded by both.</p>
+<h3 id="11-why-high-dimensions-are-hard"><a class="anchor" href="#11-why-high-dimensions-are-hard">#</a> 1.1 Why high dimensions are hard</h3>
+<ul>
+<li><strong>Distance concentration</strong> (Beyer et al., 1999): as $d$ grows, for many distributions $\frac{\max_i \mathrm{dist} - \min_i \mathrm{dist}}{\min_i \mathrm{dist}} \to 0$. Nearest and farthest neighbours become nearly equidistant.</li>
+<li><strong>Space partitioning fails:</strong> KD-trees must visit a number of cells that grows exponentially with $d$ and degrade to brute force beyond ~20 dimensions.</li>
+<li><strong>What saves us:</strong> real embeddings have a low <strong>intrinsic dimension</strong> (they lie near a manifold), and we only need <em>approximate</em> answers.</li>
+</ul>
+<h3 id="12-metrics-and-the-mips-reduction"><a class="anchor" href="#12-metrics-and-the-mips-reduction">#</a> 1.2 Metrics and the MIPS reduction</h3>
+<ul>
+<li>Use <strong>L2</strong> or <strong>inner product (IP)</strong>. Cosine = IP on normalised vectors (03.01 §1.3).</li>
+<li><strong>Maximum inner-product search</strong> (MIPS, for unnormalised vectors such as recommendation embeddings) is not a metric search: $\langle \mathbf{q},\mathbf{x}\rangle$ does not satisfy the triangle inequality. Reduce it to L2 by augmenting each vector with one extra dimension (Bachrach et al., 2014), where $M = \max_i |\mathbf{x}_i|$:</li>
+</ul>
+<p>$$
+\tilde{\mathbf{x}} = \big[\mathbf{x};\ \sqrt{M^2 - |\mathbf{x}|^2}\big],\quad \tilde{\mathbf{q}} = [\mathbf{q};\ 0]
+;\Rightarrow;
+|\tilde{\mathbf{q}} - \tilde{\mathbf{x}}|^2 = |\mathbf{q}|^2 + M^2 - 2\langle \mathbf{q}, \mathbf{x}\rangle
+$$</p>
+<p>Minimising L2 distance over the augmented vectors therefore maximises the inner product.</p>
+<h3 id="13-exact-baseline-always-keep-one"><a class="anchor" href="#13-exact-baseline-always-keep-one">#</a> 1.3 Exact baseline (always keep one)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def exact_topk(Q: np.ndarray, X: np.ndarray, k: int) -&gt; np.ndarray:
+    &quot;&quot;&quot;Inner-product top-k for unit vectors. Q: (nq, d), X: (N, d). Returns (nq, k) ids, best first.&quot;&quot;&quot;
+    S = Q @ X.T
+    idx = np.argpartition(-S, kth=min(k, S.shape[1] - 1), axis=1)[:, :k]
+    part = np.take_along_axis(S, idx, axis=1)
+    return np.take_along_axis(idx, np.argsort(-part, axis=1), axis=1)
+
+
+def recall_vs_exact(approx: np.ndarray, exact: np.ndarray) -&gt; float:
+    return float(np.mean([len(set(a) &amp; set(e)) / len(e) for a, e in zip(approx, exact)]))</code></pre>
+      </div>
+    <p>Exact search is the <strong>right answer</strong> for ≲ 1M vectors on a GPU, and for heavily filtered subsets (§6). It is also mandatory as ground truth in every benchmark.</p>
+<hr>
+<h2 id="2-locality-sensitive-hashing-lsh"><a class="anchor" href="#2-locality-sensitive-hashing-lsh">#</a> 2. Locality-Sensitive Hashing (LSH)</h2>
+<p>A hash family is <strong>locality-sensitive</strong> if similar items collide with higher probability. For cosine similarity, <strong>SimHash</strong> (Charikar, 2002) uses random hyperplanes $\mathbf{r} \sim \mathcal{N}(0, I)$ and $h(\mathbf{x}) = \mathrm{sign}(\langle \mathbf{r}, \mathbf{x}\rangle)$:</p>
+<p>$$
+\Pr[h(\mathbf{x}) = h(\mathbf{y})] = 1 - \frac{\theta(\mathbf{x},\mathbf{y})}{\pi}
+$$</p>
+<p>Concatenate $b$ bits per table (&quot;AND&quot; — raises precision) and use $L$ tables (&quot;OR&quot; — raises recall). A pair with single-bit collision probability $p$ becomes a candidate with probability</p>
+<p>$$
+P_{\text{cand}} = 1 - (1 - p^{b})^{L}
+$$</p>
+<p>This is the S-curve that you tune with $b$ and $L$.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from collections import defaultdict
+
+
+class SimHashLSH:
+    def __init__(self, dim: int, bits: int = 16, tables: int = 8, seed: int = 0):
+        rng = np.random.default_rng(seed)
+        self.planes = rng.standard_normal((tables, bits, dim))
+        self.buckets = [defaultdict(list) for _ in range(tables)]
+        self.X = None
+
+    def _keys(self, x: np.ndarray):
+        bits = (np.einsum(&quot;tbd,d-&gt;tb&quot;, self.planes, x) &gt; 0)
+        return [row.tobytes() for row in np.packbits(bits, axis=1)]
+
+    def fit(self, X: np.ndarray):
+        self.X = X
+        for i, x in enumerate(X):
+            for t, key in enumerate(self._keys(x)):
+                self.buckets[t][key].append(i)
+        return self
+
+    def search(self, q: np.ndarray, k: int = 10):
+        cand = {i for t, key in enumerate(self._keys(q)) for i in self.buckets[t].get(key, ())}
+        if not cand:
+            return []
+        cand = np.fromiter(cand, dtype=np.int64)
+        return cand[np.argsort(-(self.X[cand] @ q))[:k]].tolist()</code></pre>
+      </div>
+    <p><strong>In practice:</strong> LSH has clean theoretical guarantees but needs many tables (memory) to reach high recall on dense text embeddings. Graph and quantization methods dominate. LSH is still useful for <strong>near-duplicate detection</strong> (MinHash/SimHash over shingles or fingerprints) and streaming settings.</p>
+<hr>
+<h2 id="3-inverted-file-index-ivf"><a class="anchor" href="#3-inverted-file-index-ivf">#</a> 3. Inverted File Index (IVF)</h2>
+<p>Partition the space with k-means into $n_{\text{list}}$ cells (the <strong>coarse quantizer</strong>), and store each vector in the list of its nearest centroid. At query time, scan only the $n_{\text{probe}}$ closest lists.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> centroids c_1..c_nlist                         query q
+        │                                          │
+  ┌─────┴──────────────────────┐          nearest nprobe centroids
+  │ list 1: [ids, vectors]     │◄─────────────────┤
+  │ list 2: [ids, vectors]     │                  │
+  │ ...                        │◄─────────────────┘
+  │ list nlist                 │       scan ≈ N·nprobe/nlist vectors
+  └────────────────────────────┘</code></pre>
+      </div>
+    <ul>
+<li><strong>Cost per query:</strong> $\approx n_{\text{list}}\cdot d + \frac{n_{\text{probe}}}{n_{\text{list}}} N d$. Choose $n_{\text{list}}$ on the order of $\sqrt{N}$ (FAISS guidance: roughly $4\sqrt{N}$–$16\sqrt{N}$) and tune $n_{\text{probe}}$ for recall.</li>
+<li><strong>Failure mode:</strong> true neighbours that sit just across a cell boundary. Raising $n_{\text{probe}}$ fixes it at a linear cost. List sizes can be <strong>imbalanced</strong>: skewed data yields giant lists and unpredictable latency.</li>
+<li><strong>Updates:</strong> inserts go to the nearest list and are cheap. After heavy distribution drift, the centroids go stale and you need a retrain.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def kmeans(X: np.ndarray, k: int, iters: int = 20, seed: int = 0) -&gt; np.ndarray:
+    rng = np.random.default_rng(seed)
+    C = X[rng.choice(len(X), size=k, replace=False)].copy()
+    for _ in range(iters):
+        d2 = (X ** 2).sum(1, keepdims=True) - 2 * X @ C.T + (C ** 2).sum(1)
+        assign = d2.argmin(1)
+        for j in range(k):
+            members = X[assign == j]
+            C[j] = members.mean(0) if len(members) else X[rng.integers(len(X))]
+    return C
+
+
+class IVFFlat:
+    def __init__(self, nlist: int):
+        self.nlist = nlist
+
+    def fit(self, X: np.ndarray):
+        self.C = kmeans(X, self.nlist)
+        assign = (X @ self.C.T - 0.5 * (self.C ** 2).sum(1)).argmax(1)   # nearest centroid (L2)
+        self.lists = [np.where(assign == j)[0] for j in range(self.nlist)]
+        self.X = X
+        return self
+
+    def search(self, q: np.ndarray, k: int = 10, nprobe: int = 8) -&gt; np.ndarray:
+        probe = np.argsort(-(self.C @ q - 0.5 * (self.C ** 2).sum(1)))[:nprobe]
+        cand = np.concatenate([self.lists[j] for j in probe])
+        return cand[np.argsort(-(self.X[cand] @ q))[:k]]</code></pre>
+      </div>
+    <hr>
+<h2 id="4-product-quantization-pq"><a class="anchor" href="#4-product-quantization-pq">#</a> 4. Product Quantization (PQ)</h2>
+<p>PQ compresses vectors so that the whole index fits in RAM (or GPU memory), and computes distances <em>without decompressing them</em> (Jégou et al., 2011).</p>
+<h3 id="41-encoding"><a class="anchor" href="#41-encoding">#</a> 4.1 Encoding</h3>
+<p>Split $\mathbf{x} \in \mathbb{R}^d$ into $m$ subvectors of $d/m$ dimensions. Learn a k-means codebook with $k^* = 256$ centroids <strong>per subspace</strong>. Encode each subvector by its centroid index (1 byte):</p>
+<p>$$
+\mathbf{x} \approx [,\mathbf{c}^{(1)}<em>{i_1};\ \mathbf{c}^{(2)}</em>{i_2};\ \ldots;\ \mathbf{c}^{(m)}_{i_m},], \qquad \text{code} = (i_1,\ldots,i_m) \in {0..255}^m
+$$</p>
+<p><strong>Memory:</strong> $m$ bytes per vector (e.g. $d = 1024$ fp32 = 4096 B → $m = 64$ gives <strong>64 B, a 64× reduction</strong>), plus the codebooks, $m \cdot 256 \cdot (d/m) \cdot 4$ bytes = $1024,d$ bytes total.</p>
+<h3 id="42-asymmetric-distance-computation-adc"><a class="anchor" href="#42-asymmetric-distance-computation-adc">#</a> 4.2 Asymmetric distance computation (ADC)</h3>
+<p>Keep the query in full precision. Precompute one lookup table per subspace, $T_j[c] = |\mathbf{q}^{(j)} - \mathbf{c}^{(j)}_c|^2$, which costs $256,d$ flops per query. Each database distance is then just $m$ table lookups plus additions:</p>
+<p>$$
+|\mathbf{q} - \mathbf{x}|^2 \approx \sum_{j=1}^{m} T_j\big[,i_j(\mathbf{x}),\big]
+$$</p>
+<p>This is SIMD-friendly. FAISS &quot;fast scan&quot; packs 4-bit codes into registers, reaching billions of distance evaluations per second per core.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ProductQuantizer:
+    def __init__(self, d: int, m: int, ks: int = 256):
+        assert d % m == 0
+        self.d, self.m, self.ks, self.ds = d, m, ks, d // m
+
+    def fit(self, X: np.ndarray, iters: int = 20):
+        self.codebooks = np.stack([kmeans(X[:, j * self.ds:(j + 1) * self.ds], self.ks, iters, seed=j)
+                                   for j in range(self.m)])              # (m, ks, ds)
+        return self
+
+    def encode(self, X: np.ndarray) -&gt; np.ndarray:
+        codes = np.empty((len(X), self.m), dtype=np.uint8)
+        for j in range(self.m):
+            sub, C = X[:, j * self.ds:(j + 1) * self.ds], self.codebooks[j]
+            codes[:, j] = ((sub ** 2).sum(1, keepdims=True) - 2 * sub @ C.T + (C ** 2).sum(1)).argmin(1)
+        return codes
+
+    def adc_table(self, q: np.ndarray) -&gt; np.ndarray:
+        qs = q.reshape(self.m, 1, self.ds)
+        return ((self.codebooks - qs) ** 2).sum(-1)                        # (m, ks)
+
+    def search(self, q: np.ndarray, codes: np.ndarray, k: int = 10) -&gt; np.ndarray:
+        T = self.adc_table(q)
+        dist = T[np.arange(self.m), codes].sum(1)                          # (N,)
+        return np.argsort(dist)[:k]</code></pre>
+      </div>
+    <h3 id="43-variants-youll-meet"><a class="anchor" href="#43-variants-youll-meet">#</a> 4.3 Variants you&#39;ll meet</h3>
+<ul>
+<li><strong>IVF-PQ:</strong> an IVF coarse quantizer, with PQ encoding the <strong>residual</strong> $\mathbf{x} - \mathbf{c}_{\text{list}}$ (smaller residuals → more accurate codes). This is the workhorse of billion-scale in-RAM search.</li>
+<li><strong>OPQ:</strong> learn a rotation $R$ before PQ so that subspaces are decorrelated and balanced.</li>
+<li><strong>Anisotropic quantization (ScaNN):</strong> penalise quantization error <em>parallel</em> to $\mathbf{x}$ more heavily than orthogonal error, because parallel error distorts inner products more.</li>
+<li><strong>RaBitQ:</strong> randomised binary quantization with theoretical error bounds; strong recall per bit.</li>
+<li><strong>Rescoring:</strong> PQ distances are approximate, so retrieve $k \cdot r$ candidates and re-rank them with full-precision vectors (from RAM, SSD, or object storage).</li>
+</ul>
+<hr>
+<h2 id="5-graph-based-search-hnsw-and-diskann"><a class="anchor" href="#5-graph-based-search-hnsw-and-diskann">#</a> 5. Graph-Based Search: HNSW and DiskANN</h2>
+<h3 id="51-hnsw-hierarchical-navigable-small-world"><a class="anchor" href="#51-hnsw-hierarchical-navigable-small-world">#</a> 5.1 HNSW (Hierarchical Navigable Small World)</h3>
+<p>HNSW builds a multi-layer proximity graph (Malkov &amp; Yashunin, 2018):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> layer 2:   A ─────────────────────── F                  few nodes, long links (express lanes)
+            │                         │
+ layer 1:   A ────── C ────── E ───── F ──── H           more nodes
+            │        │        │       │      │
+ layer 0:   A─B──C──D──E──F──G──H──I──J──K──L            all nodes, ≤ M0 = 2M links each</code></pre>
+      </div>
+    <ul>
+<li><strong>Level assignment:</strong> each node gets level $\ell = \lfloor -\ln(U)\cdot m_L \rfloor$ with $U \sim \text{Uniform}(0,1)$ and $m_L = 1/\ln M$, so $\Pr[\ell \geq l] = M^{-l}$. The layer sizes shrink geometrically, like a skip list.</li>
+<li><strong>Search:</strong> greedy descent from the top-layer entry point to layer 1 (beam width 1). Then, on layer 0, a best-first search with a candidate list of size <code>efSearch</code> returns the top-k. The typical complexity is $O(\log N)$ hops.</li>
+<li><strong>Insertion:</strong> search with <code>efConstruction</code> to find candidates on each layer. Connect to $M$ neighbours chosen by the <strong>diversity heuristic</strong>: keep a candidate only if it is closer to the new node than to any already-selected neighbour. This keeps links spread in different directions, which preserves navigability in clustered data.</li>
+<li><strong>Parameters:</strong><ul>
+<li><code>M</code> (16–64) sets memory and recall.</li>
+<li><code>efConstruction</code> (100–500) sets build quality and build time.</li>
+<li><code>efSearch</code> (≥ k; 50–500) is the per-query recall/latency knob.</li>
+</ul>
+</li>
+<li><strong>Memory:</strong> vectors plus about $N \cdot M_0 \cdot 4$ bytes of links at layer 0, plus smaller upper layers. With $M = 32$ that is roughly 256–300 B per vector <em>on top of</em> the vectors themselves.</li>
+<li><strong>Weak points:</strong> HNSW is RAM-resident, has random memory access (cache misses), builds slowly at scale, and handles <strong>deletions</strong> poorly (tombstones degrade the graph; periodic rebuilds or repair are needed).</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import heapq
+import math
+import random
+
+
+class HNSW:
+    &quot;&quot;&quot;Compact educational HNSW for unit vectors (cosine distance = 1 - dot).&quot;&quot;&quot;
+
+    def __init__(self, M: int = 16, ef_construction: int = 100, seed: int = 0):
+        self.M, self.M0, self.efc = M, 2 * M, ef_construction
+        self.mL, self.rng = 1 / math.log(M), random.Random(seed)
+        self.vecs: list[np.ndarray] = []
+        self.graph: list[dict[int, list[int]]] = []    # graph[level][node] -&gt; neighbours
+        self.entry, self.max_level = None, -1
+
+    def _d(self, a: np.ndarray, i: int) -&gt; float:
+        return 1.0 - float(self.vecs[i] @ a)
+
+    def _search_layer(self, q, entry_points, ef, level):
+        visited = set(entry_points)
+        cand = [(self._d(q, e), e) for e in entry_points]
+        heapq.heapify(cand)
+        best = [(-d, e) for d, e in cand]                  # max-heap of the ef closest so far
+        heapq.heapify(best)
+        while cand:
+            d, c = heapq.heappop(cand)
+            if d &gt; -best[0][0]:
+                break                                       # closest candidate worse than worst kept
+            for n in self.graph[level].get(c, ()):
+                if n in visited:
+                    continue
+                visited.add(n)
+                dn = self._d(q, n)
+                if len(best) &lt; ef or dn &lt; -best[0][0]:
+                    heapq.heappush(cand, (dn, n))
+                    heapq.heappush(best, (-dn, n))
+                    if len(best) &gt; ef:
+                        heapq.heappop(best)
+        return sorted((-nd, e) for nd, e in best)           # ascending distance
+
+    def _select(self, base: np.ndarray, cands, M):
+        &quot;&quot;&quot;Diversity heuristic, then fill up with the closest remaining candidates.&quot;&quot;&quot;
+        chosen = []
+        for d, c in cands:
+            if all(self._d(self.vecs[c], s) &gt; d for s in chosen):
+                chosen.append(c)
+            if len(chosen) &gt;= M:
+                return chosen
+        rest = [c for _, c in cands if c not in chosen]
+        return chosen + rest[:M - len(chosen)]
+
+    def add(self, x: np.ndarray) -&gt; int:
+        x = x / np.linalg.norm(x)
+        i = len(self.vecs)
+        self.vecs.append(x)
+        level = int(-math.log(1.0 - self.rng.random()) * self.mL)
+        while len(self.graph) &lt;= level:
+            self.graph.append({})
+        for l in range(level + 1):
+            self.graph[l][i] = []
+        if self.entry is None:
+            self.entry, self.max_level = i, level
+            return i
+        ep = [self.entry]
+        for l in range(self.max_level, level, -1):          # greedy descent above the node&#39;s level
+            ep = [self._search_layer(x, ep, 1, l)[0][1]]
+        for l in range(min(level, self.max_level), -1, -1):
+            cands = self._search_layer(x, ep, self.efc, l)
+            m_max = self.M0 if l == 0 else self.M
+            self.graph[l][i] = self._select(x, cands, self.M)
+            for n in self.graph[l][i]:
+                self.graph[l][n].append(i)
+                if len(self.graph[l][n]) &gt; m_max:            # shrink the neighbour&#39;s list
+                    vn = self.vecs[n]
+                    nc = sorted((self._d(vn, j), j) for j in self.graph[l][n])
+                    self.graph[l][n] = self._select(vn, nc, m_max)
+            ep = [e for _, e in cands]
+        if level &gt; self.max_level:
+            self.entry, self.max_level = i, level
+        return i
+
+    def search(self, q: np.ndarray, k: int = 10, ef: int = 50) -&gt; list[int]:
+        q = q / np.linalg.norm(q)
+        ep = [self.entry]
+        for l in range(self.max_level, 0, -1):
+            ep = [self._search_layer(q, ep, 1, l)[0][1]]
+        return [e for _, e in self._search_layer(q, ep, max(ef, k), 0)[:k]]</code></pre>
+      </div>
+    <p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/Ultimate-AI-Engineering/main/03.%20Representations/03.%2520Representations/images/LLM-03-1.jpg" alt="LLM-03-1" loading="lazy" /></figure></p>
+<h3 id="52-diskann-vamana-billion-scale-on-one-node"><a class="anchor" href="#52-diskann-vamana-billion-scale-on-one-node">#</a> 5.2 DiskANN / Vamana: billion scale on one node</h3>
+<p>DiskANN (Subramanya et al., 2019) keeps a <strong>single-layer graph plus full vectors on SSD</strong>, and only <strong>PQ codes in RAM</strong>:</p>
+<ul>
+<li><strong>Vamana graph:</strong> built with <strong>α-robust pruning</strong>. A candidate is dropped if an already-selected neighbour $p^<em>$ satisfies $\alpha \cdot d(p^</em>, c) \le d(p, c)$, with $\alpha &gt; 1$ keeping longer edges. The result is a small diameter, so few hops are needed.</li>
+<li><strong>Search:</strong> a beam search guided by in-RAM PQ distances. Full vectors and neighbour lists are read from SSD in 4 KB sectors, and the candidates are reranked exactly.</li>
+<li><strong>Result:</strong> billion-point search with ~5 ms latency and &gt; 95% recall on a single machine with ~64 GB RAM plus NVMe. <strong>Fresh-DiskANN</strong> adds streaming inserts and deletes. <strong>Filtered-DiskANN</strong> adds label-aware graphs.</li>
+</ul>
+<h3 id="53-gpu-ann"><a class="anchor" href="#53-gpu-ann">#</a> 5.3 GPU ANN</h3>
+<p>GPU-native graphs (CAGRA in NVIDIA cuVS) and GPU IVF-PQ reach extreme throughput for <strong>batched</strong> queries and fast index builds. The trade-offs are GPU memory limits and cost. A common pattern is to build on the GPU and serve on CPUs (HNSW converted from CAGRA).</p>
+<hr>
+<h2 id="6-filtered-vector-search"><a class="anchor" href="#6-filtered-vector-search">#</a> 6. Filtered Vector Search</h2>
+<p>Real queries carry predicates: <code>tenant_id = 42 AND status = &#39;enacted&#39; AND session &gt;= 2023</code>. Let the <strong>selectivity</strong> $\sigma$ be the fraction of vectors that pass the filter.</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>How</th>
+<th>Good when</th>
+<th>Failure mode</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Pre-filter + exact</strong></td>
+<td>Filter via a metadata index, then brute-force the survivors</td>
+<td>$\sigma N$ small (≲ 10–50k)</td>
+<td>Slow for large $\sigma N$</td>
+</tr>
+<tr>
+<td><strong>Post-filter</strong></td>
+<td>ANN for $k&#39; = k/\sigma \cdot$ slack, then filter</td>
+<td>$\sigma$ large (≳ 0.1)</td>
+<td>Returns &lt; k results when $\sigma$ is small; latency spikes</td>
+</tr>
+<tr>
+<td><strong>In-graph filtering</strong></td>
+<td>Traverse the graph but only <em>return</em> passing nodes (still traversing others)</td>
+<td>Medium $\sigma$</td>
+<td>At low $\sigma$ the search explores huge regions with no passing nodes</td>
+</tr>
+<tr>
+<td><strong>Filter-aware graphs</strong> (ACORN, Filtered-DiskANN)</td>
+<td>Denser graphs, or label-specific edges, so that the passing subgraph stays connected</td>
+<td>Low $\sigma$, arbitrary predicates</td>
+<td>More memory and build time</td>
+</tr>
+<tr>
+<td><strong>Partitioning</strong> (per tenant or category)</td>
+<td>Separate index per high-cardinality key</td>
+<td>Hard multi-tenant isolation</td>
+<td>Many small indexes; operational overhead</td>
+</tr>
+<tr>
+<td><strong>Iterative scan</strong> (e.g. pgvector <code>hnsw.iterative_scan</code>)</td>
+<td>Keep scanning the index until k passing results are found</td>
+<td>Postgres-native filtering</td>
+<td>Latency is unbounded without a scan limit</td>
+</tr>
+</tbody></table>
+<p>A <strong>query planner</strong> chooses the strategy by estimating $\sigma$:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def plan_filtered_search(n_total: int, est_selectivity: float, k: int,
+                         exact_limit: int = 50_000, post_filter_min_sel: float = 0.1) -&gt; dict:
+    n_pass = int(n_total * est_selectivity)
+    if n_pass &lt;= exact_limit:
+        return {&quot;strategy&quot;: &quot;prefilter_exact&quot;, &quot;scan&quot;: n_pass}
+    if est_selectivity &gt;= post_filter_min_sel:
+        return {&quot;strategy&quot;: &quot;postfilter_ann&quot;, &quot;k_prime&quot;: int(k / est_selectivity * 1.5) + k}
+    return {&quot;strategy&quot;: &quot;filtered_graph&quot;, &quot;ef_search&quot;: max(4 * k, int(k / est_selectivity))}</code></pre>
+      </div>
+    <hr>
+<h2 id="7-choosing-and-tuning-an-index"><a class="anchor" href="#7-choosing-and-tuning-an-index">#</a> 7. Choosing and Tuning an Index</h2>
+<h3 id="71-decision-guide"><a class="anchor" href="#71-decision-guide">#</a> 7.1 Decision guide</h3>
+<table>
+<thead>
+<tr>
+<th>Scale (vectors)</th>
+<th>Memory budget</th>
+<th>Typical choice</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>≤ 1M</td>
+<td>Anything</td>
+<td><strong>Exact (flat)</strong> on GPU/CPU, or HNSW for sub-ms CPU latency</td>
+</tr>
+<tr>
+<td>1M–100M</td>
+<td>Vectors fit in RAM</td>
+<td><strong>HNSW</strong> (int8/fp16 vectors) — best recall/latency on CPU</td>
+</tr>
+<tr>
+<td>1M–1B</td>
+<td>Vectors don&#39;t fit</td>
+<td><strong>IVF-PQ + rescoring</strong> (RAM), or <strong>DiskANN</strong> (SSD)</td>
+</tr>
+<tr>
+<td>≥ 1B</td>
+<td>Distributed</td>
+<td>Sharded IVF-PQ / DiskANN / SPANN; partition by tenant or time</td>
+</tr>
+<tr>
+<td>High batch QPS, GPU available</td>
+<td>GPU memory</td>
+<td><strong>CAGRA / GPU IVF-PQ</strong></td>
+</tr>
+</tbody></table>
+<h3 id="72-benchmark-protocol"><a class="anchor" href="#72-benchmark-protocol">#</a> 7.2 Benchmark protocol</h3>
+<ol>
+<li>Compute exact ground truth for ≥ 1,000 held-out queries drawn from the <strong>real query distribution</strong>. Don&#39;t use database vectors as queries — they find themselves.</li>
+<li>Sweep the search-time knob (<code>efSearch</code>, <code>nprobe</code>) and plot <strong>recall@10 vs QPS</strong> on a log axis. Report the build time, index size, and P99 latency at a target recall (e.g. 0.95).</li>
+<li>Test with <strong>filters</strong> at several selectivities, <strong>concurrent inserts and deletes</strong>, and a <strong>cold cache</strong> (first query after restart, or SSD page cache dropped).</li>
+<li>Measure <strong>end-to-end retrieval quality</strong> (nDCG) as well. A 0.99 vs 0.95 ANN recall often makes no measurable difference after reranking — so don&#39;t overpay.</li>
+</ol>
+<hr>
+<h2 id="8-production-challenges-how-to-solve-them"><a class="anchor" href="#8-production-challenges-how-to-solve-them">#</a> 8. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Recall silently lower than assumed</strong></td>
+<td>Relevance issues nobody can reproduce</td>
+<td>Recall canary against exact search on sampled queries; alert on drops</td>
+</tr>
+<tr>
+<td><strong>Filtered queries return &lt; k</strong></td>
+<td>Empty or short result lists</td>
+<td>Selectivity-aware planning (§6); iterative scans; filter-aware indexes</td>
+</tr>
+<tr>
+<td><strong>Deletes degrade HNSW</strong></td>
+<td>Recall declines over weeks</td>
+<td>Periodic rebuild/compaction; graph repair; delete-friendly indexes</td>
+</tr>
+<tr>
+<td><strong>Imbalanced IVF lists</strong></td>
+<td>P99 latency spikes</td>
+<td>Balanced k-means; more lists; cap list sizes; periodic retraining</td>
+</tr>
+<tr>
+<td><strong>Index doesn&#39;t fit in RAM</strong></td>
+<td>OOM, swapping</td>
+<td>int8/PQ compression; DiskANN; shard; MRL truncation (03.01)</td>
+</tr>
+<tr>
+<td><strong>Slow builds block releases</strong></td>
+<td>Hours to rebuild</td>
+<td>GPU builds; incremental inserts; blue/green indexes</td>
+</tr>
+<tr>
+<td><strong>Cold start latency</strong></td>
+<td>Slow first queries after deploy</td>
+<td>Warm up by preloading pages; replay recent queries</td>
+</tr>
+<tr>
+<td><strong>Benchmarks don&#39;t match production</strong></td>
+<td>Great offline numbers, poor live ones</td>
+<td>Benchmark with real queries, real filters, concurrent writes, and production hardware</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="9-hands-on-projects"><a class="anchor" href="#9-hands-on-projects">#</a> 9. Hands-On Projects</h2>
+<h3 id="project-1-build-ivf-pq-and-hnsw-from-scratch-benchmark-against-faiss-and-hnswlib"><a class="anchor" href="#project-1-build-ivf-pq-and-hnsw-from-scratch-benchmark-against-faiss-and-hnswlib">#</a> Project 1 — Build IVF, PQ, and HNSW from Scratch; Benchmark Against FAISS and hnswlib</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML infrastructure engineer</em>, I want to implement the core ANN algorithms myself, so that I can tune and debug production vector indexes from first principles.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Implements <code>exact_topk</code>, <code>SimHashLSH</code>, <code>IVFFlat</code>, <code>ProductQuantizer</code> (with IVF-PQ residual encoding added), and <code>HNSW</code> (§2–5), with unit tests that check recall against exact search on synthetic data.</li>
+<li>Dataset: ≥ 1M real embeddings (your corpus from 03.01, or a public set such as a 1M sample of an ANN-benchmarks dataset), with 1,000 held-out queries and exact ground truth.</li>
+<li>Produces recall@10-vs-QPS curves for each implementation <em>and</em> for FAISS (<code>IndexIVFPQ</code>, <code>IndexHNSWFlat</code>) and hnswlib, using the same threads and hardware.</li>
+<li>Reports the build time, memory per vector (measured), and the effect of M, efConstruction, nlist/nprobe, and m (PQ sub-quantizers).</li>
+<li>The write-up explains the gap between your implementation and the libraries (SIMD, memory layout, language), with a profile.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Prepare the data: fp32, L2-normalised, with ground truth computed by <code>exact_topk</code> in batches.</li>
+<li>Implement and unit-test each index on 10k synthetic points first.</li>
+<li>Add IVF-PQ: coarse k-means, residuals, PQ on residuals, and ADC with per-list tables.</li>
+<li>Wire in FAISS and hnswlib with the equivalent parameters.</li>
+<li>Write a sweep runner that saves JSON results and a plotting script (log-scale QPS).</li>
+<li>Profile your HNSW (<code>py-spy</code>), then optionally port the distance loop to numba or Rust.</li>
+</ol>
+<hr>
+<h3 id="project-2-filtered-vector-search-under-varying-selectivity"><a class="anchor" href="#project-2-filtered-vector-search-under-varying-selectivity">#</a> Project 2 — Filtered Vector Search Under Varying Selectivity</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a search engineer</em> for a multi-tenant document platform, I need filtered queries (tenant, document type, date range) to return k correct results within the latency SLO at any filter selectivity.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A dataset of ≥ 2M vectors with realistic metadata (tenant with a Zipf-distributed size, document type, date).</li>
+<li>A query set whose filter selectivities span 0.0001 to 0.5.</li>
+<li>Strategies compared: pre-filter + exact, post-filter ANN with adaptive k′, in-graph filtering (hnswlib filter function or FAISS <code>IDSelector</code>), pgvector with iterative scan, and one engine with native filtered HNSW (e.g. Qdrant).</li>
+<li>For each strategy × selectivity bucket: recall@10 against filtered exact search, the fraction of queries returning &lt; k results, and P50/P99 latency.</li>
+<li>Implements the <code>plan_filtered_search</code> planner (§6) with selectivity estimates from metadata statistics, and shows that it achieves the best-of-breed curve.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Generate the metadata and compute filtered ground truth per query (exact search over the passing subset).</li>
+<li>Implement each strategy behind a common interface.</li>
+<li>Estimate selectivity with per-field histograms, assuming independence; measure the estimation error.</li>
+<li>Run the sweep and plot recall and P99 latency against selectivity for each strategy.</li>
+<li>Tune the planner&#39;s thresholds, and document the results.</li>
+</ol>
+<hr>
+<h3 id="project-3-capacity-plan-and-prototype-for-500m-vectors-on-a-budget"><a class="anchor" href="#project-3-capacity-plan-and-prototype-for-500m-vectors-on-a-budget">#</a> Project 3 — Capacity Plan and Prototype for 500M Vectors on a Budget</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a platform architect</em>, I need to serve 500M document chunks at 200 QPS with P99 &lt; 50 ms and recall@10 ≥ 0.95 (against exact search), on the cheapest hardware, so that we can budget the project.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A written capacity model (a spreadsheet or a Python notebook) for three designs:<ul>
+<li>(a) HNSW + int8 in RAM, sharded.</li>
+<li>(b) IVF-PQ in RAM + SSD rescoring.</li>
+<li>(c) DiskANN on NVMe.
+The model computes memory, SSD, node count, and monthly cost.</li>
+</ul>
+</li>
+<li>A prototype at 10–50M vectors for at least designs (b) and (c), measuring recall/QPS/P99 and extrapolating with a stated scaling assumption.</li>
+<li>Validates the model&#39;s predictions against the measurements within ±25%, or explains the deviation.</li>
+<li>Recommendation plus a failure-mode analysis (node loss, reindexing time, cold start).</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Write the formulas: vector bytes, graph bytes, PQ bytes, replication factor, and headroom.</li>
+<li>Build the prototypes with FAISS (IVF-PQ + a memory-mapped rescoring store) and DiskANN (Microsoft&#39;s <code>diskannpy</code>) or an engine that implements it.</li>
+<li>Load test with the 01.02 §9 load-tester pattern (Poisson arrivals).</li>
+<li>Compare measured vs modelled numbers, and adjust the model.</li>
+<li>Write the recommendation, including the operational runbook items.</li>
+</ol>
+<hr>
+<h2 id="10-foundational-papers-exact-titles"><a class="anchor" href="#10-foundational-papers-exact-titles">#</a> 10. Foundational Papers (exact titles)</h2>
+<p><strong>Theory and hashing</strong></p>
+<ul>
+<li>Beyer et al., 1999 — <em>When Is &quot;Nearest Neighbor&quot; Meaningful?</em></li>
+<li>Indyk &amp; Motwani, 1998 — <em>Approximate Nearest Neighbors: Towards Removing the Curse of Dimensionality</em></li>
+<li>Charikar, 2002 — <em>Similarity Estimation Techniques from Rounding Algorithms</em></li>
+<li>Shrivastava &amp; Li, 2014 — <em>Asymmetric LSH (ALSH) for Sublinear Time Maximum Inner Product Search (MIPS)</em></li>
+<li>Bachrach et al., 2014 — <em>Speeding Up the Xbox Recommender System Using a Euclidean Transformation for Inner-Product Spaces</em></li>
+</ul>
+<p><strong>Quantization</strong></p>
+<ul>
+<li>Jégou, Douze &amp; Schmid, 2011 — <em>Product Quantization for Nearest Neighbor Search</em></li>
+<li>Ge et al., 2013 — <em>Optimized Product Quantization for Approximate Nearest Neighbor Search</em></li>
+<li>Guo et al., 2020 — <em>Accelerating Large-Scale Inference with Anisotropic Vector Quantization</em></li>
+<li>Gao &amp; Long, 2024 — <em>RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound for Approximate Nearest Neighbor Search</em></li>
+</ul>
+<p><strong>Graphs</strong></p>
+<ul>
+<li>Malkov &amp; Yashunin, 2018 — <em>Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs</em></li>
+<li>Fu et al., 2019 — <em>Fast Approximate Nearest Neighbor Search With The Navigating Spreading-out Graph</em></li>
+<li>Subramanya et al., 2019 — <em>DiskANN: Fast Accurate Billion-point Nearest Neighbor Search on a Single Node</em></li>
+<li>Singh et al., 2021 — <em>FreshDiskANN: A Fast and Accurate Graph-Based ANN Index for Streaming Similarity Search</em></li>
+<li>Chen et al., 2021 — <em>SPANN: Highly-efficient Billion-scale Approximate Nearest Neighbor Search</em></li>
+<li>Ootomo et al., 2023 — <em>CAGRA: Highly Parallel Graph Construction and Approximate Nearest Neighbor Search for GPUs</em></li>
+</ul>
+<p><strong>Filtered search</strong></p>
+<ul>
+<li>Gollapudi et al., 2023 — <em>Filtered-DiskANN: Graph Algorithms for Approximate Nearest Neighbor Search with Filters</em></li>
+<li>Patel et al., 2024 — <em>ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and Structured Data</em></li>
+</ul>
+<p><strong>Systems and benchmarks</strong></p>
+<ul>
+<li>Johnson, Douze &amp; Jégou, 2017 — <em>Billion-scale similarity search with GPUs</em></li>
+<li>Douze et al., 2024 — <em>The Faiss library</em></li>
+<li>Aumüller, Bernhardsson &amp; Faithfull, 2018 — <em>ANN-Benchmarks: A Benchmarking Tool for Approximate Nearest Neighbor Algorithms</em></li>
+<li>Simhadri et al., 2022 — <em>Results of the NeurIPS&#39;21 Challenge on Billion-Scale Approximate Nearest Neighbor Search</em></li>
+</ul>
+<h2 id="11-essential-tooling"><a class="anchor" href="#11-essential-tooling">#</a> 11. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>FAISS</strong> (CPU/GPU)</td>
+<td>Reference implementations: Flat, IVF, PQ, OPQ, HNSW, fast-scan, index factory</td>
+</tr>
+<tr>
+<td><strong>hnswlib</strong></td>
+<td>Fast, minimal HNSW with filtering callbacks</td>
+</tr>
+<tr>
+<td><strong>ScaNN</strong></td>
+<td>Anisotropic quantization + tree search</td>
+</tr>
+<tr>
+<td><strong>DiskANN / diskannpy</strong></td>
+<td>SSD-resident graph indexes</td>
+</tr>
+<tr>
+<td><strong>NVIDIA cuVS</strong> (CAGRA, IVF-PQ)</td>
+<td>GPU ANN</td>
+</tr>
+<tr>
+<td><strong>ann-benchmarks</strong>, <strong>big-ann-benchmarks</strong>, <strong>VectorDBBench</strong></td>
+<td>Standard datasets and harnesses</td>
+</tr>
+<tr>
+<td><strong>numba / Rust (PyO3)</strong></td>
+<td>Speeding up your own implementations</td>
+</tr>
+<tr>
+<td><strong>perf / py-spy / VTune</strong></td>
+<td>Profiling cache misses and hot loops</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-01-embeddings.html"><span>← Previous</span><b>01 embeddings</b></a>
+      <a class="next" href="./03-03-vector-databases.html"><span>Next →</span><b>03 vector databases</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

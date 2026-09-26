@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>11 — Caching — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/11-caching.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">11 — Caching</h1>
+    <p class="lesson-sub">**Module goal:** Slash latency and cost by not doing work twice. Master HTTP caching, application-layer key-value caching (Redis), LLM-specific caches (prompt cache, semantic cache, embedding cache), and the eternal problem — cache invalidation.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M79.3,89.4 L86.3,78.8 L93.3,89.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.5,84.0 L80.8,74.5 L87.2,84.0 Z" fill="none" stroke="#08544a" stroke-width="1.1" opacity="0.55"/>
+        <path d="M69.7,78.7 L75.4,70.1 L81.2,78.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M64.9,73.4 L70.0,65.8 L75.1,73.4 Z" fill="none" stroke="#08544a" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.1,75.9 L64.6,49.7 L82.0,75.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">11 — Caching</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p><strong>Caching</strong> stores the result of a costly computation and returns it directly on the next equivalent request. Its purposes for AI systems:</p>
+<ol>
+<li><strong>Latency</strong> — an LLM call is 500ms–30s; a Redis GET is 0.5ms</li>
+<li><strong>Cost</strong> — a prompt hit against Anthropic&#39;s built-in prompt cache is roughly 10× cheaper on cached tokens; a full-response cache skips the call entirely</li>
+<li><strong>Load shedding</strong> — cached responses don&#39;t touch the upstream provider, buying you headroom during traffic spikes</li>
+<li><strong>Determinism</strong> — repeated identical prompts return the same answer, which users like</li>
+</ol>
+<p><strong>Cache taxonomy for an AI service:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What&#39;s cached</th>
+<th>TTL</th>
+<th>Backend</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>HTTP / CDN</strong></td>
+<td>Public GET responses</td>
+<td>seconds–days</td>
+<td>Cloudflare, Fastly, CloudFront</td>
+</tr>
+<tr>
+<td><strong>In-process</strong></td>
+<td>Small, hot lookups</td>
+<td>seconds–minutes</td>
+<td>Python <code>functools.lru_cache</code>, <code>cachetools</code></td>
+</tr>
+<tr>
+<td><strong>Distributed KV</strong></td>
+<td>Per-user, cross-replica data</td>
+<td>minutes–hours</td>
+<td>Redis, Memcached</td>
+</tr>
+<tr>
+<td><strong>Prompt cache (provider-side)</strong></td>
+<td>Static prompt prefix</td>
+<td>minutes</td>
+<td>Anthropic/OpenAI native</td>
+</tr>
+<tr>
+<td><strong>LLM response cache</strong></td>
+<td>Full model responses keyed by prompt</td>
+<td>hours–days</td>
+<td>Redis with prompt hash</td>
+</tr>
+<tr>
+<td><strong>Semantic cache</strong></td>
+<td>Fuzzy-matched responses via embedding NN</td>
+<td>days</td>
+<td>Redis + vector index</td>
+</tr>
+<tr>
+<td><strong>Embedding cache</strong></td>
+<td>Text → vector</td>
+<td>forever (deterministic)</td>
+<td>Postgres/Redis by hash</td>
+</tr>
+<tr>
+<td><strong>Retrieval cache</strong></td>
+<td>Query → top-K doc IDs</td>
+<td>minutes–hours</td>
+<td>Redis</td>
+</tr>
+</tbody></table>
+<p><strong>Three cache pattern archetypes:</strong></p>
+<ul>
+<li><strong>Cache-aside</strong> (lazy) — app reads cache first; on miss, computes, writes to cache. Most common. Simple, but stale possible.</li>
+<li><strong>Read-through / Write-through</strong> — cache sits inline; every read fills, every write updates cache and DB atomically. Stronger consistency; harder to build.</li>
+<li><strong>Write-behind</strong> — writes go to cache immediately, DB async. Fast, but data-loss risk on crash.</li>
+</ul>
+<p><strong>Cache correctness = key design + invalidation.</strong> &quot;There are only two hard things in computer science: cache invalidation and naming things.&quot; — Phil Karlton. It&#39;s true. The key must include every variable that changes the result (model version, prompt version, retrieval corpus version, user locale, tenant ID). Missing any produces cross-tenant leakage or stale answers.</p>
+<p><strong>Cache correctness ≠ cache effectiveness.</strong> Even a correct cache is useless if the hit rate is 2%. You must measure <code>hits / (hits + misses)</code> per cache and per key pattern, and iterate.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-the-cache-aside-pattern-in-python"><a class="anchor" href="#21-the-cache-aside-pattern-in-python">#</a> 2.1 The Cache-Aside Pattern in Python</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import hashlib, json, redis
+from typing import Any, Callable
+
+r = redis.Redis(decode_responses=True)
+
+def cache_key(*parts: Any) -&gt; str:
+    &quot;&quot;&quot;Stable, collision-resistant key from arbitrary parts.&quot;&quot;&quot;
+    return &quot;cache:&quot; + hashlib.sha256(
+        json.dumps(parts, sort_keys=True, default=str).encode()
+    ).hexdigest()[:24]
+
+def cached(ttl_sec: int):
+    def deco(fn: Callable):
+        async def wrapper(*args, **kwargs):
+            key = cache_key(fn.__module__, fn.__name__, args, kwargs)
+            hit = r.get(key)
+            if hit is not None:
+                return json.loads(hit)
+            val = await fn(*args, **kwargs)
+            r.set(key, json.dumps(val), ex=ttl_sec)
+            return val
+        return wrapper
+    return deco
+
+@cached(ttl_sec=3600)
+async def embed(text: str, model: str = &quot;text-embedding-3-large&quot;) -&gt; list[float]:
+    resp = await client.embeddings.create(input=text, model=model)
+    return resp.data[0].embedding</code></pre>
+      </div>
+    <p>Notes:</p>
+<ul>
+<li><strong><code>sort_keys=True</code></strong> so <code>{&quot;a&quot;:1,&quot;b&quot;:2}</code> and <code>{&quot;b&quot;:2,&quot;a&quot;:1}</code> hash the same</li>
+<li>Truncated SHA-256 for shorter keys (24 hex chars → 96 bits, collision-safe for practical scale)</li>
+<li>TTL forces eventual freshness even if you forget to invalidate</li>
+</ul>
+<h3 id="22-llm-response-caching"><a class="anchor" href="#22-llm-response-caching">#</a> 2.2 LLM Response Caching</h3>
+<p>Caching a full LLM response works when your prompt-and-context is deterministic and reused. Common cases: FAQs, deterministic classification, tool calls with fixed argument spaces.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">async def llm_call_cached(system: str, user: str, model: str, prompt_version: str) -&gt; str:
+    key = cache_key(&quot;llm&quot;, model, prompt_version, system, user)
+    hit = r.get(key)
+    if hit:
+        METRICS.cache_hit.labels(type=&quot;llm&quot;).inc()
+        return hit
+    METRICS.cache_miss.labels(type=&quot;llm&quot;).inc()
+    resp = await client.messages.create(
+        model=model,
+        system=system,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user}],
+        temperature=0.0,   # determinism is important for caching
+        max_tokens=1024,
+    )
+    text = resp.content[0].text
+    r.set(key, text, ex=86400)
+    return text</code></pre>
+      </div>
+    <p><strong>Rules for LLM response caching:</strong></p>
+<ul>
+<li><strong>Temperature 0</strong> or a fixed seed — non-determinism poisons cache hits.</li>
+<li><strong>Include prompt_version, model, and any external state</strong> (retrieval corpus version, tool list hash) in the key.</li>
+<li><strong>Beware personalization.</strong> If the response depends on user history, per-user prefix must be in the key — but then hit rates plummet. Consider a two-tier cache: user-agnostic response (high hit rate) + short personalization step on top.</li>
+<li><strong>Beware safety.</strong> Caching a bad response replays it. Have a &quot;purge by pattern&quot; tool.</li>
+<li><strong>Beware time-sensitive answers.</strong> &quot;What&#39;s today&#39;s weather&quot; cached for 24h is a bug. Add TTLs that reflect data freshness needs, or hash the response for freshness signals (&quot;current&quot; phrases).</li>
+</ul>
+<h3 id="23-prompt-caching-provider-side"><a class="anchor" href="#23-prompt-caching-provider-side">#</a> 2.3 Prompt Caching (Provider-Side)</h3>
+<p>Anthropic (<code>cache_control</code>) and OpenAI (automatic prompt caching) support caching a <strong>prompt prefix</strong> — typically a long system prompt, tool definitions, or a large document passed with every request. The provider stores the prefix&#39;s internal state and reuses it across requests, charging ~10% of normal input-token cost for the cached portion.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">resp = client.messages.create(
+    model=&quot;claude-sonnet-5&quot;,
+    system=[
+        {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: LONG_SYSTEM_PROMPT, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}},
+        {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: TOOL_DEFINITIONS, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}},
+    ],
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_input}],
+)
+# Response: usage.cache_creation_input_tokens=X, usage.cache_read_input_tokens=Y</code></pre>
+      </div>
+    <p>Rules of thumb:</p>
+<ul>
+<li>Cache anything &gt; 1024 tokens that repeats across requests</li>
+<li>Prefixes must match byte-for-byte from the start — reorganize your prompt so the stable part is at the top</li>
+<li>Cache blocks have a limited TTL (Anthropic: 5 minutes by default, or 1 hour with the extended-cache option); high-frequency use keeps them warm</li>
+</ul>
+<p>For a chat app with many concurrent users sharing a large system prompt, prompt cache alone can cut input costs by 80–90%. This is one of the highest-ROI production optimizations available.</p>
+<h3 id="24-semantic-cache-fuzzy-match-by-embedding"><a class="anchor" href="#24-semantic-cache-fuzzy-match-by-embedding">#</a> 2.4 Semantic Cache — Fuzzy Match by Embedding</h3>
+<p>Exact-key caching doesn&#39;t help when user queries are semantically identical but textually different: &quot;What&#39;s the weather in Paris?&quot; vs &quot;Paris weather?&quot; — different SHA-256, different cache miss.</p>
+<p><strong>Semantic cache</strong> stores previous (embedding, response) pairs; on a new query, embed it, do a nearest-neighbor search, and if the top-K distance is below a threshold, return the cached response.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def semantic_cache_get(query: str, threshold: float = 0.06) -&gt; str | None:
+    q_vec = embed_sync(query)
+    # Search vector index (pgvector, Qdrant, etc.)
+    results = vector_index.search(q_vec, k=1)
+    if not results or results[0].distance &gt; threshold:
+        return None
+    return results[0].payload[&quot;response&quot;]
+
+def semantic_cache_set(query: str, response: str) -&gt; None:
+    vector_index.upsert(embed_sync(query), payload={&quot;query&quot;: query, &quot;response&quot;: response})</code></pre>
+      </div>
+    <p><strong>Cautions:</strong></p>
+<ul>
+<li>Threshold tuning is critical. Too tight = few hits. Too loose = wrong-answer hits (&quot;What&#39;s Paris weather?&quot; returns cached &quot;What&#39;s Prague weather?&quot; answer). Validate on labeled pairs.</li>
+<li>Never semantic-cache safety-critical or personalized answers.</li>
+<li>Log semantic-cache hits with the <em>original</em> query and cached query so you can audit for confusions.</li>
+<li>Better on FAQ-style tasks; worse on open generation.</li>
+</ul>
+<h3 id="25-cache-invalidation"><a class="anchor" href="#25-cache-invalidation">#</a> 2.5 Cache Invalidation</h3>
+<p>Four strategies (in order of complexity):</p>
+<ol>
+<li><strong>TTL (Time-To-Live)</strong> — set an expiry; eventually the cache heals. Simple, but stale within the TTL window. Choose TTL based on staleness tolerance.</li>
+<li><strong>Version-in-key</strong> — bump a global (or per-domain) version number; old entries become naturally unreachable (and evicted on TTL). Great when writes are rare and reads are hot.</li>
+<li><strong>Explicit invalidation</strong> — on write, delete affected keys. Works for narrow single-object caches. Fragile for aggregates.</li>
+<li><strong>Event-based invalidation</strong> — publish an event on the source of truth; a consumer flushes affected cache keys. Highest complexity, best for large multi-service systems.</li>
+</ol>
+<p><strong>LLM-specific version-in-key example:</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">CACHE_VERSION = {
+    &quot;model&quot;: &quot;claude-sonnet-5&quot;,
+    &quot;prompt&quot;: &quot;v3.2.1&quot;,       # bump when prompt changes
+    &quot;corpus&quot;: &quot;docs-2026-09&quot;, # bump when RAG corpus refreshes
+}
+
+def llm_cache_key(user_input: str) -&gt; str:
+    return cache_key(&quot;llm&quot;, CACHE_VERSION, user_input)</code></pre>
+      </div>
+    <p>When any of the components changes (deploy pushes new prompt version), old cache keys become unreferenced. Set TTL so they self-evict. <strong>This gives you free rollback:</strong> revert the version → old cache is reused.</p>
+<h3 id="26-observability-of-caches"><a class="anchor" href="#26-observability-of-caches">#</a> 2.6 Observability of Caches</h3>
+<p>Every cache should emit at least four metrics:</p>
+<ul>
+<li><code>cache_hits_total{cache}</code></li>
+<li><code>cache_misses_total{cache}</code></li>
+<li><code>cache_size_bytes{cache}</code> (if bounded)</li>
+<li><code>cache_evictions_total{cache, reason}</code> — LRU, TTL, manual</li>
+</ul>
+<p>Hit rate = <code>hits / (hits + misses)</code>. Alert on:</p>
+<ul>
+<li><strong>Hit rate drops</strong> (deploy broke keying; corpus refresh; sudden new query patterns)</li>
+<li><strong>Evictions climb</strong> (cache size too small; TTL too long relative to memory)</li>
+<li><strong>P99 latency of GET</strong> — a slow Redis is a red flag</li>
+</ul>
+<p><code>[IMG-11-01]</code> — <em>Prompt: A layered cache diagram for an AI service. From top: &quot;Request enters&quot; → decision diamond &quot;In-process LRU (10ms)&quot; → &quot;Redis distributed cache (0.5ms)&quot; → decision &quot;Semantic cache (embedding search, 20ms)&quot; → &quot;Provider prompt cache (built-in)&quot; → &quot;Full LLM call (2000ms)&quot;. Each layer labeled with typical hit rate (60% / 30% / 5% / partial / 5%) and cost per hit. Show fallthrough arrows and populate-on-miss arrows. Modern architecture diagram style.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-warehouse-racking-system"><a class="anchor" href="#model-1-the-warehouse-racking-system">#</a> Model 1: The Warehouse Racking System</h3>
+<p>Think of a warehouse: fastest-moving items sit on the picking floor at eye level (in-process, LRU). Slower items are on high shelves accessible with a lift (Redis, another network hop). Reserve stock is in a distant offsite warehouse (the origin service or LLM provider). The picker&#39;s job is to always reach for the closest available copy. Meanwhile, inventory management (invalidation) makes sure when a product changes SKU or gets recalled, every location&#39;s stock is updated — otherwise you sell customers the old thing.</p>
+<p>Multiple cache layers stack the same way: each layer is <em>closer, faster, smaller</em>. A miss at layer N falls through to layer N+1. The trick to a well-tuned cache is the <strong>hit rate at the innermost layer</strong> — that&#39;s where the latency win compounds.</p>
+<h3 id="model-2-the-browser-history-and-tab-cache"><a class="anchor" href="#model-2-the-browser-history-and-tab-cache">#</a> Model 2: The Browser History and Tab Cache</h3>
+<p>Your browser doesn&#39;t reload a page every time you navigate back — it caches the DOM tree, images, scripts. Some of those cache entries have <code>Cache-Control: max-age=3600</code> (TTL); some are <code>ETag</code>-validated (conditional refresh); some are marked <code>no-store</code> (auth pages that must not be cached). And when you open incognito, the entire cache is scoped per-window — so your work-account and personal-account tabs don&#39;t cross-contaminate.</p>
+<p>An LLM cache system is the same. Public FAQ answers: long TTL. User-personalized responses: per-user scope. Regulated PHI/PII responses: <code>no-store</code>. And the multi-tenant equivalent of incognito — cache keyed by tenant ID so Company A&#39;s cached responses never leak to Company B — is the single most important safety property in a multi-tenant AI service.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Cache-key omissions cause cross-tenant leakage.</strong>
+You cache <code>f&quot;answer:{user_input}&quot;</code>. User A on tenant Acme asks &quot;What&#39;s our policy?&quot;; user B on tenant Zenith asks the same string; both hit the same cache key and B sees Acme&#39;s answer. This is a <strong>security breach</strong>, not a bug. <strong>Fix:</strong> every key must include every identity-relevant scope: <code>tenant_id</code>, <code>user_id</code> (if answer is user-personalized), <code>locale</code>, <code>role</code>. Better yet, use a helper <code>key(*, tenant, user, prompt_version, ...)</code> where those args are keyword-only, so no one forgets one at a call site.</p>
+<p><strong>Pitfall #2 — Caching non-deterministic LLM responses without setting temperature=0.</strong>
+You call <code>client.messages.create(...)</code> with default temperature, cache the response for 24h. Next user with same prompt gets the same (possibly bad) response, forever. If temperature was 0.7, the cached response is a <em>sample</em>, not the &quot;correct&quot; answer. <strong>Fix:</strong> either cache only temperature=0 responses (deterministic given identical prompt+model+version), or cache multiple samples and rotate, or don&#39;t cache generation at all — cache only the deterministic parts (embeddings, tool call plans, classifications).</p>
+<p><strong>Pitfall #3 — TTL set to &quot;long&quot; without invalidation plan.</strong>
+You cache RAG retrieval results for 24h. You update the corpus at midnight. Users get yesterday&#39;s answers all day. <strong>Fix:</strong> use version-in-key with a corpus version that bumps on refresh; old entries evict on their own TTL, new entries reference the new version. Or shorter TTL that matches staleness tolerance. Or explicit flush on corpus swap. The pattern: <strong>your TTL must be shorter than the freshness SLO</strong>, or you need a plan to invalidate faster.</p>
+<p>Related pitfall: <strong>cold-cache stampede.</strong> When a hot cache key expires, hundreds of concurrent requests all miss and hit the origin simultaneously (thundering herd on the LLM). Fixes: (a) lock-and-wait — first miss holds a lock, others wait; (b) probabilistic early refresh — refresh with probability rising as TTL nears expiry; (c) stale-while-revalidate — return the stale value while a single background task refreshes.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> In cache-aside, the application:
+A) Writes to the cache first, then the database
+B) Reads cache first; on miss, reads origin and populates cache
+C) Only reads from cache; another system populates it
+D) Uses the cache as a write buffer</p>
+<p><strong>Q2 (short):</strong> Why is <code>temperature=0</code> important when caching LLM responses?</p>
+<p><strong>Q3 (MC):</strong> Which is NOT a valid cache invalidation strategy?
+A) TTL / eventual expiry
+B) Version-in-key
+C) Explicit delete on write
+D) Never invalidate; assume everything&#39;s static</p>
+<p><strong>Q4 (short):</strong> Name one high-ROI cache layer specific to LLM APIs and explain why it saves cost.</p>
+<p><strong>Q5 (MC):</strong> A semantic cache uses:
+A) SHA-256 of the query as the key
+B) Embedding-based nearest-neighbor match with a similarity threshold
+C) Regex normalization of the query
+D) Language detection to pick a locale-specific response</p>
+<p><strong>Q6 (short):</strong> You cache RAG answers with 24h TTL. Your ops team refreshes the retrieval corpus daily at midnight. Sketch a bug this creates and a fix.</p>
+<p><strong>Q7 (MC):</strong> Cache-key design in a multi-tenant AI service MUST include which of the following at minimum?
+A) tenant_id
+B) prompt_version
+C) model
+D) All of the above</p>
+<p><strong>Q8 (MC):</strong> Anthropic&#39;s prompt caching feature charges cached input tokens at approximately:
+A) The same rate as normal
+B) ~10% of normal input token rate
+C) Zero
+D) 2× normal</p>
+<p><strong>Q9 (short):</strong> What is &quot;thundering herd&quot; in caching, and give one mitigation.</p>
+<p><strong>Q10 (MC):</strong> You add caching but your hit rate is 2%. What&#39;s the most likely issue?
+A) Redis is slow
+B) The key includes too many high-cardinality dimensions (e.g., <code>request_id</code>, timestamp)
+C) The TTL is too short
+D) Any of A, B, C — investigate all three</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> Cache-aside = the app pattern where the cache sits alongside the origin; app is responsible for read-through logic. Read cache → miss → compute → populate → return. It&#39;s the most common because it doesn&#39;t require the cache to be a first-class participant in your write path.</p>
+<p><strong>A2:</strong> LLMs with temperature &gt; 0 return different responses to identical prompts. If you cache one such sample, every future user with that prompt gets that specific sample — often not the &quot;best&quot; one and possibly a low-quality outlier. Also, the caller may have assumed sampling variance across users (for diversity or exploration). Temperature=0 (greedy decoding) is deterministic given <code>(prompt, model, model_version)</code>, so the cached value is the <em>canonical</em> response. If you need diversity, cache multiple samples and rotate, or cache only downstream deterministic decisions (classifications, extractions) rather than raw generations.</p>
+<p><strong>A3: D.</strong> Static data is real — cache-forever is legitimate for immutable content (embeddings of a corpus that never changes; hashes of a file). But it&#39;s not a strategy for <em>dynamic</em> systems; it just delays the problem. In practice most caches need one of A/B/C.</p>
+<p><strong>A4:</strong> Any of:</p>
+<ul>
+<li><strong>Provider prompt cache</strong> — Anthropic/OpenAI cache a long stable prefix (system prompt, tool definitions, big document). Cached tokens are billed at ~10% of normal, and latency drops sharply for cached portions. When many concurrent requests share a system prompt, this alone can cut input cost by 80–90%.</li>
+<li><strong>Embedding cache</strong> — text→vector is deterministic given <code>(model, text)</code>. Cache forever. Saves the entire embedding call for repeat inputs (huge for FAQ-heavy or repetitive-ingestion workloads).</li>
+<li><strong>Semantic response cache</strong> — matches semantically equivalent queries; a 40% hit rate on FAQ apps completely skips the LLM call.</li>
+<li><strong>Retrieval cache</strong> — same query → same top-K docs (until corpus version changes). Skips the vector DB round-trip.</li>
+</ul>
+<p><strong>A6:</strong> Bug: users get <em>yesterday&#39;s answers</em> until each cached key hits its 24h TTL — up to 24 hours of staleness after a corpus refresh. Users may see hallucinations grounded in stale context (&quot;our policy is X&quot; when it was updated to Y at midnight). Fixes (any):</p>
+<ol>
+<li><strong>Version-in-key</strong>: include <code>corpus_version</code> in the cache key. Corpus refresh bumps the version; old keys become unreferenced and evict on TTL. New keys map to fresh answers immediately.</li>
+<li><strong>Explicit flush on refresh</strong>: after the midnight corpus swap, delete <code>rag:*</code> cache keys.</li>
+<li><strong>Shorter TTL</strong> aligned with the refresh cadence (e.g., 12h for a nightly refresh, so worst-case staleness is 12h — still not great, but bounded).</li>
+<li><strong>Event-driven</strong>: publish a <code>corpus_refreshed</code> event; a listener invalidates affected keys.</li>
+</ol>
+<p><strong>A7: D — all of the above.</strong> Missing <code>tenant_id</code> → cross-tenant leakage (security). Missing <code>prompt_version</code> → stale answers after a prompt fix. Missing <code>model</code> → mixing responses from different models (Sonnet vs Opus) as if equivalent. All three must be in the key; also often: locale, user_id (for personalized), tool-set hash, retrieval corpus version.</p>
+<p><strong>A8: B.</strong> Anthropic (and OpenAI) charge cached input tokens at roughly 10% of normal input pricing (specific ratios vary by model and tier, and cache-creation vs cache-read differ; consult the current pricing page). The break-even is generally reached in 2–3 uses of the same cached prefix — well within a normal request&#39;s lifespan for a shared system prompt.</p>
+<p><strong>A9:</strong> <strong>Thundering herd</strong> = when a hot cache key expires (or is invalidated), many concurrent requests all miss simultaneously and all call the origin at once, overloading it. Mitigations: (1) <strong>lock-and-wait</strong> — first miss holds a Redis lock; others wait for it to populate then read; (2) <strong>probabilistic early refresh</strong> — as TTL approaches expiry, a small fraction of requests preemptively refresh the cache while continuing to serve the cached value; (3) <strong>stale-while-revalidate</strong> — on expiry, return the stale value once and kick off a background refresh; subsequent requests during refresh get the stale value; (4) <strong>staggered TTLs</strong> with jitter so unrelated hot keys don&#39;t all expire at the same second.</p>
+<p><strong>A10: D.</strong> All three deserve investigation. (A) Slow Redis = high per-request latency, no direct hit-rate effect, but check anyway. (B) High-cardinality dimensions (request_id, session_id, timestamp) means each request produces a unique key that never repeats — a &quot;cache&quot; of one, hit rate → 0. Fix: strip volatile fields from the key. (C) TTL shorter than the expected reuse interval means keys expire before their second hit. Longer than reuse interval only helps if you have enough memory to store them. Also check: correctness of the key function (are you including a mutable object hash that changes each time?), Redis memory eviction (are you being evicted before TTL?), and workload variety (maybe no query genuinely repeats).</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/10-rate-limiting.md</code> — cache hits don&#39;t consume rate-limit quota (or do; you choose)</li>
+<li><code>learning/14-cost-optimization.md</code> — caching is a top-3 cost lever</li>
+<li><code>learning/09-llm-observability.md</code> — cache metrics on the dashboard</li>
+<li><code>../llm-engineering/13-rag-evaluation.md</code> — caching interacts with corpus versioning</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Wrap your LLM call with an in-process LRU cache (<code>functools.lru_cache</code> or <code>cachetools.TTLCache</code>). Measure hit rate on 500 replayed prompts.</li>
+<li>Add a Redis-backed cache with a version-in-key. Bump the version; confirm old entries become unreachable.</li>
+<li>Instrument <code>cache_hits_total</code>, <code>cache_misses_total</code>. Add both to your Prometheus/Grafana dashboard.</li>
+<li>Wire Anthropic prompt caching on a long system prompt. Measure cache_read_input_tokens vs cache_creation_input_tokens per request. Compute % cost saved.</li>
+<li>Build a simple semantic cache with pgvector + Postgres. Tune the threshold on a labeled set.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Redis docs — <a href="https://redis.io/docs">https://redis.io/docs</a></li>
+<li>Anthropic prompt caching — <a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching">https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching</a></li>
+<li>Fastly and Cloudflare edge caching whitepapers</li>
+<li>Martin Fowler — &quot;Patterns of Enterprise Application Architecture&quot; (Cache-aside chapter)</li>
+<li>Phil Karlton&#39;s famous quote — the reason this module exists</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-10-rate-limiting.html"><span>← Previous</span><b>learning 10 rate limiting</b></a>
+      <a class="next" href="./learning-12-authentication.html"><span>Next →</span><b>learning 12 authentication</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

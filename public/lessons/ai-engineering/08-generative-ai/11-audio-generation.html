@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audio Generation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/11-audio-generation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#production-landscape">Production landscape</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-audio-is-a-streaming-problem">Production note: audio is a streaming problem</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Audio Generation</h1>
+    <p class="lesson-sub">Audio is a 1-D signal at 16-48 kHz. A five-second clip is 80-240k samples. No transformer attends to that sequence directly. The solution for every production audio model in 2026 is the same: a neural codec (Encodec, SoundStream, DAC) compresses audio to discrete tokens at 50-75 Hz, and a transformer or diffusion model generates tokens.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 02 (Audio Features), Phase 6 · 04 (ASR), Phase 8 · 06 (DDPM)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="20.7" y="124.3" width="27.8" height="27.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(158 34.6 138.2)"/>
+        <rect x="15.9" y="120.0" width="26.5" height="26.5" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(140 29.2 133.2)"/>
+        <circle cx="23.8" cy="128.3" r="12.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Audio Generation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Three audio generation tasks:</p>
+<ol>
+<li><strong>Text-to-speech.</strong> Given text, produce speech. Clean speech is narrow-band and has strong phonetic structure — solved well by transformer-over-tokens. VALL-E (Microsoft), NaturalSpeech 3, ElevenLabs, OpenAI TTS.</li>
+<li><strong>Music generation.</strong> Given a prompt (text, melody, chord progression, genre), produce music. Much broader distribution. MusicGen (Meta), Stable Audio 2.5, Suno v4, Udio, Riffusion.</li>
+<li><strong>Audio effects / sound design.</strong> Given a prompt, produce ambient sound or Foley. AudioGen, AudioLDM 2, Stable Audio Open.</li>
+</ol>
+<p>All three run on the same substrate: neural audio codec + token-AR or diffusion generator.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/11-audio-generation/assets/audio-generation.svg" alt="Audio generation: codec tokens + transformer or diffusion" loading="lazy" /></figure></p>
+<h3 id="neural-audio-codecs"><a class="anchor" href="#neural-audio-codecs">#</a> Neural audio codecs</h3>
+<p>Encodec (Meta, 2022), SoundStream (Google, 2021), Descript Audio Codec (DAC, 2023). A convolutional encoder compresses waveform to a per-timestep vector; residual vector quantization (RVQ) converts each vector to a cascade of K codebook indices. Decoder reverses it. 24 kHz audio at 2 kbps using 8 RVQ codebooks at 75 Hz = 600 tokens/sec.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">waveform (16000 samples/sec)
+    └─ encoder conv ─┐
+                     ├─ RVQ layer 1 → indices at 75 Hz
+                     ├─ RVQ layer 2 → indices at 75 Hz
+                     ├─ ...
+                     └─ RVQ layer 8</code></pre>
+      </div>
+    <h3 id="two-generative-paradigms-on-top"><a class="anchor" href="#two-generative-paradigms-on-top">#</a> Two generative paradigms on top</h3>
+<p><strong>Token-autoregressive.</strong> Flatten RVQ tokens into a sequence, run a decoder-only transformer. MusicGen uses &quot;delayed parallel&quot; to emit K codebook streams in parallel with per-stream offsets. VALL-E generates speech tokens from a text prompt + 3-second voice sample.</p>
+<p><strong>Latent diffusion.</strong> Pack codec tokens as continuous latents or model them with categorical diffusion. Stable Audio 2.5 uses flow matching on continuous audio latents. AudioLDM 2 uses text-to-mel-to-audio diffusion.</p>
+<p>The 2024-2026 trend: flow matching is winning for music (faster inference, cleaner samples) while token-AR still dominates speech because it is naturally causal and streams well.</p>
+<h2 id="production-landscape"><a class="anchor" href="#production-landscape">#</a> Production landscape</h2>
+<table>
+<thead>
+<tr>
+<th>System</th>
+<th>Task</th>
+<th>Backbone</th>
+<th>Latency</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ElevenLabs V3</td>
+<td>TTS</td>
+<td>Token-AR + neural vocoder</td>
+<td>~300ms first token</td>
+</tr>
+<tr>
+<td>OpenAI GPT-4o audio</td>
+<td>Full-duplex speech</td>
+<td>End-to-end multimodal AR</td>
+<td>~200ms</td>
+</tr>
+<tr>
+<td>NaturalSpeech 3</td>
+<td>TTS</td>
+<td>Latent flow matching</td>
+<td>Non-streaming</td>
+</tr>
+<tr>
+<td>Stable Audio 2.5</td>
+<td>Music / SFX</td>
+<td>DiT + flow matching on audio latents</td>
+<td>~10s for 1-minute clip</td>
+</tr>
+<tr>
+<td>Suno v4</td>
+<td>Full songs</td>
+<td>Undisclosed; token-AR suspected</td>
+<td>~30s per song</td>
+</tr>
+<tr>
+<td>Udio v1.5</td>
+<td>Full songs</td>
+<td>Undisclosed</td>
+<td>~30s per song</td>
+</tr>
+<tr>
+<td>MusicGen 3.3B</td>
+<td>Music</td>
+<td>Token-AR on Encodec 32kHz</td>
+<td>Real-time</td>
+</tr>
+<tr>
+<td>AudioCraft 2</td>
+<td>Music + SFX</td>
+<td>Flow matching</td>
+<td>~5s for 5s clip</td>
+</tr>
+<tr>
+<td>Riffusion v2</td>
+<td>Music</td>
+<td>Spectrogram diffusion</td>
+<td>~10s</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">score-matching</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> simulates the core idea: train a tiny next-token transformer on synthetic &quot;audio token&quot; sequences generated from two distinct &quot;styles&quot; (alternating low and high tokens for style A, monotonic ramp for style B). Condition on style and sample.</p>
+<h3 id="step-1-synthetic-audio-tokens"><a class="anchor" href="#step-1-synthetic-audio-tokens">#</a> Step 1: synthetic audio tokens</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def make_tokens(style, length, vocab_size, rng):
+    if style == 0:  # &quot;speech-like&quot;: alternating
+        return [i % vocab_size for i in range(length)]
+    # &quot;music-like&quot;: ramp
+    return [(i * 3) % vocab_size for i in range(length)]</code></pre>
+      </div>
+    <h3 id="step-2-train-a-tiny-token-predictor"><a class="anchor" href="#step-2-train-a-tiny-token-predictor">#</a> Step 2: train a tiny token predictor</h3>
+<p>A bigram-style predictor conditioned on style. The point is the pattern: codec tokens → cross-entropy training → autoregressive sampling.</p>
+<h3 id="step-3-sample-conditionally"><a class="anchor" href="#step-3-sample-conditionally">#</a> Step 3: sample conditionally</h3>
+<p>Given the style token and a starting token, sample the next token from the predicted distribution. Continue for 20-40 tokens.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Codec quality caps output quality.</strong> If the codec can&#39;t represent a sound faithfully, no amount of generator quality helps. DAC is the current open best.</li>
+<li><strong>RVQ error accumulation.</strong> Each RVQ layer models the residual of the previous. Errors on layer 1 propagate. Sampling with temperature 0 on higher layers helps.</li>
+<li><strong>Musical structure.</strong> 30 seconds of tokens is 20k+ tokens at 75 Hz. Hard for transformers. MusicGen uses sliding window + prompt continuation; Stable Audio uses shorter clips + crossfading.</li>
+<li><strong>Artifacts at boundaries.</strong> Crossfading between generated clips needs careful overlap-add.</li>
+<li><strong>Clean-data appetite.</strong> Music generators need tens of thousands of hours of licensed music. The Suno / Udio RIAA lawsuit (2024) brought this to the surface.</li>
+<li><strong>Voice cloning ethics.</strong> A 3-second sample plus a text prompt is enough for VALL-E / XTTS / ElevenLabs to clone a voice. Every production model needs abuse detection + opt-out lists.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>2026 stack</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Commercial TTS</td>
+<td>ElevenLabs, OpenAI TTS, or Azure Neural</td>
+</tr>
+<tr>
+<td>Voice cloning (consent-verified)</td>
+<td>XTTS v2 (open) or ElevenLabs Pro</td>
+</tr>
+<tr>
+<td>Background music, fast</td>
+<td>Stable Audio 2.5 API, Suno, or Udio</td>
+</tr>
+<tr>
+<td>Music with lyrics</td>
+<td>Suno v4 or Udio v1.5</td>
+</tr>
+<tr>
+<td>Sound effects / Foley</td>
+<td>AudioCraft 2, ElevenLabs SFX, or Stable Audio Open</td>
+</tr>
+<tr>
+<td>Real-time voice agent</td>
+<td>GPT-4o realtime or Gemini Live</td>
+</tr>
+<tr>
+<td>Open-weights music research</td>
+<td>MusicGen 3.3B, Stable Audio Open 1.0, AudioLDM 2</td>
+</tr>
+<tr>
+<td>Dubbing / translation</td>
+<td>HeyGen, ElevenLabs Dubbing</td>
+</tr>
+</tbody></table>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-audio-brief.md</code>. Skill takes an audio brief (task, duration, style, voice, license) and outputs: model + hosting, prompt format (genre tags, style descriptors, structural markers), codec + generator + vocoder chain, seed protocol, and eval plan (MOS / CLAP score / CER for TTS / user A/B).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code> and set style explicitly. Verify the generated sequences match the style&#39;s pattern.</li>
+<li><strong>Medium.</strong> Add delayed parallel decoding: simulate 2 streams of tokens that must stay offset by 1 step. Train a joint predictor.</li>
+<li><strong>Hard.</strong> Use HuggingFace transformers to run MusicGen-small locally. Generate a 10-second clip with three different prompts; A/B for style adherence.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Codec</td>
+<td>&quot;Neural compression&quot;</td>
+<td>Encoder / decoder for audio; typical output is 50-75 Hz tokens.</td>
+</tr>
+<tr>
+<td>RVQ</td>
+<td>&quot;Residual VQ&quot;</td>
+<td>Cascade of K quantizers; each models the residual of the previous.</td>
+</tr>
+<tr>
+<td>Token</td>
+<td>&quot;One codec symbol&quot;</td>
+<td>Discrete index into a codebook; 1024 or 2048 typical.</td>
+</tr>
+<tr>
+<td>Delayed parallel</td>
+<td>&quot;Offset codebooks&quot;</td>
+<td>Emit K token streams with staggered offsets to reduce sequence length.</td>
+</tr>
+<tr>
+<td>Flow matching</td>
+<td>&quot;The 2024 win for audio&quot;</td>
+<td>Straighter-path alternative to diffusion; faster sampling.</td>
+</tr>
+<tr>
+<td>Voice prompt</td>
+<td>&quot;3-second sample&quot;</td>
+<td>Speaker embedding or token prefix that steers the cloned voice.</td>
+</tr>
+<tr>
+<td>Mel spectrogram</td>
+<td>&quot;The visual&quot;</td>
+<td>Log-magnitude perceptual spectrogram; used by many TTS systems.</td>
+</tr>
+<tr>
+<td>Vocoder</td>
+<td>&quot;Mel to wave&quot;</td>
+<td>Neural component that converts mel spectrograms back to audio.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-audio-is-a-streaming-problem"><a class="anchor" href="#production-note-audio-is-a-streaming-problem">#</a> Production note: audio is a streaming problem</h2>
+<p>Audio is the one output modality users expect to arrive <em>as it is generated</em>, not all-at-once. In production terms this means TPOT matters (Time Per Output Token) because the user&#39;s listening speed is the target throughput — not their reading speed. For 16kHz audio tokenized at ~75 tokens/second (Encodec), the server must generate ≥75 tokens/sec per user to keep playback smooth.</p>
+<p>Two architectural consequences:</p>
+<ul>
+<li><strong>Flow-matching audio models cannot stream trivially.</strong> Stable Audio 2.5 and AudioCraft 2 render a fixed clip length in one pass. To stream, you chunk the clip and overlap boundaries — think sliding-window diffusion — adding 100-300ms of latency overhead vs a codec AR model.</li>
+</ul>
+<p>If the product is &quot;live voice chat&quot; or &quot;real-time music continuation&quot;, pick the codec AR path. If it is &quot;render a 30-second clip on submit&quot;, flow-matching wins on quality and total latency.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.13438">Défossez et al. (2022). Encodec: High Fidelity Neural Audio Compression</a> — the codec standard.</li>
+<li><a href="https://arxiv.org/abs/2107.03312">Zeghidour et al. (2021). SoundStream</a> — the first widely used neural audio codec.</li>
+<li><a href="https://arxiv.org/abs/2306.06546">Kumar et al. (2023). High-Fidelity Audio Compression with Improved RVQGAN (DAC)</a> — DAC.</li>
+<li><a href="https://arxiv.org/abs/2301.02111">Wang et al. (2023). Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers (VALL-E)</a> — VALL-E.</li>
+<li><a href="https://arxiv.org/abs/2306.05284">Copet et al. (2023). Simple and Controllable Music Generation (MusicGen)</a> — MusicGen.</li>
+<li><a href="https://arxiv.org/abs/2308.05734">Liu et al. (2023). AudioLDM 2: Learning Holistic Audio Generation with Self-supervised Pretraining</a> — AudioLDM 2.</li>
+<li><a href="https://stability.ai/news/introducing-stable-audio-2-5">Stability AI (2024). Stable Audio 2.5</a> — 2025 text-to-music with flow matching.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-video-generation.html"><span>← Previous</span><b>video generation</b></a>
+      <a class="next" href="./12-3d-generation.html"><span>Next →</span><b>3d generation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

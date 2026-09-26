@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GANs — Generator vs Discriminator — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/03-gans-generator-discriminator/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#variants-that-made-gans-work">Variants that made GANs work</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-one-shot-inference-is-gans-lasting-advantage">Production note: one-shot inference is GAN&#39;s lasting advantage</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">GANs — Generator vs Discriminator</h1>
+    <p class="lesson-sub">Goodfellow&#39;s trick in 2014 was to skip density entirely. Two networks. One makes fakes. One catches them. They fight until the fakes are indistinguishable from real. It shouldn&#39;t work. It often doesn&#39;t. When it does, the samples are still the sharpest in the literature for narrow domains.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 3 · 02 (Backprop), Phase 3 · 08 (Optimizers), Phase 8 · 02 (VAE)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="101.7" cy="99.2" r="8.8" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.1,99.1 L96.3,86.8 L104.5,99.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.3,93.8 L90.8,82.5 L98.4,93.8 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.6" y="118.8" width="26.2" height="26.2" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.7 131.9)"/>
+        <circle cx="22.3" cy="127.0" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">GANs — Generator vs</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Discriminator</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>VAEs produce blurry samples because their MSE decoder loss is Bayes-optimal for the <em>mean</em> image — and the mean of many plausible digits is a fuzzy digit. You want a loss that rewards <em>plausibility</em>, not pixel-wise proximity to any one target. There is no closed-form for plausibility. You have to learn it.</p>
+<p>Goodfellow&#39;s idea: train a classifier <code>D(x)</code> to distinguish real images from fakes. Train a generator <code>G(z)</code> to fool <code>D</code>. The loss signal for <code>G</code> is whatever <code>D</code> currently thinks makes something look real. This signal updates as <code>G</code> improves, chasing a moving target. If both networks converge, <code>G</code> has learned the data distribution without ever writing down <code>log p(x)</code>.</p>
+<p>This is adversarial training. The math is a minimax game:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">min_G max_D  E_real[log D(x)] + E_fake[log(1 - D(G(z)))]</code></pre>
+      </div>
+    <p>In 2026 GANs are no longer the SOTA generator (diffusion and flow matching ate that crown). But StyleGAN 2/3 remain the sharpest face models ever shipped, GAN discriminators are used as <em>perceptual losses</em> in diffusion training, and adversarial training powers the fast 1-step distillations (SDXL-Turbo, SD3-Turbo, LCM) that let you ship real-time diffusion.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/03-gans-generator-discriminator/assets/gan.svg" alt="GAN training: generator and discriminator in minimax" loading="lazy" /></figure></p>
+<p><strong>Generator <code>G(z)</code>.</strong> Maps a noise vector <code>z ~ N(0, I)</code> to a sample <code>x̂</code>. A decoder-shaped network (dense or transposed conv).</p>
+<p><strong>Discriminator <code>D(x)</code>.</strong> Maps a sample to a scalar probability (or score). Real → 1, fake → 0.</p>
+<p><strong>Loss.</strong> Two alternating updates:</p>
+<ul>
+<li><strong>Train <code>D</code>:</strong> <code>loss_D = -[ log D(x) + log(1 - D(G(z))) ]</code>. Binary cross-entropy on real=1, fake=0.</li>
+<li><strong>Train <code>G</code>:</strong> <code>loss_G = -log D(G(z))</code>. This is the <em>non-saturating</em> form Goodfellow used (original <code>log(1 - D(G(z)))</code> saturates and kills gradients when <code>D</code> is confident).</li>
+</ul>
+<p><strong>Training loop.</strong> One step of <code>D</code>, one step of <code>G</code>. Repeat.</p>
+<p><strong>Why it works.</strong> If <code>G</code> perfectly matches <code>p_data</code>, then <code>D</code> cannot do better than chance and outputs 0.5 everywhere; <code>G</code> gets no more gradient. Equilibrium.</p>
+<p><strong>Why it breaks.</strong> Mode collapse (<code>G</code> finds one mode <code>D</code> can&#39;t classify and mints it forever), vanishing gradient (<code>D</code> learns too fast and <code>log D</code> saturates), training instability (learning rates, batch sizes, anything).</p>
+<h2 id="variants-that-made-gans-work"><a class="anchor" href="#variants-that-made-gans-work">#</a> Variants that made GANs work</h2>
+<table>
+<thead>
+<tr>
+<th>Year</th>
+<th>Innovation</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2015</td>
+<td>DCGAN</td>
+<td>Conv/deconv, batch norm, LeakyReLU — the first stable architecture.</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>WGAN, WGAN-GP</td>
+<td>Replace BCE with Wasserstein distance + gradient penalty. Fixes vanishing gradient.</td>
+</tr>
+<tr>
+<td>2017</td>
+<td>Spectral normalization</td>
+<td>Lipschitz-bound the discriminator. Still used in 2026 discriminators.</td>
+</tr>
+<tr>
+<td>2018</td>
+<td>Progressive GAN</td>
+<td>Train low-res first, add layers. First megapixel results.</td>
+</tr>
+<tr>
+<td>2019</td>
+<td>StyleGAN / StyleGAN2</td>
+<td>Mapping network + adaptive instance norm. State of the art for fixed-domain photorealism.</td>
+</tr>
+<tr>
+<td>2021</td>
+<td>StyleGAN3</td>
+<td>Alias-free, translation-equivariant — still the face gold standard in 2026.</td>
+</tr>
+<tr>
+<td>2022</td>
+<td>StyleGAN-XL</td>
+<td>Conditional, class-aware, larger scale.</td>
+</tr>
+<tr>
+<td>2024</td>
+<td>R3GAN</td>
+<td>Rebrands with stronger regularization; works on 1024² without tricks.</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gan-minimax</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> trains a tiny GAN on 1-D data: a mixture of two Gaussians. Generator and discriminator are single-hidden-layer MLPs. We implement forward, backward, and the minimax loop by hand. The goal is to see the two key failure modes (mode collapse + vanishing gradient) as they happen.</p>
+<h3 id="step-1-non-saturating-loss"><a class="anchor" href="#step-1-non-saturating-loss">#</a> Step 1: non-saturating loss</h3>
+<p>The vanilla Goodfellow loss <code>log(1 - D(G(z)))</code> goes to 0 when D classifies G&#39;s fake as fake with high confidence. At that point the gradient for G is basically zero — G cannot improve. The non-saturating form <code>-log D(G(z))</code> has the opposite asymptote: it blows up when D is confident, giving G a strong signal.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def g_loss(d_fake):
+    # maximize log D(G(z))  &lt;=&gt;  minimize -log D(G(z))
+    return -sum(math.log(max(p, 1e-8)) for p in d_fake) / len(d_fake)</code></pre>
+      </div>
+    <h3 id="step-2-one-discriminator-step-per-generator-step"><a class="anchor" href="#step-2-one-discriminator-step-per-generator-step">#</a> Step 2: one discriminator step per generator step</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for step in range(steps):
+    # train D
+    real_batch = sample_real(batch_size)
+    fake_batch = [G(z) for z in sample_noise(batch_size)]
+    update_D(real_batch, fake_batch)
+
+    # train G
+    fake_batch = [G(z) for z in sample_noise(batch_size)]  # fresh fakes
+    update_G(fake_batch)</code></pre>
+      </div>
+    <p>Fresh fakes for G, otherwise gradients are stale.</p>
+<h3 id="step-3-watch-for-mode-collapse"><a class="anchor" href="#step-3-watch-for-mode-collapse">#</a> Step 3: watch for mode collapse</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">if step % 200 == 0:
+    samples = [G(z) for z in sample_noise(500)]
+    mode_a = sum(1 for s in samples if s &lt; 0)
+    mode_b = 500 - mode_a
+    if min(mode_a, mode_b) &lt; 50:
+        print(&quot;  [!] mode collapse: one mode is starved&quot;)</code></pre>
+      </div>
+    <p>The canonical symptom: one of the two real modes stops being generated. The discriminator stops correcting it because it&#39;s never seen as a fake.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Discriminator too strong.</strong> Cut D&#39;s learning rate by 2-5x, or add instance/layer noise. If D reaches &gt;95% accuracy, G is dead.</li>
+<li><strong>Generator memorizes a mode.</strong> Add noise to D inputs, use a minibatch-discriminator layer, or switch to WGAN-GP.</li>
+<li><strong>Batch norm leaking statistics.</strong> Real batch + fake batch flowing through the same BN layer mixes their statistics. Use instance norm or spectral norm instead.</li>
+<li><strong>Inception-score gaming.</strong> FID and IS are noisy at low sample counts. Use ≥10k samples at eval.</li>
+<li><strong>One-shot sampling is a lie for conditional tasks.</strong> You still need CFG scales, truncation tricks, and re-sampling to get usable outputs.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 GAN stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Photoreal human faces, fixed pose</td>
+<td>StyleGAN3 (sharpest, smallest)</td>
+</tr>
+<tr>
+<td>Anime / stylized faces</td>
+<td>StyleGAN-XL or Stable Diffusion LoRA</td>
+</tr>
+<tr>
+<td>Image-to-image translation</td>
+<td>Pix2Pix / CycleGAN (Phase 8 · 04) or ControlNet (Phase 8 · 08)</td>
+</tr>
+<tr>
+<td>Fast 1-step text-to-image</td>
+<td>Adversarial distillation of diffusion (SDXL-Turbo, SD3-Turbo)</td>
+</tr>
+<tr>
+<td>Perceptual loss inside a diffusion trainer</td>
+<td>Small GAN discriminator on image crops</td>
+</tr>
+<tr>
+<td>Anything multi-modal, open-ended</td>
+<td>Don&#39;t — use diffusion or flow matching</td>
+</tr>
+</tbody></table>
+<p>GANs are sharp but narrow. Once your domain opens up — photos, arbitrary text prompts, video — switch to diffusion. The adversarial trick lives on as a component (perceptual losses, distillation), not a standalone generator.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-gan-debugger.md</code>. Skill takes a failing GAN run (loss curves, sample grid, dataset size) and outputs a ranked list of likely causes, one-line fixes, and a rerun protocol.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code> with the stock settings. Then set <code>D_LR = 5 * G_LR</code> and rerun. How fast does G&#39;s loss collapse to a constant?</li>
+<li><strong>Medium.</strong> Replace the Goodfellow BCE loss with the WGAN loss: <code>loss_D = E[D(fake)] - E[D(real)]</code>, <code>loss_G = -E[D(fake)]</code>, and clip D&#39;s weights to <code>[-0.01, 0.01]</code>. Is training more stable? Compare wall-clock convergence.</li>
+<li><strong>Hard.</strong> Extend the 1-D example to 2-D data (mixture of 8 Gaussians on a ring). Track how many of the 8 modes the generator captures at steps 1k, 5k, 10k. Implement minibatch discrimination and re-measure.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Generator</td>
+<td>&quot;G&quot;</td>
+<td>Noise-to-sample network, <code>G: z → x̂</code>.</td>
+</tr>
+<tr>
+<td>Discriminator</td>
+<td>&quot;D&quot;</td>
+<td>Classifier <code>D: x → [0, 1]</code>, real vs fake.</td>
+</tr>
+<tr>
+<td>Minimax</td>
+<td>&quot;The game&quot;</td>
+<td><code>min_G max_D</code> of a joint objective.</td>
+</tr>
+<tr>
+<td>Non-saturating loss</td>
+<td>&quot;The fix&quot;</td>
+<td>Use <code>-log D(G(z))</code> for G instead of <code>log(1 - D(G(z)))</code>.</td>
+</tr>
+<tr>
+<td>Mode collapse</td>
+<td>&quot;G memorized one thing&quot;</td>
+<td>Generator produces few distinct outputs despite diverse data.</td>
+</tr>
+<tr>
+<td>WGAN</td>
+<td>&quot;Wasserstein&quot;</td>
+<td>Replace BCE with Earth-Mover distance + gradient penalty; smoother gradient.</td>
+</tr>
+<tr>
+<td>Spectral norm</td>
+<td>&quot;Lipschitz trick&quot;</td>
+<td>Constrain D&#39;s weight norms to bound its slope; stabilizes training.</td>
+</tr>
+<tr>
+<td>StyleGAN</td>
+<td>&quot;The one that works&quot;</td>
+<td>Mapping network + AdaIN; best-in-class for faces, still in 2026.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-one-shot-inference-is-gans-lasting-advantage"><a class="anchor" href="#production-note-one-shot-inference-is-gans-lasting-advantage">#</a> Production note: one-shot inference is GAN&#39;s lasting advantage</h2>
+<p>GANs no longer win on sample quality for open-domain generation, but they still win on inference cost. In production-inference literature vocabulary a GAN has:</p>
+<ul>
+<li><strong>No prefill, no decode stages.</strong> A single <code>G(z)</code> forward pass. TTFT ≈ total latency.</li>
+<li><strong>No KV-cache pressure.</strong> The only state is the weights. Batch size is bounded by activation memory, not cache.</li>
+<li><strong>Trivial continuous batching.</strong> Since every request takes the same fixed FLOPs, a static batch at the server&#39;s target occupancy is usually optimal. No in-flight scheduler needed.</li>
+</ul>
+<p>This is why GAN distillation (SDXL-Turbo, SD3-Turbo, ADD, LCM) is the dominant technique for fast text-to-image in 2026: it collapses a 20-50-step diffusion pipeline into 1-4 GAN-style forward passes while keeping the distribution of a diffusion base. The adversarial loss survives as a training-time knob for turning slow generators into fast ones.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1406.2661">Goodfellow et al. (2014). Generative Adversarial Nets</a> — the original GAN paper.</li>
+<li><a href="https://arxiv.org/abs/1511.06434">Radford et al. (2015). Unsupervised Representation Learning with DCGAN</a> — the first stable architecture.</li>
+<li><a href="https://arxiv.org/abs/1701.07875">Arjovsky, Chintala, Bottou (2017). Wasserstein GAN</a> — WGAN.</li>
+<li><a href="https://arxiv.org/abs/1802.05957">Miyato et al. (2018). Spectral Normalization for GANs</a> — SN.</li>
+<li><a href="https://arxiv.org/abs/1912.04958">Karras et al. (2020). Analyzing and Improving the Image Quality of StyleGAN</a> — StyleGAN2.</li>
+<li><a href="https://arxiv.org/abs/2106.12423">Karras et al. (2021). Alias-Free Generative Adversarial Networks</a> — StyleGAN3.</li>
+<li><a href="https://arxiv.org/abs/2311.17042">Sauer et al. (2023). Adversarial Diffusion Distillation</a> — SDXL-Turbo.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-autoencoders-vae.html"><span>← Previous</span><b>autoencoders vae</b></a>
+      <a class="next" href="./04-conditional-gans-pix2pix.html"><span>Next →</span><b>conditional gans pix2pix</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

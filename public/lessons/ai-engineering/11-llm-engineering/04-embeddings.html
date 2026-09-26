@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Embeddings &amp; Vector Representations — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/04-embeddings/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Embeddings &amp; Vector Representations</h1>
+    <p class="lesson-sub">Text is discrete. Math is continuous. Every time you ask an LLM to find &quot;similar&quot; documents, compare meanings, or search beyond keywords, you&#39;re relying on a bridge between these two worlds. That bridge is an embedding. If you don&#39;t understand embeddings, you don&#39;t understand modern AI. You just use it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11, Lesson 01 (Prompt Engineering)</b></div><div><span>Time</span><b>~75 minutes</b></div><div><span>Related</span><b>Phase 5 · 22 (Embedding Models Deep Dive) covers dense vs sparse vs multi-vector, Matryoshka truncation, and per-axis model selection. This lesson focuses on the production pipeline (vector DBs, HNSW, similarity math). Read Phase 5 · 22 before picking a model.</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="28.0" y="30.8" width="29.8" height="29.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(185 42.9 45.7)"/>
+        <rect x="23.2" y="126.5" width="28.5" height="28.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(167 37.4 140.7)"/>
+        <rect x="18.4" y="122.2" width="27.2" height="27.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(149 32.0 135.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Embeddings &amp; Vector</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Representations</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Generate text embeddings using API providers and open-source models, and compute cosine similarity between them</li>
+<li>Explain why embeddings solve the vocabulary mismatch problem that keyword search cannot handle</li>
+<li>Build a semantic search index that retrieves documents by meaning rather than exact keyword match</li>
+<li>Evaluate embedding quality using retrieval benchmarks (precision@k, recall) and choose the right embedding model for your task</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have 10,000 support tickets. A customer writes &quot;my payment didn&#39;t go through.&quot; You need to find similar past tickets. Keyword search finds tickets containing &quot;payment&quot; and &quot;didn&#39;t go through.&quot; It misses &quot;transaction failed,&quot; &quot;charge was declined,&quot; and &quot;billing error.&quot; These tickets describe the exact same problem with completely different words.</p>
+<p>This is the vocabulary mismatch problem. Human language has dozens of ways to say the same thing. Keyword search treats each word as an independent symbol with no meaning. It cannot know that &quot;declined&quot; and &quot;didn&#39;t go through&quot; refer to the same concept.</p>
+<p>You need a representation of text where meaning, not spelling, determines similarity. You need a way to place &quot;my payment didn&#39;t go through&quot; and &quot;transaction was declined&quot; close together in some mathematical space, while pushing &quot;my payment arrived on time&quot; far away despite sharing the word &quot;payment.&quot;</p>
+<p>That representation is an embedding.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-is-an-embedding"><a class="anchor" href="#what-is-an-embedding">#</a> What Is an Embedding?</h3>
+<p>An embedding is a dense vector of floating-point numbers that represents the meaning of text. The word &quot;dense&quot; matters -- every dimension carries information, unlike sparse representations (bag-of-words, TF-IDF) where most dimensions are zero.</p>
+<p>&quot;The cat sat on the mat&quot; becomes something like <code>[0.023, -0.041, 0.087, ..., 0.012]</code> -- a list of 768 to 3072 numbers depending on the model. These numbers encode meaning. You never inspect them directly. You compare them.</p>
+<h3 id="the-word2vec-breakthrough"><a class="anchor" href="#the-word2vec-breakthrough">#</a> The Word2Vec Breakthrough</h3>
+<p>In 2013, Tomas Mikolov and colleagues at Google published Word2Vec. The core insight: train a neural network to predict a word from its neighbors (or neighbors from a word), and the hidden layer weights become meaningful vector representations.</p>
+<p>The famous result:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">king - man + woman = queen</code></pre>
+      </div>
+    <p>Vector arithmetic on word embeddings captures semantic relationships. The direction from &quot;man&quot; to &quot;woman&quot; is roughly the same as the direction from &quot;king&quot; to &quot;queen.&quot; This was the moment the field realized that geometry could encode meaning.</p>
+<p>Word2Vec produced 300-dimensional vectors. Each word got one vector regardless of context. &quot;Bank&quot; in &quot;river bank&quot; and &quot;bank account&quot; had the same embedding. This limitation drove the next decade of research.</p>
+<h3 id="from-words-to-sentences"><a class="anchor" href="#from-words-to-sentences">#</a> From Words to Sentences</h3>
+<p>Word embeddings represent single tokens. Production systems need to embed entire sentences, paragraphs, or documents. Four approaches emerged:</p>
+<p><strong>Averaging</strong>: take the mean of all word vectors in the sentence. Cheap, lossy, surprisingly decent for short text. Loses word order entirely -- &quot;dog bites man&quot; and &quot;man bites dog&quot; get identical embeddings.</p>
+<p><strong>CLS token</strong>: transformer models (BERT, 2018) output a special [CLS] token embedding that represents the entire input. Better than averaging but the [CLS] token was trained for next-sentence prediction, not similarity.</p>
+<p><strong>Contrastive learning</strong>: train the model explicitly to push similar pairs together and dissimilar pairs apart. Sentence-BERT (Reimers &amp; Gurevych, 2019) used this approach and became the foundation for modern embedding models. Given &quot;How do I reset my password?&quot; and &quot;I need to change my password,&quot; the model learns these should have nearly identical vectors.</p>
+<p><strong>Instruction-tuned embeddings</strong>: the latest approach. Models like E5 and GTE accept a task prefix (&quot;search_query:&quot;, &quot;search_document:&quot;) that tells the model what kind of embedding to produce. This lets one model serve multiple tasks.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph &quot;2013: Word2Vec&quot;
+        W1[&quot;king&quot;] --&gt; V1[&quot;[0.2, -0.1, ...]&quot;]
+        W2[&quot;queen&quot;] --&gt; V2[&quot;[0.3, -0.2, ...]&quot;]
+    end
+
+    subgraph &quot;2019: Sentence-BERT&quot;
+        S1[&quot;How do I reset my password?&quot;] --&gt; E1[&quot;[0.04, 0.12, ...]&quot;]
+        S2[&quot;I need to change my password&quot;] --&gt; E2[&quot;[0.05, 0.11, ...]&quot;]
+    end
+
+    subgraph &quot;2024: Instruction-Tuned&quot;
+        I1[&quot;search_query: password reset&quot;] --&gt; T1[&quot;[0.08, 0.09, ...]&quot;]
+        I2[&quot;search_document: To reset your password, click...&quot;] --&gt; T2[&quot;[0.07, 0.10, ...]&quot;]
+    end</pre></div><h3 id="modern-embedding-models"><a class="anchor" href="#modern-embedding-models">#</a> Modern Embedding Models</h3>
+<p>The market has settled into a handful of production-grade options (MTEB scores as of early 2026, MTEB v2):</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Provider</th>
+<th>Dimensions</th>
+<th>MTEB</th>
+<th>Context</th>
+<th>Cost / 1M tokens</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Gemini Embedding 2</td>
+<td>Google</td>
+<td>3072 (Matryoshka)</td>
+<td>67.7 (retrieval)</td>
+<td>8192</td>
+<td>$0.15</td>
+</tr>
+<tr>
+<td>embed-v4</td>
+<td>Cohere</td>
+<td>1024 (Matryoshka)</td>
+<td>65.2</td>
+<td>128K</td>
+<td>$0.12</td>
+</tr>
+<tr>
+<td>voyage-4</td>
+<td>Voyage AI</td>
+<td>1024/2048 (Matryoshka)</td>
+<td>66.8</td>
+<td>32K</td>
+<td>$0.12</td>
+</tr>
+<tr>
+<td>text-embedding-3-large</td>
+<td>OpenAI</td>
+<td>3072 (Matryoshka)</td>
+<td>64.6</td>
+<td>8192</td>
+<td>$0.13</td>
+</tr>
+<tr>
+<td>text-embedding-3-small</td>
+<td>OpenAI</td>
+<td>1536 (Matryoshka)</td>
+<td>62.3</td>
+<td>8192</td>
+<td>$0.02</td>
+</tr>
+<tr>
+<td>BGE-M3</td>
+<td>BAAI</td>
+<td>1024 (dense+sparse+ColBERT)</td>
+<td>63.0 multilingual</td>
+<td>8192</td>
+<td>Open-weight</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding</td>
+<td>Alibaba</td>
+<td>4096 (Matryoshka)</td>
+<td>66.9</td>
+<td>32K</td>
+<td>Open-weight</td>
+</tr>
+<tr>
+<td>Nomic-embed-v2</td>
+<td>Nomic</td>
+<td>768 (Matryoshka)</td>
+<td>63.1</td>
+<td>8192</td>
+<td>Open-weight</td>
+</tr>
+</tbody></table>
+<p>MTEB (Massive Text Embedding Benchmark) v2 covers 100+ tasks across retrieval, classification, clustering, reranking, and summarization. Higher is better. By 2026, open-weight models (Qwen3-Embedding, BGE-M3) match or beat closed hosted models on most axes. Gemini Embedding 2 leads pure retrieval; Voyage/Cohere lead specific domains (finance, law, code). Always benchmark on your own queries before committing.</p>
+<h3 id="similarity-metrics"><a class="anchor" href="#similarity-metrics">#</a> Similarity Metrics</h3>
+<p>Given two embedding vectors, three ways to measure how similar they are:</p>
+<p><strong>Cosine similarity</strong>: the cosine of the angle between two vectors. Ranges from -1 (opposite) to 1 (identical direction). Ignores magnitude -- a 10-word sentence and a 500-word document can score 1.0 if they point the same direction. This is the default for 90% of use cases.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">cosine_sim(a, b) = dot(a, b) / (||a|| * ||b||)</code></pre>
+      </div>
+    <p><strong>Dot product</strong>: the raw inner product of two vectors. Identical to cosine similarity when vectors are normalized (unit length). Faster to compute. OpenAI&#39;s embeddings are normalized, so dot product and cosine give the same ranking.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">dot(a, b) = sum(a_i * b_i)</code></pre>
+      </div>
+    <p><strong>Euclidean (L2) distance</strong>: straight-line distance in the vector space. Smaller = more similar. Sensitive to magnitude differences. Use when the absolute position in space matters, not just the direction.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L2(a, b) = sqrt(sum((a_i - b_i)^2))</code></pre>
+      </div>
+    <p>When to use which:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Use when</th>
+<th>Avoid when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cosine similarity</td>
+<td>Comparing texts of different lengths; most retrieval tasks</td>
+<td>Magnitude carries information</td>
+</tr>
+<tr>
+<td>Dot product</td>
+<td>Embeddings are already normalized; maximum speed</td>
+<td>Vectors have varying magnitudes</td>
+</tr>
+<tr>
+<td>Euclidean distance</td>
+<td>Clustering; spatial nearest-neighbor problems</td>
+<td>Comparing documents of wildly different lengths</td>
+</tr>
+</tbody></table>
+<h3 id="vector-databases-and-hnsw"><a class="anchor" href="#vector-databases-and-hnsw">#</a> Vector Databases and HNSW</h3>
+<p>A brute-force similarity search compares the query against every stored vector. At 1 million vectors with 1536 dimensions, that is 1.5 billion multiply-add operations per query. Too slow.</p>
+<p>Vector databases solve this with Approximate Nearest Neighbor (ANN) algorithms. The dominant algorithm is HNSW (Hierarchical Navigable Small World):</p>
+<ol>
+<li>Build a multi-layer graph of vectors</li>
+<li>Top layers are sparse -- long-range connections between distant clusters</li>
+<li>Bottom layers are dense -- fine-grained connections between nearby vectors</li>
+<li>Search starts at the top layer, greedily descending to refine</li>
+<li>Returns approximate top-k results in O(log n) time instead of O(n)</li>
+</ol>
+<p>HNSW trades a small accuracy loss (typically 95-99% recall) for massive speed gains. At 10 million vectors, brute force takes seconds. HNSW takes milliseconds.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph &quot;HNSW Layers&quot;
+        L2[&quot;Layer 2 (sparse)&quot;] --&gt;|&quot;long jumps&quot;| L1[&quot;Layer 1 (medium)&quot;]
+        L1 --&gt;|&quot;shorter jumps&quot;| L0[&quot;Layer 0 (dense, all vectors)&quot;]
+    end
+
+    Q[&quot;Query vector&quot;] --&gt;|&quot;enter at top&quot;| L2
+    L0 --&gt;|&quot;nearest neighbors&quot;| R[&quot;Top-k results&quot;]</pre></div><p>Production options:</p>
+<table>
+<thead>
+<tr>
+<th>Database</th>
+<th>Type</th>
+<th>Best for</th>
+<th>Max scale</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pinecone</td>
+<td>Managed SaaS</td>
+<td>Zero-ops production</td>
+<td>Billions</td>
+</tr>
+<tr>
+<td>Weaviate</td>
+<td>Open source</td>
+<td>Self-hosted, hybrid search</td>
+<td>100M+</td>
+</tr>
+<tr>
+<td>Qdrant</td>
+<td>Open source</td>
+<td>High performance, filtering</td>
+<td>100M+</td>
+</tr>
+<tr>
+<td>ChromaDB</td>
+<td>Embedded</td>
+<td>Prototyping, local dev</td>
+<td>1M</td>
+</tr>
+<tr>
+<td>pgvector</td>
+<td>Postgres extension</td>
+<td>Already using Postgres</td>
+<td>10M</td>
+</tr>
+<tr>
+<td>FAISS</td>
+<td>Library</td>
+<td>In-process, research</td>
+<td>1B+</td>
+</tr>
+</tbody></table>
+<h3 id="chunking-strategies"><a class="anchor" href="#chunking-strategies">#</a> Chunking Strategies</h3>
+<p>Documents are too long to embed as single vectors. A 50-page PDF covers dozens of topics -- its embedding becomes an average of everything, similar to nothing specific. You split documents into chunks and embed each one.</p>
+<p><strong>Fixed-size chunking</strong>: split every N tokens with M-token overlap. Simple and predictable. Works well when documents have no clear structure. A 512-token chunk with 50-token overlap: chunk 1 is tokens 0-511, chunk 2 is tokens 462-973.</p>
+<p><strong>Sentence-based chunking</strong>: split at sentence boundaries, grouping sentences until reaching the token limit. Each chunk is at least one complete sentence. Better than fixed-size because you never cut a thought in half.</p>
+<p><strong>Recursive chunking</strong>: try splitting at the largest boundary first (section headers). If still too large, try paragraph boundaries. Then sentence boundaries. Then character limits. This is LangChain&#39;s <code>RecursiveCharacterTextSplitter</code> and it works well for mixed-format corpora.</p>
+<p><strong>Semantic chunking</strong>: embed each sentence, then group consecutive sentences whose embeddings are similar. When the embedding similarity drops below a threshold, start a new chunk. Expensive (requires embedding every sentence individually) but produces the most coherent chunks.</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Complexity</th>
+<th>Quality</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Fixed-size</td>
+<td>Low</td>
+<td>Decent</td>
+<td>Unstructured text, logs</td>
+</tr>
+<tr>
+<td>Sentence-based</td>
+<td>Low</td>
+<td>Good</td>
+<td>Articles, emails</td>
+</tr>
+<tr>
+<td>Recursive</td>
+<td>Medium</td>
+<td>Good</td>
+<td>Markdown, HTML, mixed docs</td>
+</tr>
+<tr>
+<td>Semantic</td>
+<td>High</td>
+<td>Best</td>
+<td>Critical retrieval quality</td>
+</tr>
+</tbody></table>
+<p>The sweet spot for most systems: 256-512 token chunks with 50-token overlap.</p>
+<h3 id="bi-encoders-vs-cross-encoders"><a class="anchor" href="#bi-encoders-vs-cross-encoders">#</a> Bi-Encoders vs Cross-Encoders</h3>
+<p>A bi-encoder embeds the query and documents independently, then compares vectors. Fast -- you embed the query once and compare against pre-computed document embeddings. This is what you use for retrieval.</p>
+<p>A cross-encoder takes the query and a document as a single input and outputs a relevance score. Slow -- it processes each query-document pair through the full model. But far more accurate because it can attend across query and document tokens simultaneously.</p>
+<p>The production pattern: bi-encoder retrieves top-100 candidates, cross-encoder reranks them to top-10. This is the retrieve-then-rerank pipeline.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    Q[&quot;Query&quot;] --&gt; BE[&quot;Bi-Encoder: embed query&quot;]
+    BE --&gt; VS[&quot;Vector search: top 100&quot;]
+    VS --&gt; CE[&quot;Cross-Encoder: rerank&quot;]
+    CE --&gt; R[&quot;Top 10 results&quot;]</pre></div><p>Reranking models: Cohere Rerank 3.5 ($2 per 1000 queries), BGE-reranker-v2 (free, open source), Jina Reranker v2 (free, open source).</p>
+<h3 id="matryoshka-embeddings"><a class="anchor" href="#matryoshka-embeddings">#</a> Matryoshka Embeddings</h3>
+<p>Traditional embeddings are all-or-nothing. A 1536-dimensional vector uses 1536 floats. You cannot truncate to 256 dimensions without retraining.</p>
+<p>Matryoshka Representation Learning (Kusupati et al., 2022) fixes this. The model is trained so that the first N dimensions capture the most important information, like a Russian nesting doll. Truncating a 1536-d Matryoshka embedding to 256 dimensions loses some accuracy but remains functional.</p>
+<p>OpenAI&#39;s text-embedding-3-small and text-embedding-3-large support Matryoshka truncation via the <code>dimensions</code> parameter. Requesting 256 dimensions instead of 1536 cuts storage by 6x with roughly 3-5% accuracy loss on MTEB benchmarks.</p>
+<h3 id="binary-quantization"><a class="anchor" href="#binary-quantization">#</a> Binary Quantization</h3>
+<p>A 1536-dimensional embedding stored as float32 uses 6,144 bytes. Multiply by 10 million documents: 61 GB just for vectors.</p>
+<p>Binary quantization converts each float to a single bit: positive values become 1, negative values become 0. Storage drops from 6,144 bytes to 192 bytes -- a 32x reduction. Similarity is computed using Hamming distance (count differing bits), which CPUs can do in a single instruction.</p>
+<p>The accuracy hit is around 5-10% on retrieval recall. The common pattern: binary quantization for the first-pass search over millions of vectors, then rescore the top-1000 with full-precision vectors. This gets you 95%+ of full-precision accuracy at 32x less memory.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cosine-similarity</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>We build a semantic search engine from scratch. No vector database. No external embedding API. Pure Python with numpy for the math.</p>
+<h3 id="step-1-text-chunking"><a class="anchor" href="#step-1-text-chunking">#</a> Step 1: Text Chunking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def chunk_text(text, chunk_size=200, overlap=50):
+    words = text.split()
+    chunks = []
+    start = 0
+    while start &lt; len(words):
+        end = start + chunk_size
+        chunk = &quot; &quot;.join(words[start:end])
+        chunks.append(chunk)
+        start += chunk_size - overlap
+    return chunks
+
+
+def chunk_by_sentences(text, max_chunk_tokens=200):
+    sentences = text.replace(&quot;\n&quot;, &quot; &quot;).split(&quot;.&quot;)
+    sentences = [s.strip() + &quot;.&quot; for s in sentences if s.strip()]
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    for sentence in sentences:
+        sentence_length = len(sentence.split())
+        if current_length + sentence_length &gt; max_chunk_tokens and current_chunk:
+            chunks.append(&quot; &quot;.join(current_chunk))
+            current_chunk = []
+            current_length = 0
+        current_chunk.append(sentence)
+        current_length += sentence_length
+    if current_chunk:
+        chunks.append(&quot; &quot;.join(current_chunk))
+    return chunks</code></pre>
+      </div>
+    <h3 id="step-2-building-embeddings-from-scratch"><a class="anchor" href="#step-2-building-embeddings-from-scratch">#</a> Step 2: Building Embeddings from Scratch</h3>
+<p>We implement a simple dense embedding using TF-IDF with L2 normalization. This is not a neural embedding, but it follows the same contract: text in, fixed-size vector out, similar texts produce similar vectors.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+import numpy as np
+from collections import Counter
+
+class SimpleEmbedder:
+    def __init__(self):
+        self.vocab = []
+        self.idf = []
+        self.word_to_idx = {}
+
+    def fit(self, documents):
+        vocab_set = set()
+        for doc in documents:
+            vocab_set.update(doc.lower().split())
+        self.vocab = sorted(vocab_set)
+        self.word_to_idx = {w: i for i, w in enumerate(self.vocab)}
+        n = len(documents)
+        self.idf = np.zeros(len(self.vocab))
+        for i, word in enumerate(self.vocab):
+            doc_count = sum(1 for doc in documents if word in doc.lower().split())
+            self.idf[i] = math.log((n + 1) / (doc_count + 1)) + 1
+
+    def embed(self, text):
+        words = text.lower().split()
+        count = Counter(words)
+        total = len(words) if words else 1
+        vec = np.zeros(len(self.vocab))
+        for word, freq in count.items():
+            if word in self.word_to_idx:
+                tf = freq / total
+                vec[self.word_to_idx[word]] = tf * self.idf[self.word_to_idx[word]]
+        norm = np.linalg.norm(vec)
+        if norm &gt; 0:
+            vec = vec / norm
+        return vec</code></pre>
+      </div>
+    <h3 id="step-3-similarity-functions"><a class="anchor" href="#step-3-similarity-functions">#</a> Step 3: Similarity Functions</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def cosine_similarity(a, b):
+    dot = np.dot(a, b)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
+
+
+def dot_product(a, b):
+    return float(np.dot(a, b))
+
+
+def euclidean_distance(a, b):
+    return float(np.linalg.norm(a - b))</code></pre>
+      </div>
+    <h3 id="step-4-vector-index-with-brute-force-search"><a class="anchor" href="#step-4-vector-index-with-brute-force-search">#</a> Step 4: Vector Index with Brute-Force Search</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class VectorIndex:
+    def __init__(self):
+        self.vectors = []
+        self.texts = []
+        self.metadata = []
+
+    def add(self, vector, text, meta=None):
+        self.vectors.append(vector)
+        self.texts.append(text)
+        self.metadata.append(meta or {})
+
+    def search(self, query_vector, top_k=5, metric=&quot;cosine&quot;):
+        scores = []
+        for i, vec in enumerate(self.vectors):
+            if metric == &quot;cosine&quot;:
+                score = cosine_similarity(query_vector, vec)
+            elif metric == &quot;dot&quot;:
+                score = dot_product(query_vector, vec)
+            elif metric == &quot;euclidean&quot;:
+                score = -euclidean_distance(query_vector, vec)
+            else:
+                raise ValueError(f&quot;Unknown metric: {metric}&quot;)
+            scores.append((i, score))
+        scores.sort(key=lambda x: x[1], reverse=True)
+        results = []
+        for idx, score in scores[:top_k]:
+            results.append({
+                &quot;text&quot;: self.texts[idx],
+                &quot;score&quot;: score,
+                &quot;metadata&quot;: self.metadata[idx],
+                &quot;index&quot;: idx
+            })
+        return results
+
+    def size(self):
+        return len(self.vectors)</code></pre>
+      </div>
+    <h3 id="step-5-the-semantic-search-engine"><a class="anchor" href="#step-5-the-semantic-search-engine">#</a> Step 5: The Semantic Search Engine</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SemanticSearchEngine:
+    def __init__(self, chunk_size=200, overlap=50):
+        self.embedder = SimpleEmbedder()
+        self.index = VectorIndex()
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    def index_documents(self, documents, source_names=None):
+        all_chunks = []
+        all_sources = []
+        for i, doc in enumerate(documents):
+            chunks = chunk_text(doc, self.chunk_size, self.overlap)
+            all_chunks.extend(chunks)
+            name = source_names[i] if source_names else f&quot;doc_{i}&quot;
+            all_sources.extend([name] * len(chunks))
+        self.embedder.fit(all_chunks)
+        for chunk, source in zip(all_chunks, all_sources):
+            vec = self.embedder.embed(chunk)
+            self.index.add(vec, chunk, {&quot;source&quot;: source})
+        return len(all_chunks)
+
+    def search(self, query, top_k=5, metric=&quot;cosine&quot;):
+        query_vec = self.embedder.embed(query)
+        return self.index.search(query_vec, top_k, metric)
+
+    def search_with_scores(self, query, top_k=5):
+        results = self.search(query, top_k)
+        return [
+            {
+                &quot;text&quot;: r[&quot;text&quot;][:200],
+                &quot;source&quot;: r[&quot;metadata&quot;].get(&quot;source&quot;, &quot;unknown&quot;),
+                &quot;score&quot;: round(r[&quot;score&quot;], 4)
+            }
+            for r in results
+        ]</code></pre>
+      </div>
+    <h3 id="step-6-comparing-similarity-metrics"><a class="anchor" href="#step-6-comparing-similarity-metrics">#</a> Step 6: Comparing Similarity Metrics</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def compare_metrics(engine, query, top_k=3):
+    results = {}
+    for metric in [&quot;cosine&quot;, &quot;dot&quot;, &quot;euclidean&quot;]:
+        hits = engine.search(query, top_k=top_k, metric=metric)
+        results[metric] = [
+            {&quot;score&quot;: round(h[&quot;score&quot;], 4), &quot;preview&quot;: h[&quot;text&quot;][:80]}
+            for h in hits
+        ]
+    return results</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>With a production embedding API, the architecture stays identical. Only the embedder changes:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from openai import OpenAI
+
+client = OpenAI()
+
+def openai_embed(texts, model=&quot;text-embedding-3-small&quot;, dimensions=None):
+    kwargs = {&quot;model&quot;: model, &quot;input&quot;: texts}
+    if dimensions:
+        kwargs[&quot;dimensions&quot;] = dimensions
+    response = client.embeddings.create(**kwargs)
+    return [item.embedding for item in response.data]</code></pre>
+      </div>
+    <p>Matryoshka truncation with OpenAI -- same model, fewer dimensions, lower storage:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">full = openai_embed([&quot;semantic search query&quot;], dimensions=1536)
+compact = openai_embed([&quot;semantic search query&quot;], dimensions=256)</code></pre>
+      </div>
+    <p>The 256-d vector uses 6x less storage. For 10 million documents, that is 10 GB vs 61 GB. The accuracy loss is roughly 3-5% on standard benchmarks.</p>
+<p>For reranking with Cohere:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import cohere
+
+co = cohere.ClientV2()
+
+results = co.rerank(
+    model=&quot;rerank-v3.5&quot;,
+    query=&quot;What is the refund policy?&quot;,
+    documents=[&quot;Full refund within 30 days...&quot;, &quot;No refunds after 90 days...&quot;],
+    top_n=3
+)</code></pre>
+      </div>
+    <p>For local embeddings with no API dependency:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer(&quot;BAAI/bge-small-en-v1.5&quot;)
+embeddings = model.encode([&quot;semantic search query&quot;, &quot;another document&quot;])</code></pre>
+      </div>
+    <p>The VectorIndex class from our build works with any of these. Swap the embedding function, keep the search logic.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-embedding-advisor.md</code> -- a prompt for choosing embedding models and strategies for specific use cases</li>
+<li><code>outputs/skill-embedding-patterns.md</code> -- a skill that teaches agents how to use embeddings effectively in production</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p><strong>Metric comparison</strong>: run the same 5 queries against the sample documents using cosine similarity, dot product, and euclidean distance. Record the top-3 results for each. For which queries do the metrics disagree? Why?</p>
+</li>
+<li><p><strong>Chunk size experiment</strong>: index the sample documents with chunk sizes of 50, 100, 200, and 500 words. For each, run 5 queries and record the top-1 similarity score. Plot the relationship between chunk size and retrieval quality. Find the point where larger chunks start hurting.</p>
+</li>
+<li><p><strong>Matryoshka simulation</strong>: build a SimpleEmbedder that produces 500-d vectors. Truncate to 50, 100, 200, and 500 dimensions. Measure how retrieval recall degrades at each truncation. This simulates Matryoshka behavior without needing the real training trick.</p>
+</li>
+<li><p><strong>Binary quantization</strong>: take the embeddings from the search engine, convert them to binary (1 if positive, 0 if negative), and implement Hamming distance search. Compare the top-10 results against full-precision cosine similarity. Measure the overlap percentage.</p>
+</li>
+<li><p><strong>Sentence-based chunking</strong>: replace fixed-size chunking with <code>chunk_by_sentences</code>. Run the same queries and compare retrieval scores. Does respecting sentence boundaries improve the results?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Embedding</td>
+<td>&quot;Text to numbers&quot;</td>
+<td>A dense vector where geometric proximity encodes semantic similarity</td>
+</tr>
+<tr>
+<td>Word2Vec</td>
+<td>&quot;The OG embedding&quot;</td>
+<td>2013 model that learned word vectors by predicting context words; proved vector arithmetic encodes meaning</td>
+</tr>
+<tr>
+<td>Cosine similarity</td>
+<td>&quot;How similar are two vectors&quot;</td>
+<td>Cosine of the angle between vectors; 1 = identical direction, 0 = orthogonal, -1 = opposite</td>
+</tr>
+<tr>
+<td>HNSW</td>
+<td>&quot;Fast vector search&quot;</td>
+<td>Hierarchical Navigable Small World graph -- multi-layer structure enabling O(log n) approximate nearest neighbor search</td>
+</tr>
+<tr>
+<td>Bi-encoder</td>
+<td>&quot;Embed separately, compare fast&quot;</td>
+<td>Encodes query and document independently into vectors; enables pre-computation and fast retrieval</td>
+</tr>
+<tr>
+<td>Cross-encoder</td>
+<td>&quot;Slow but accurate reranker&quot;</td>
+<td>Processes query-document pair jointly through the full model; higher accuracy, no pre-computation</td>
+</tr>
+<tr>
+<td>Matryoshka embeddings</td>
+<td>&quot;Truncatable vectors&quot;</td>
+<td>Embeddings trained so the first N dimensions capture the most important information, enabling variable-size storage</td>
+</tr>
+<tr>
+<td>Binary quantization</td>
+<td>&quot;1-bit embeddings&quot;</td>
+<td>Converting float vectors to binary (sign bit only) for 32x storage reduction with Hamming distance search</td>
+</tr>
+<tr>
+<td>Chunking</td>
+<td>&quot;Split docs for embedding&quot;</td>
+<td>Breaking documents into 256-512 token segments so each can be independently embedded and retrieved</td>
+</tr>
+<tr>
+<td>Vector database</td>
+<td>&quot;Search engine for embeddings&quot;</td>
+<td>Data store optimized for storing vectors and performing approximate nearest neighbor search at scale</td>
+</tr>
+<tr>
+<td>Contrastive learning</td>
+<td>&quot;Train by comparison&quot;</td>
+<td>Training approach that pushes similar pair embeddings together and dissimilar pair embeddings apart</td>
+</tr>
+<tr>
+<td>MTEB</td>
+<td>&quot;The embedding benchmark&quot;</td>
+<td>Massive Text Embedding Benchmark -- 56 datasets across 8 tasks; standard for comparing embedding models</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Mikolov et al., &quot;Efficient Estimation of Word Representations in Vector Space&quot; (2013) -- the Word2Vec paper that started the embedding revolution with the king-queen analogy</li>
+<li>Reimers &amp; Gurevych, &quot;Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks&quot; (2019) -- how to train bi-encoders for sentence-level similarity, foundation of modern embedding models</li>
+<li>Kusupati et al., &quot;Matryoshka Representation Learning&quot; (2022) -- the technique behind variable-dimension embeddings that OpenAI adopted for text-embedding-3</li>
+<li>Malkov &amp; Yashunin, &quot;Efficient and Robust Approximate Nearest Neighbor using Hierarchical Navigable Small World Graphs&quot; (2018) -- the HNSW paper, the algorithm behind most production vector search</li>
+<li>OpenAI Embeddings Guide (platform.openai.com/docs/guides/embeddings) -- practical reference for text-embedding-3 models including Matryoshka dimension reduction</li>
+<li>MTEB Leaderboard (huggingface.co/spaces/mteb/leaderboard) -- live benchmark comparing all embedding models across tasks and languages</li>
+<li><a href="https://arxiv.org/abs/2210.07316">Muennighoff et al., &quot;MTEB: Massive Text Embedding Benchmark&quot; (EACL 2023)</a> -- the benchmark defining 8 task categories (classification, clustering, pair classification, reranking, retrieval, STS, summarization, bitext mining) that the leaderboard reports; read before trusting any single MTEB score.</li>
+<li><a href="https://www.sbert.net/">Sentence Transformers documentation</a> -- canonical reference for bi-encoder vs cross-encoder, pooling strategies, and the ingest-split-embed-store RAG pipeline this lesson implements.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-structured-outputs.html"><span>← Previous</span><b>structured outputs</b></a>
+      <a class="next" href="./05-context-engineering.html"><span>Next →</span><b>context engineering</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

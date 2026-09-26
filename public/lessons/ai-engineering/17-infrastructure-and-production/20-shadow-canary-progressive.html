@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shadow Traffic, Canary Rollout, and Progressive Deployment for LLMs — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/20-shadow-canary-progressive/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Shadow Traffic, Canary Rollout, and Progressive Deployment for LLMs</h1>
+    <p class="lesson-sub">LLM rollouts combine the hardest parts of software deployment: no unit tests, diffuse failure modes, delayed signals. The sequence is (1) shadow mode — duplicate prod requests to candidate model, log, compare with zero user impact; catches obvious distribution issues but is not a quality guarantee; (2) canary rollout — progressive traffic shift 10% → 25% → 50% → 75% → 100% with gates at each step; track latency percentiles, cost/request, error/refusal rate, output length distribution, user-feedback rate; (3) A/B testing for distinct alternatives after stability confirmed. Non-determinism is irreducible — up to 15% accuracy variation across runs with identical inputs due to GPU FP non-associativity plus batch-size variance. Cost is a variable, not constant — a 20% better model can be 3x more expensive per call. Rollback speed is decisive: if rollback requires redeploy, you are too slow. Policy lives in config/flags; model lives in registry with pinned digests; rollback = flip policy + revert threshold + pin old model in seconds.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy canary-progression simulator)</b></div><div><span>Prerequisites</span><b>Phase 17 · 13 (Observability), Phase 17 · 21 (A/B Testing)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 20">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="21.3" y="124.8" width="28.0" height="28.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(160 35.3 138.8)"/>
+        <rect x="16.5" y="120.5" width="26.7" height="26.7" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(142 29.9 133.9)"/>
+        <circle cx="24.4" cy="128.9" r="12.7" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">20</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Shadow Traffic,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Canary Rollout, and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish shadow mode (zero-impact compare), canary (live traffic progressive), and A/B (stability-confirmed comparison).</li>
+<li>Enumerate five LLM-specific canary metrics (latency, cost/request, error/refusal, output-length distribution, user feedback).</li>
+<li>Explain why LLM non-determinism (up to 15%) changes what &quot;stable&quot; means in a rollout.</li>
+<li>Design a rollback path that takes seconds (policy flip) not hours (redeploy).</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You ship a new model. Offline evals show 3% accuracy gain. You flip it on in production. Within 24 hours, cost is up 40%, user thumbs-down is up 8%, three customer tickets report &quot;weird answers.&quot; You roll back. Redeploy takes 3 hours. Your weekend is ruined.</p>
+<p>Every piece of that was avoidable. Shadow mode would have caught the 40% cost spike before any user saw it. Canary would have stopped at 10% when thumbs-down moved. Policy-flag rollback would have taken 30 seconds. The discipline is what fills in the gap between &quot;offline evals look good&quot; and &quot;real users are happy.&quot;</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="shadow-mode"><a class="anchor" href="#shadow-mode">#</a> Shadow mode</h3>
+<p>Candidate receives the same requests as production; outputs are logged, not returned to users. Zero user impact. Log:</p>
+<ul>
+<li>Output content (diff against production).</li>
+<li>Token counts (cost delta).</li>
+<li>Latency.</li>
+<li>Refusal and error.</li>
+</ul>
+<p>Catches: cost blow-ups, length regressions, obvious refusal changes, hard errors. Does NOT catch: quality delta users would perceive. Shadow is a smoke test, not a quality test.</p>
+<h3 id="canary-rollout"><a class="anchor" href="#canary-rollout">#</a> Canary rollout</h3>
+<p>Progressive traffic shift with gates. Typical progression: 1% → 10% → 25% → 50% → 75% → 100%. Gate on 5 metrics at each step:</p>
+<ol>
+<li><strong>Latency percentiles</strong> — P50, P95, P99. Breach: canary has P99 &gt; 1.5x baseline.</li>
+<li><strong>Cost per request</strong> — blended $. Breach: &gt;20% above baseline.</li>
+<li><strong>Error / refusal rate</strong> — 5xx plus explicit refusals. Breach: 2x baseline.</li>
+<li><strong>Output length distribution</strong> — mean + P99. Breach: distributional shift.</li>
+<li><strong>User-feedback rate</strong> — thumbs-down / ticket filings. Breach: 1.5x baseline.</li>
+</ol>
+<h3 id="non-determinism-is-the-new-variance"><a class="anchor" href="#non-determinism-is-the-new-variance">#</a> Non-determinism is the new variance</h3>
+<p>Identical inputs produce non-identical outputs. Reasons:</p>
+<ul>
+<li>GPU FP non-associativity (floating-point reduction order varies by batch).</li>
+<li>Batch-size variance (same prompt in a batch of 128 vs batch of 16).</li>
+<li>Sampling (temperature &gt; 0).</li>
+</ul>
+<p>Measured: up to 15% accuracy variation run-to-run on identical eval sets. &quot;Stable&quot; in a rollout means metrics are within expected variance, not identical to baseline. Set gates above the noise floor.</p>
+<h3 id="cost-is-a-variable"><a class="anchor" href="#cost-is-a-variable">#</a> Cost is a variable</h3>
+<p>A 20% better model can be 3x more expensive per call. Cost/request is one of the five gates. Shipping a &quot;better&quot; model that breaks unit economics is a rollback case.</p>
+<h3 id="rollback-is-the-weapon"><a class="anchor" href="#rollback-is-the-weapon">#</a> Rollback is the weapon</h3>
+<ul>
+<li>Policy flag (feature flag system): flip percentage in config; takes seconds.</li>
+<li>Model pinning (registry digest): pinned model does not auto-upgrade.</li>
+<li>Rollback = revert flag + set pinned digest to previous. Seconds, not hours.</li>
+</ul>
+<p>If your stack requires redeploy to rollback, fix that before rolling.</p>
+<h3 id="tooling"><a class="anchor" href="#tooling">#</a> Tooling</h3>
+<p><strong>Argo Rollouts</strong> / <strong>Flagger</strong> — Kubernetes progressive delivery controllers. Integrate with Istio/Linkerd weighted routing.</p>
+<p><strong>Istio weighted routing</strong> — service-mesh-level traffic split.</p>
+<p><strong>KServe / Seldon Core</strong> — model serving with built-in canary.</p>
+<p><strong>Feature flags</strong> — LaunchDarkly, Flagsmith, Unleash. Policy-level flip, no redeploy.</p>
+<h3 id="metrics-cadence"><a class="anchor" href="#metrics-cadence">#</a> Metrics cadence</h3>
+<p>Canary gates check every 5-15 minutes depending on traffic volume. 1% traffic with 10 req/min gives 50-150 data points per window — enough for latency but noisy for user feedback. 10% gives ~10x more. Progressions should pause long enough to accumulate enough samples at each step.</p>
+<h3 id="the-ab-step-is-optional"><a class="anchor" href="#the-ab-step-is-optional">#</a> The A/B step is optional</h3>
+<p>If the new model is distinctly different (different behavior, different cost curve, different tone), A/B test it at 50% after canary passes. If it&#39;s just an improved version, skip to 100% when canary gates pass.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>Canary progression: 1% → 10% → 25% → 50% → 75% → 100%.</li>
+<li>Non-determinism ceiling: up to 15% run-to-run variance on identical inputs.</li>
+<li>Five canary metrics: latency, cost, error/refusal, output length, user feedback.</li>
+<li>Cost gate: &gt;20% above baseline is a breach.</li>
+<li>Rollback: seconds, not hours.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">i4-canary-ramp</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a canary rollout with injected regressions. Reports which stage the rollout halts at and which gate triggered.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-rollout-runbook.md</code>. Given candidate model, baseline, and risk tolerance, designs shadow→canary→100% plan.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Inject a 25% cost regression. At which stage does the canary halt?</li>
+<li>Your new model has 3% accuracy gain offline but cost/request is +18%. Is it a ship? Depends on the policy — write both paths.</li>
+<li>Design a rollback that takes under 60 seconds end-to-end. List the required infrastructure.</li>
+<li>Non-determinism shows ±7% on your eval. Set canary gates so you don&#39;t false-alarm. What multipliers do you use?</li>
+<li>Shadow mode catches a 40% cost spike before canary. Write the alert rule that fires in shadow.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Shadow mode</td>
+<td>&quot;duplicate to new&quot;</td>
+<td>Zero-impact send-to-candidate for logging</td>
+</tr>
+<tr>
+<td>Canary</td>
+<td>&quot;progressive traffic&quot;</td>
+<td>Gradual user-exposed rollout with gates</td>
+</tr>
+<tr>
+<td>Gates</td>
+<td>&quot;rollout checks&quot;</td>
+<td>Metric thresholds that block progression</td>
+</tr>
+<tr>
+<td>Non-determinism</td>
+<td>&quot;LLM variance&quot;</td>
+<td>Irreducible run-to-run differences</td>
+</tr>
+<tr>
+<td>Policy flag</td>
+<td>&quot;flag flip rollback&quot;</td>
+<td>Config-level rollback, seconds not hours</td>
+</tr>
+<tr>
+<td>Model pin</td>
+<td>&quot;registry digest&quot;</td>
+<td>Immutable reference to a model version</td>
+</tr>
+<tr>
+<td>Argo Rollouts</td>
+<td>&quot;K8s progressive&quot;</td>
+<td>Kubernetes-native canary/rollback controller</td>
+</tr>
+<tr>
+<td>KServe</td>
+<td>&quot;inference K8s&quot;</td>
+<td>Model serving with canary primitives</td>
+</tr>
+<tr>
+<td>Istio weighted</td>
+<td>&quot;mesh split&quot;</td>
+<td>Service-mesh traffic splitter</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://tianpan.co/blog/2026-04-09-llm-gradual-rollout-shadow-canary-ab-testing">TianPan — Releasing AI Features Without Breaking Production</a></li>
+<li><a href="https://www.marktechpost.com/2026/03/21/safely-deploying-ml-models-to-production-four-controlled-strategies-a-b-canary-interleaved-shadow-testing/">MarkTechPost — Safely Deploying ML Models</a></li>
+<li><a href="https://apxml.com/courses/mlops-for-large-models-llmops/chapter-4-llm-deployment-serving-optimization/advanced-llm-deployment-patterns">APXML — Advanced LLM Deployment Patterns</a></li>
+<li><a href="https://argo-rollouts.readthedocs.io/">Argo Rollouts docs</a></li>
+<li><a href="https://docs.flagger.app/">Flagger docs</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./19-ai-gateways.html"><span>← Previous</span><b>ai gateways</b></a>
+      <a class="next" href="./21-ab-testing-llm-features.html"><span>Next →</span><b>ab testing llm features</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

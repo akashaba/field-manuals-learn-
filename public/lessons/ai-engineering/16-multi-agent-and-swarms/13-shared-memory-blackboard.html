@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shared Memory and Blackboard Patterns — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/16-multi-agent-and-swarms/13-shared-memory-blackboard/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multi-Agent &amp; Swarms</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multi-Agent &amp; Swarms</div>
+    <h1 class="lesson-title">Shared Memory and Blackboard Patterns</h1>
+    <p class="lesson-sub">Two approaches coexist in 2026 multi-agent systems: the **message pool** (everyone sees everyone&#39;s messages, as in AutoGen GroupChat or MetaGPT) and the **blackboard with subscription** (agents subscribe to relevant events, as in Context-Aware MCP or the Matrix framework). Both are the only stateful part of a multi-agent system — which means both are where the interesting bugs live. The reference failure mode is **memory poisoning**: one agent hallucinates a &quot;fact,&quot; other agents treat it as verified, and accuracy decays gradually in a way that is much harder to debug than an immediate crash. This lesson builds both structures from stdlib, injects a poisoning attack, and shows the three mitigations that actually work in production.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib, `threading`)</b></div><div><span>Prerequisites</span><b>Phase 16 · 04 (Primitive Model), Phase 16 · 09 (Parallel Swarm Networks)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multi-Agent &amp; Swarms 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="28.6" y="31.4" width="29.9" height="29.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(187 43.6 46.3)"/>
+        <rect x="23.8" y="127.1" width="28.7" height="28.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(169 38.1 141.4)"/>
+        <rect x="19.0" y="122.8" width="27.4" height="27.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(151 32.7 136.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MULTI-AGENT &amp; SWARMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Shared Memory and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Blackboard Patterns</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Multi-agent systems need a place for agents to share facts. A literal option is &quot;pass everything in messages&quot; — but that reinvents shared state with extra copying. Another is &quot;give everyone a global log&quot; — but global logs grow unbounded and poison easily. A third is &quot;project a view per agent&quot; — scalable but schema-heavy.</p>
+<p>When one of the agents hallucinates and writes the hallucination to shared state, every downstream agent that reads that state adopts the hallucination as fact. By the time the human notices, the reasoning chain is five steps deep and the root cause is the third message ever written. Debugging multi-agent accuracy decay is harder than debugging a crash.</p>
+<p>This is memory poisoning. It is the second-most-documented failure family in the MAST taxonomy (Cemri et al., arXiv:2503.13657) and it is structural: any shared-memory design without provenance and an unwritable verifier will exhibit it eventually.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<h3 id="the-two-main-topologies"><a class="anchor" href="#the-two-main-topologies">#</a> The two main topologies</h3>
+<p><strong>Full message pool.</strong> Every agent reads every message. AutoGen GroupChat and MetaGPT use this. Simple, transparent, inspectable, but does not scale past ~10 agents because each agent&#39;s context fills with other agents&#39; work.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">agent-A ──write──▶ ┌────────────────┐ ◀──read── agent-D
+                   │ message pool   │
+agent-B ──write──▶ │                │ ◀──read── agent-E
+                   │ (global log)   │
+agent-C ──write──▶ └────────────────┘ ◀──read── agent-F</code></pre>
+      </div>
+    <p><strong>Blackboard with subscription.</strong> Agents declare interest in topics; the substrate routes only relevant messages. CA-MCP (arXiv:2601.11595) and the Matrix decentralized framework (arXiv:2511.21686) use this. Scales further, but requires upfront schema design to make subscriptions meaningful.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">                   ┌─ topic: prices ──┐
+agent-A ──pub────▶ │                  │ ──▶ agent-D (subscribed)
+                   ├─ topic: orders ──┤
+agent-B ──pub────▶ │                  │ ──▶ agent-E (subscribed)
+                   ├─ topic: alerts ──┤
+agent-C ──pub────▶ │                  │ ──▶ agent-F (subscribed)
+                   └──────────────────┘</code></pre>
+      </div>
+    <h3 id="when-each-wins"><a class="anchor" href="#when-each-wins">#</a> When each wins</h3>
+<ul>
+<li><strong>Full pool</strong> wins when agents are few (&lt; 10), heterogeneous, and the conversation is short-horizon. Reasoning about who said what is trivial when everyone sees everything.</li>
+<li><strong>Blackboard</strong> wins when agents are many, homogeneous in role but numerous in instance (swarms), and the conversation is long-running. Routing saves token cost and context pollution.</li>
+</ul>
+<p>Production systems often mix: a small full pool at the top (planning layer), blackboards below (worker layer).</p>
+<h3 id="memory-poisoning-in-one-scenario"><a class="anchor" href="#memory-poisoning-in-one-scenario">#</a> Memory poisoning, in one scenario</h3>
+<p>Three agents work on a research task. Agent A is a retrieval agent. Agent B is a summarizer. Agent C is an analyst.</p>
+<ol>
+<li>A fetches a page and writes a message to shared state: &quot;The study reports a 42% accuracy improvement.&quot;</li>
+<li>The fetched page actually said &quot;4.2% improvement.&quot; A hallucinated a decimal.</li>
+<li>B, reading shared state, writes: &quot;Large 42% accuracy gain reported (source: A).&quot;</li>
+<li>C, reading shared state, writes: &quot;Recommend adoption — 42% lift is transformative.&quot;</li>
+<li>The final report cites a 42% number that never existed.</li>
+</ol>
+<p>No agent crashed. No test failed. The system &quot;worked.&quot; The hallucination crossed from one agent&#39;s context into every downstream agent&#39;s reasoning via shared state.</p>
+<h3 id="why-this-is-structural"><a class="anchor" href="#why-this-is-structural">#</a> Why this is structural</h3>
+<p>Without shared state, agent A&#39;s hallucination stays in A&#39;s context. Downstream agents would re-fetch or re-derive and might catch the error. With naive shared state, A&#39;s context becomes everyone&#39;s context, and the hallucination is laundered into fact.</p>
+<p>The problem is not shared state per se — it is shared state <strong>without provenance and without an independent verifier</strong>. Three mitigations address this:</p>
+<ol>
+<li><strong>Attribute provenance on every write.</strong> Every entry in shared state records who wrote it, when, under what prompt, and (if applicable) what source the agent cited. Downstream agents read with skepticism keyed to provenance.</li>
+<li><strong>Version writes; treat them as append-only.</strong> A correction is a new entry that supersedes the old, not an in-place update. The audit trail is preserved.</li>
+<li><strong>Keep at least one agent that cannot write to shared state.</strong> A read-only verifier agent samples entries, re-fetches sources, and flags inconsistencies. Because it cannot write to the pool, it cannot be poisoned by the pool.</li>
+</ol>
+<h3 id="blackboard-precedent-hayes-roth-1985"><a class="anchor" href="#blackboard-precedent-hayes-roth-1985">#</a> Blackboard precedent (Hayes-Roth, 1985)</h3>
+<p>The blackboard pattern predates LLM agents by four decades. Hayes-Roth (1985, &quot;A Blackboard Architecture for Control&quot;) described specialist Knowledge Sources that observe a global blackboard, contribute partial solutions, and trigger other sources. The 2026 blackboard (CA-MCP, Matrix) is the same pattern with LLM agents as Knowledge Sources and JSON blobs as partial solutions. The old literature has documented solutions to write contention, opportunistic control, and consistency that modern systems rediscover.</p>
+<h3 id="projection-vs-full-view"><a class="anchor" href="#projection-vs-full-view">#</a> Projection vs full view</h3>
+<p>A pure blackboard gives every subscriber the same projection (topic-scoped). A more aggressive design is <strong>per-agent projection</strong>: each agent gets a view customized to its role. LangGraph&#39;s state reducers are the canonical 2026 implementation — the reducer function folds global state into a role-specific slice.</p>
+<p>Per-agent projection scales further but needs a schema. Without one, you rebuild ad-hoc projection in every agent&#39;s prompt.</p>
+<h3 id="write-contention-patterns"><a class="anchor" href="#write-contention-patterns">#</a> Write-contention patterns</h3>
+<p>Multiple agents writing simultaneously is a concurrency problem, not just an LLM problem. Three patterns work:</p>
+<ul>
+<li><strong>Sequential writer (single producer).</strong> All writes go through one coordinator agent that serializes. Simple, but a bottleneck.</li>
+<li><strong>Optimistic concurrency with versioning.</strong> Each entry has a version; writers fail on version mismatch and retry. Classic database technique.</li>
+<li><strong>Topic partitioning.</strong> Different agents own different topics. No cross-topic contention. Requires designed partition boundaries.</li>
+</ul>
+<p>Most 2026 frameworks default to sequential writer because LLM calls are slow enough that contention is rare and the bottleneck does not hurt.</p>
+<h3 id="the-unwritable-verifier"><a class="anchor" href="#the-unwritable-verifier">#</a> The unwritable verifier</h3>
+<p>The most load-bearing mitigation is the read-only verifier. Implementation rules:</p>
+<ul>
+<li>Verifier shares state with the team (reads the blackboard or pool).</li>
+<li>Verifier has no write handle to shared state — only to a separate verification channel.</li>
+<li>Verifier independently fetches sources cited in writes. Flags disagreement.</li>
+<li>Verifier&#39;s own outputs are routed to a human or a separate decision agent, never fed back into the pool.</li>
+</ul>
+<p>Without this separation, the verifier&#39;s outputs become new entries in the pool, which means a poisoned pool poisons the verifier, which poisons its verifications.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">swarm-blackboard</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements both topologies in stdlib Python plus a toy poisoning attack and the three mitigations.</p>
+<ul>
+<li><code>MessagePool</code> — thread-safe append-only log with full read-out.</li>
+<li><code>Blackboard</code> — topic-keyed pub/sub with per-agent subscriptions.</li>
+<li><code>ProvenanceEntry</code> — every write records (writer, timestamp, prompt_hash, source_uri).</li>
+<li><code>PoisoningScenario</code> — runs a three-agent research task where agent A hallucinates a decimal. Prints final report.</li>
+<li><code>Verifier</code> — a read-only agent that re-fetches sources and flags inconsistencies. Runs the same scenario with the verifier present.</li>
+</ul>
+<p>Run:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Expected output:</p>
+<ul>
+<li>Run 1 (no verifier): the hallucinated 42% propagates to the final report.</li>
+<li>Run 2 (with verifier): the verifier flags the inconsistency, the pool is labeled &quot;flagged&quot;, the final report includes a retraction.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>outputs/skill-memory-auditor.md</code> is a skill that audits any multi-agent system&#39;s shared-memory design for provenance, versioning, and verifier separation. Run it on new multi-agent architectures before production.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>For any shared-memory design:</p>
+<ul>
+<li>Record provenance on every write: <code>(writer, timestamp, prompt_hash, tool_calls_cited, source_uri)</code>.</li>
+<li>Make the log append-only. Corrections are new entries that reference the superseded one.</li>
+<li>Deploy at least one read-only verifier agent with independent source access.</li>
+<li>Route verifier output to a separate channel, not back into the shared pool.</li>
+<li>Log the ratio of writes that are supersessions — a rising ratio is early evidence of hallucination patterns.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Confirm run 1 propagates the hallucination and run 2 catches it.</li>
+<li>Add a second hallucination: agent B invents a dataset size. The verifier should catch both without being hand-tuned for either.</li>
+<li>Switch the full pool to a blackboard with topic partitions (<code>prices</code>, <code>summaries</code>, <code>analyses</code>). Which poisoning scenarios does topic partitioning make harder to pull off, and which does it not help with?</li>
+<li>Read Hayes-Roth (1985, &quot;A Blackboard Architecture for Control&quot;). Identify two control patterns from the paper not discussed in this lesson that 2026 systems would benefit from.</li>
+<li>Read CA-MCP (arXiv:2601.11595). Map its Shared Context Store to either the MessagePool or Blackboard class in <code>code/main.py</code>. Which primitives does CA-MCP add on top?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Message pool</td>
+<td>&quot;Shared chat history&quot;</td>
+<td>Append-only log that every agent reads. Full transparency, poor scaling.</td>
+</tr>
+<tr>
+<td>Blackboard</td>
+<td>&quot;Shared workspace&quot;</td>
+<td>Topic-keyed pub/sub. Agents subscribe to relevant topics. Scales farther.</td>
+</tr>
+<tr>
+<td>Provenance</td>
+<td>&quot;Who wrote what&quot;</td>
+<td>Metadata on each write: writer, timestamp, prompt, sources.</td>
+</tr>
+<tr>
+<td>Memory poisoning</td>
+<td>&quot;Hallucinations spreading&quot;</td>
+<td>One agent&#39;s error enters shared state, downstream agents adopt it as fact.</td>
+</tr>
+<tr>
+<td>Append-only</td>
+<td>&quot;No in-place updates&quot;</td>
+<td>Corrections are new entries that supersede. Preserves audit trail.</td>
+</tr>
+<tr>
+<td>Unwritable verifier</td>
+<td>&quot;Independent auditor&quot;</td>
+<td>Read-only agent that re-fetches sources and flags inconsistencies.</td>
+</tr>
+<tr>
+<td>Projection</td>
+<td>&quot;Scoped view&quot;</td>
+<td>Per-agent view computed from global state. LangGraph reducers are the canonical case.</td>
+</tr>
+<tr>
+<td>Knowledge Source</td>
+<td>&quot;Specialist agent&quot;</td>
+<td>Hayes-Roth&#39;s 1985 term for a blackboard participant.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2503.13657">Cemri et al. — Why Do Multi-Agent LLM Systems Fail?</a> — MAST taxonomy; memory poisoning is a coordination-failure sub-family</li>
+<li><a href="https://arxiv.org/abs/2601.11595">CA-MCP — Context-Aware Multi-Server MCP</a> — Shared Context Store for coordinated MCP servers</li>
+<li><a href="https://arxiv.org/abs/2511.21686">Matrix — decentralized multi-agent framework</a> — message-queue-based blackboard without a central orchestrator</li>
+<li><a href="https://docs.langchain.com/oss/python/langgraph/workflows-agents">LangGraph state and reducers</a> — the per-agent projection pattern in production</li>
+<li><a href="https://www.anthropic.com/engineering/multi-agent-research-system">Anthropic — How we built our multi-agent research system</a> — provenance and verification notes from a production deployment</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-a2a-protocol.html"><span>← Previous</span><b>a2a protocol</b></a>
+      <a class="next" href="./14-consensus-and-bft.html"><span>Next →</span><b>consensus and bft</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

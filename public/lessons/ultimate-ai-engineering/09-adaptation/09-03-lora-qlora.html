@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>09.03 — LoRA / QLoRA (Low-Rank Adaptation and 4-Bit Fine-Tuning) — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/09.%20Adaptation/09-03-lora-qlora.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Adaptation</div>
+    <ol class="toc"><li><a href="#1-lora-precisely">1. LoRA, Precisely</a></li><li><a href="#2-scaling-rank-and-learning-rate-interact">2. Scaling: α, Rank, and Learning Rate Interact</a></li><li><a href="#3-evidence-based-defaults">3. Evidence-Based Defaults</a></li><li><a href="#4-lora-variants-worth-knowing">4. LoRA Variants Worth Knowing</a></li><li><a href="#5-qlora-fine-tuning-on-a-4-bit-frozen-base">5. QLoRA: Fine-Tuning on a 4-Bit Frozen Base</a></li><li><a href="#6-production-challenges-and-solutions">6. Production Challenges and Solutions</a></li><li><a href="#7-hands-on-projects">7. Hands-On Projects</a></li><li><a href="#8-foundational-papers-exact-titles">8. Foundational Papers (exact titles)</a></li><li><a href="#9-essential-tooling">9. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Adaptation</div>
+    <h1 class="lesson-title">09.03 — LoRA / QLoRA (Low-Rank Adaptation and 4-Bit Fine-Tuning)</h1>
+    <p class="lesson-sub">**Module 9: Adaptation** · Subtopic 3 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Adaptation 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.7" y="118.9" width="26.2" height="26.2" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.8 132.0)"/>
+        <circle cx="22.4" cy="127.1" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.0" cy="122.2" r="11.8" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6d28d9" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#6d28d9" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#6d28d9" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="80" lengthAdjust="spacingAndGlyphs">ADAPTATION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">09.03 — LoRA / QLoRA</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(Low-Rank Adaptation…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 09.01 (SFT, memory math), 09.02 (PEFT families and adapter operations), 08.04 §2 (number formats, blockwise quantization).
+<strong>Outcome:</strong> you can derive LoRA&#39;s forward pass, gradients, and scaling rules. You can choose rank, α, target modules and learning rate from evidence, pick among LoRA variants (rsLoRA, DoRA, PiSSA, LoRA+), and implement NF4 and double quantization from first principles. You can run QLoRA on a single GPU, and decide how to merge and serve a QLoRA adapter without silent quality loss.</p>
+</blockquote>
+<hr>
+<h2 id="1-lora-precisely"><a class="anchor" href="#1-lora-precisely">#</a> 1. LoRA, Precisely</h2>
+<p>For a frozen linear layer $W_0 \in \mathbb{R}^{d_{out}\times d_{in}}$, LoRA (Hu et al., 2021) learns a low-rank update:</p>
+<p>$$
+h = W_0 x + \Delta W x = W_0 x + \frac{\alpha}{r},B A,x,
+\qquad A \in \mathbb{R}^{r\times d_{in}},; B \in \mathbb{R}^{d_{out}\times r},; r \ll \min(d_{in}, d_{out}).
+$$</p>
+<p><strong>Initialisation:</strong> $A \sim \mathcal{N}(0, \sigma^2)$ (Kaiming-uniform in PEFT) and $B = 0$. So $\Delta W = 0$ at step 0: <strong>training starts exactly at the base model</strong>, and early gradients flow only into $B$.</p>
+<p><strong>Gradients.</strong> With $G = \partial\mathcal{L}/\partial h$ (batch $\times d_{out}$) and $s = \alpha/r$:</p>
+<p>$$
+\frac{\partial \mathcal{L}}{\partial B} = s,G^{\top} (A x)^{\top},\qquad
+\frac{\partial \mathcal{L}}{\partial A} = s,B^{\top} G^{\top} x^{\top}.
+$$</p>
+<p>Gradients and Adam state exist only for $r(d_{in}+d_{out})$ parameters instead of $d_{in} d_{out}$. The activations needed for the backward pass barely change, because the input activation $x$ is stored anyway.</p>
+<p><strong>Merging.</strong> $W&#39; = W_0 + sBA$ gives zero inference overhead, and unmerging is exact in FP32. In BF16, merging rounds $W&#39;$, which is usually harmless; check it with an eval (09.02 §6).</p>
+<p><strong>Why low rank suffices.</strong> Fine-tuning updates have low <strong>intrinsic dimension</strong> (Aghajanyan et al.): task adaptation lives in a small subspace. LoRA enforces that prior as a hard constraint, which is also why it <strong>&quot;learns less and forgets less&quot;</strong> (Biderman et al., 2024). It changes the base less, and absorbs less of large new-knowledge datasets.</p>
+<hr>
+<h2 id="2-scaling-rank-and-learning-rate-interact"><a class="anchor" href="#2-scaling-rank-and-learning-rate-interact">#</a> 2. Scaling: α, Rank, and Learning Rate Interact</h2>
+<p>The scale $s$ multiplies the update, so <strong>rank, α, and learning rate are coupled</strong>. Two conventions exist:</p>
+<ul>
+<li><strong>Standard LoRA</strong> uses $s = \alpha / r$. It keeps the <em>initial function change</em> comparable across ranks under SGD-style analysis.</li>
+<li><strong>rsLoRA</strong> (Kalajdzievski, 2023) uses $s = \alpha / \sqrt{r}$. It argues that with $\alpha/r$ the updates shrink as $r$ grows, so high ranks &quot;collapse&quot; and learn no faster than low ranks.</li>
+</ul>
+<p>Measure it rather than trust either claim. The experiment below uses Adam on a regression toward a rank-32 target shift at a fixed learning rate:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+torch.set_num_threads(1)
+
+def lora_probe(r, scaling, steps=1, lr=1e-3, d=512, alpha=16, seed=0, n=256):
+    &quot;&quot;&quot;Returns (||s B A||_F, loss) after `steps` Adam steps; target = W0 + rank-32 shift.&quot;&quot;&quot;
+    g = torch.Generator().manual_seed(seed)
+    W0 = torch.randn(d, d, generator=g) / d ** 0.5
+    Wt = W0 + torch.randn(d, 32, generator=g) @ torch.randn(32, d, generator=g) / d
+    X = torch.randn(n, d, generator=g)
+    A = (torch.randn(r, d, generator=g) / d ** 0.5).requires_grad_(True)
+    B = torch.zeros(d, r, requires_grad=True)
+    s = alpha / r if scaling == &quot;alpha/r&quot; else alpha / r ** 0.5
+    opt = torch.optim.Adam([A, B], lr=lr)
+    for _ in range(steps):
+        loss = ((X @ (W0 + s * B @ A).T - X @ Wt.T) ** 2).mean()
+        opt.zero_grad(); loss.backward(); opt.step()
+    with torch.no_grad():
+        return float((s * B @ A).norm()), float(loss)
+
+ranks = (4, 16, 64, 256)
+res = {sc: [(lora_probe(r, sc)[0], lora_probe(r, sc, steps=20)[1]) for r in ranks] for sc in (&quot;alpha/r&quot;, &quot;alpha/sqrt(r)&quot;)}
+for sc, rows in res.items():
+    print(f&quot;{sc:14s}&quot;, &quot;  &quot;.join(f&quot;r={r}: |dW|1={n:.3f} loss@20={l:.4f}&quot; for r, (n, l) in zip(ranks, rows)))
+assert res[&quot;alpha/r&quot;][0][0] &gt; 5 * res[&quot;alpha/r&quot;][-1][0]                  # alpha/r: first-step update shrinks with r
+assert max(n for n, _ in res[&quot;alpha/sqrt(r)&quot;]) &lt; 1.5 * min(n for n, _ in res[&quot;alpha/sqrt(r)&quot;])
+assert res[&quot;alpha/sqrt(r)&quot;][-1][1] &lt; res[&quot;alpha/r&quot;][-1][1]               # high rank learns faster with rsLoRA</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Scaling</th>
+<th>First-step $\lVert\Delta W\rVert_F$, r = 4 → 256</th>
+<th>Loss after 20 steps, r = 4 → 256 (start 0.062)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>$\alpha/r$</td>
+<td>0.176 → 0.091 → 0.047 → <strong>0.026</strong> (∝ $1/\sqrt r$)</td>
+<td>0.056 → 0.048 → 0.044 → <strong>0.042</strong></td>
+</tr>
+<tr>
+<td>$\alpha/\sqrt r$ (rsLoRA)</td>
+<td>0.35 → 0.36 → 0.38 → 0.42 (≈ constant)</td>
+<td>0.056 → 0.042 → 0.018 → <strong>0.0045</strong></td>
+</tr>
+</tbody></table>
+<p><strong>Interpretation.</strong> At a fixed learning rate, $\alpha/r$ makes extra rank almost useless early in training. The update magnitude falls as $1/\sqrt r$ under Adam, so a higher rank needs a proportionally higher LR. rsLoRA removes that coupling.</p>
+<p>Thinking Machines&#39; <em>LoRA Without Regret</em> (Schulman et al., 2025) reports that in LLM SFT with $\alpha/r$ the <strong>optimal LR is approximately rank-independent</strong> over a full run. Their regime (large models, long training, tuned α) differs from this toy. <strong>The practical rule: when you change rank, either use rsLoRA or re-sweep LR, and never compare ranks at a single untuned LR.</strong></p>
+<hr>
+<h2 id="3-evidence-based-defaults"><a class="anchor" href="#3-evidence-based-defaults">#</a> 3. Evidence-Based Defaults</h2>
+<p>The consolidated findings come from LoRA Without Regret (Thinking Machines, Sept 2025; summarised in TRL&#39;s docs), Biderman et al. (2024), and the QLoRA and DoRA papers:</p>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>Recommendation</th>
+<th>Evidence / reason</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Target modules</strong></td>
+<td><strong>All linear layers</strong> (<code>&quot;all-linear&quot;</code>), MLP included</td>
+<td>Attention-only LoRA underperforms <em>even at matched parameter count</em>; the MLP holds ~2/3 of the budget and most of the benefit</td>
+</tr>
+<tr>
+<td><strong>Rank (SFT)</strong></td>
+<td>16–64 for narrow tasks; <strong>up to 256</strong> for post-training-scale data</td>
+<td>Capacity must match the information in the dataset; LoRA falls behind full FT when data exceeds capacity</td>
+</tr>
+<tr>
+<td><strong>Rank (RL / GRPO)</strong></td>
+<td><strong>1–32</strong></td>
+<td>Policy-gradient RL conveys roughly one bit per episode, so tiny ranks suffice</td>
+</tr>
+<tr>
+<td><strong>Learning rate</strong></td>
+<td><strong>≈10× the full-FT LR</strong> (e.g. 1e-4–2e-4 for 7–8B SFT)</td>
+<td>LoRA&#39;s optimal LR is consistently higher</td>
+</tr>
+<tr>
+<td><strong>Batch size</strong></td>
+<td>Keep the effective batch <strong>modest (&lt; 32 sequences)</strong> where feasible</td>
+<td>LoRA tolerates large batches worse than full FT, and higher rank doesn&#39;t fix it</td>
+</tr>
+<tr>
+<td><strong>α</strong></td>
+<td>16–32 with $\alpha/r$ (or rsLoRA); treat α and LR as one knob</td>
+<td>See §2</td>
+</tr>
+<tr>
+<td><strong>Dropout</strong></td>
+<td>0–0.05</td>
+<td>Small datasets may benefit; often unnecessary</td>
+</tr>
+<tr>
+<td><strong>Epochs</strong></td>
+<td>1–3</td>
+<td>Watch the task metric; LoRA overfits small data too</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="4-lora-variants-worth-knowing"><a class="anchor" href="#4-lora-variants-worth-knowing">#</a> 4. LoRA Variants Worth Knowing</h2>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Change</th>
+<th>When it helps</th>
+<th>PEFT flag</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>rsLoRA</strong></td>
+<td>$s=\alpha/\sqrt r$</td>
+<td>High ranks (≥ 64)</td>
+<td><code>use_rslora=True</code></td>
+</tr>
+<tr>
+<td><strong>DoRA</strong></td>
+<td>$W&#39; = m \odot \dfrac{W_0 + BA}{\lVert W_0 + BA\rVert_{c}}$: learn the magnitude $m$ (per column) and the direction separately</td>
+<td>Low ranks, closer to full-FT learning dynamics; ~10–30% slower training</td>
+<td><code>use_dora=True</code></td>
+</tr>
+<tr>
+<td><strong>PiSSA</strong></td>
+<td>Initialise $A,B$ from the <strong>top-r singular vectors</strong> of $W_0$; residual $W_0 - BA$ is frozen</td>
+<td>Faster convergence; with quantization, the residual quantizes better</td>
+<td><code>init_lora_weights=&quot;pissa&quot;</code></td>
+</tr>
+<tr>
+<td><strong>OLoRA / CorDA / EVA</strong></td>
+<td>Orthonormal (QR), context-oriented, or data-driven (activation SVD) initialisation</td>
+<td>Faster or more stable starts; EVA adapts ranks to the data</td>
+<td><code>init_lora_weights=&quot;olora&quot;</code> / <code>&quot;corda&quot;</code> / <code>&quot;eva&quot;</code></td>
+</tr>
+<tr>
+<td><strong>LoRA+</strong></td>
+<td>Separate LR for $B$: $\eta_B = \lambda,\eta_A$ with $\lambda \approx 16$</td>
+<td>Speeds up training at wide layers</td>
+<td>optimizer param groups (PEFT <code>create_loraplus_optimizer</code>)</td>
+</tr>
+<tr>
+<td><strong>LoftQ</strong></td>
+<td>Initialise LoRA to <strong>compensate quantization error</strong>: alternate $Q = \mathrm{quant}(W - BA)$ and SVD of $W - Q$</td>
+<td>QLoRA at 2–4 bits</td>
+<td><code>init_lora_weights=&quot;loftq&quot;</code></td>
+</tr>
+<tr>
+<td><strong>AdaLoRA</strong></td>
+<td>SVD-parameterised; prune singular values to reallocate rank across layers</td>
+<td>Tight parameter budgets</td>
+<td><code>AdaLoraConfig</code></td>
+</tr>
+</tbody></table>
+<p>Every variant must start at (numerically) the base model&#39;s function. This is checked below on a small model. PiSSA and OLoRA move weight into the adapter and subtract it from the base, so their outputs match to about 1e-7 rather than exactly.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import copy, torch
+from transformers import AutoModelForCausalLM
+from peft import LoraConfig, get_peft_model
+
+BASE_ID = &quot;meta-llama/Llama-3.1-8B-Instruct&quot;
+torch.manual_seed(0)
+base = AutoModelForCausalLM.from_pretrained(BASE_ID, dtype=torch.float32).eval()
+x = torch.randint(0, base.config.vocab_size, (2, 24))
+with torch.no_grad():
+    ref = base(x).logits
+
+for name, kw in {&quot;lora (B=0)&quot;: {}, &quot;rslora&quot;: dict(use_rslora=True), &quot;dora&quot;: dict(use_dora=True),
+                 &quot;pissa&quot;: dict(init_lora_weights=&quot;pissa&quot;), &quot;olora&quot;: dict(init_lora_weights=&quot;olora&quot;)}.items():
+    m = get_peft_model(copy.deepcopy(base), LoraConfig(r=8, lora_alpha=16, target_modules=&quot;all-linear&quot;, **kw)).eval()
+    with torch.no_grad():
+        d = float((m(x).logits - ref).abs().max())
+    print(f&quot;{name:12s} trainable={m.get_nb_trainable_parameters()[0]:7d}  max|out - base| at init = {d:.2e}&quot;)
+    assert d &lt; 1e-3, name</code></pre>
+      </div>
+    <p>DoRA adds one magnitude vector per target layer, which is visible as the small increase in trainable parameters.</p>
+<hr>
+<h2 id="5-qlora-fine-tuning-on-a-4-bit-frozen-base"><a class="anchor" href="#5-qlora-fine-tuning-on-a-4-bit-frozen-base">#</a> 5. QLoRA: Fine-Tuning on a 4-Bit Frozen Base</h2>
+<p>QLoRA (Dettmers et al., 2023) freezes the base in <strong>4-bit NormalFloat (NF4)</strong>. It dequantizes blocks on the fly to BF16 for each matmul and trains BF16 LoRA adapters on top:</p>
+<p>$$
+h = \mathrm{dequant}!\big(W_0^{\text{NF4}}\big),x + \tfrac{\alpha}{r} B A x .
+$$</p>
+<p>Three ingredients make it work:</p>
+<ol>
+<li><strong>NF4.</strong> A 4-bit codebook built from <strong>quantiles of $\mathcal{N}(0,1)$</strong>, which is information-theoretically well matched to normally distributed weights. It is asymmetric so that <strong>0 is exactly representable</strong>, and used with absmax scaling per block of 64.</li>
+<li><strong>Double quantization.</strong> The per-block FP32 absmax constants (32/64 = 0.5 bits/param) are themselves quantized to 8 bits in blocks of 256. The cost becomes $8/64 + 32/(64\cdot256) \approx 0.127$ bits/param, <strong>4.127 bits total</strong>.</li>
+<li><strong>Paged optimizers.</strong> Optimizer state lives in CUDA unified memory and is paged to CPU during memory spikes (long sequences), avoiding OOM crashes.</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+from scipy.stats import norm
+
+def nf4_codebook(offset=0.9677083):
+    &quot;&quot;&quot;NormalFloat4: N(0,1) quantiles, 8 positive + 7 negative levels + exact zero, normalised to [-1, 1].&quot;&quot;&quot;
+    pos = norm.ppf(np.linspace(offset, 0.5, 9)[:-1])
+    neg = -norm.ppf(np.linspace(offset, 0.5, 8)[:-1])
+    v = np.sort(np.concatenate([pos, [0.0], neg]))
+    return v / np.abs(v).max()
+
+def quant_blockwise(w, codebook, block=64):
+    &quot;&quot;&quot;Absmax-scaled blockwise quantization to the nearest codebook value. Returns (dequantized, absmax).&quot;&quot;&quot;
+    b = w.reshape(-1, block)
+    absmax = np.abs(b).max(axis=1, keepdims=True)
+    idx = np.abs((b / absmax)[..., None] - codebook).argmin(-1)
+    return (codebook[idx] * absmax).reshape(w.shape), absmax.ravel()
+
+def bits_per_param(block=64, scale_bits=32, dq_block=None, dq_bits=8):
+    if dq_block is None:
+        return 4 + scale_bits / block
+    return 4 + dq_bits / block + 32 / (block * dq_block)       # double quantization of the absmax constants
+
+NF4 = nf4_codebook()
+BNB_NF4 = np.array([-1.0, -0.6962, -0.5251, -0.3949, -0.2844, -0.1848, -0.0911, 0.0,
+                    0.0796, 0.1609, 0.2461, 0.3379, 0.4407, 0.5626, 0.7230, 1.0])   # bitsandbytes table
+assert np.allclose(NF4, BNB_NF4, atol=1e-4)
+INT4 = np.arange(-7, 8) / 7.0
+FP4 = np.array(sorted({s * v for s in (-1, 1) for v in (0, .5, 1, 1.5, 2, 3, 4, 6)})) / 6.0   # E2M1
+
+rng = np.random.default_rng(0)
+W = rng.standard_normal((4096, 1024)) * 0.02
+errs = {}
+for name, cb in ((&quot;INT4&quot;, INT4), (&quot;FP4 E2M1&quot;, FP4), (&quot;NF4&quot;, NF4)):
+    errs[name] = np.mean((W - quant_blockwise(W, cb)[0]) ** 2) / np.mean(W ** 2)
+    print(f&quot;{name:9s} block-64 relative MSE = {errs[name]:.5f}&quot;)
+print(&quot;bits/param: plain&quot;, bits_per_param(), &quot;| double-quant&quot;, round(bits_per_param(dq_block=256), 3))
+assert errs[&quot;NF4&quot;] &lt; errs[&quot;FP4 E2M1&quot;] &lt; errs[&quot;INT4&quot;] and abs(bits_per_param(dq_block=256) - 4.127) &lt; 1e-3</code></pre>
+      </div>
+    <p>The reconstruction <strong>matches bitsandbytes&#39; NF4 table to 1e-4</strong>. On Gaussian weights with block-64 absmax scaling, relative MSE is:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Relative MSE</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>INT4</td>
+<td>0.0116</td>
+</tr>
+<tr>
+<td>FP4 E2M1</td>
+<td>0.0112</td>
+</tr>
+<tr>
+<td><strong>NF4</strong></td>
+<td><strong>0.0085</strong> (27% below INT4)</td>
+</tr>
+</tbody></table>
+<p>Double quantization gives exactly <strong>4.127 bits/param</strong>, the constant used in 09.01 §3&#39;s memory model.</p>
+<h3 id="51-what-fits-where"><a class="anchor" href="#51-what-fits-where">#</a> 5.1 What fits where</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>LoRA (BF16 base) static</th>
+<th>QLoRA static + r=16 all-linear adapters + activations (4k ctx, checkpointing, chunked logits)</th>
+<th>Single GPU</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8B</td>
+<td>16.7 GB</td>
+<td>≈ 6.5 GB</td>
+<td>16–24 GB card</td>
+</tr>
+<tr>
+<td>70B</td>
+<td>141 GB</td>
+<td>36.4 GB (NF4) + 3.3 GB (207M adapter params × 16 B) + 6.5 GB ≈ <strong>46 GB</strong></td>
+<td><strong>1× 80 GB</strong> (48 GB is tight)</td>
+</tr>
+</tbody></table>
+<p><strong>Speed.</strong> QLoRA is typically <strong>~30–50% slower per step</strong> than BF16 LoRA because of dequantization, and single-GPU runs are slower than a sharded multi-GPU setup. When BF16 LoRA fits, use it. Choose QLoRA when memory is the constraint.</p>
+<h3 id="52-running-qlora"><a class="anchor" href="#52-running-qlora">#</a> 5.2 Running QLoRA</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># SKIP-TEST: requires CUDA + bitsandbytes
+import torch
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+from peft import LoraConfig, prepare_model_for_kbit_training
+from trl import SFTConfig, SFTTrainer
+
+MODEL_ID = &quot;meta-llama/Llama-3.3-70B-Instruct&quot;                 # pin the revision; check the licence
+bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type=&quot;nf4&quot;, bnb_4bit_use_double_quant=True,
+                         bnb_4bit_compute_dtype=torch.bfloat16)
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, quantization_config=bnb, dtype=torch.bfloat16,
+                                             attn_implementation=&quot;flash_attention_2&quot;, device_map={&quot;&quot;: 0})
+model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)   # casts norms, enables input grads
+peft_cfg = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, target_modules=&quot;all-linear&quot;, task_type=&quot;CAUSAL_LM&quot;)
+args = SFTConfig(output_dir=&quot;out/qlora-70b-bill&quot;, assistant_only_loss=True, max_length=4096, packing=True,
+                 learning_rate=1e-4, lr_scheduler_type=&quot;cosine&quot;, warmup_steps=0.03, num_train_epochs=2,
+                 per_device_train_batch_size=1, gradient_accumulation_steps=16, gradient_checkpointing=True,
+                 optim=&quot;paged_adamw_8bit&quot;, bf16=True, logging_steps=10, report_to=&quot;none&quot;)
+SFTTrainer(model=model, args=args, train_dataset=train_ds, eval_dataset=val_ds, peft_config=peft_cfg).train()</code></pre>
+      </div>
+    <h3 id="53-merging-and-serving-a-qlora-adapter-evaluate-the-artefact-you-ship"><a class="anchor" href="#53-merging-and-serving-a-qlora-adapter-evaluate-the-artefact-you-ship">#</a> 5.3 Merging and serving a QLoRA adapter: evaluate the artefact you ship</h3>
+<p>The adapter was trained against the <em>quantized</em> base $\tilde W_0 = \mathrm{NF4}(W_0)$, but you have three serving options:</p>
+<ul>
+<li><strong>(a) Unmerged on the 4-bit base.</strong> This is exactly what was trained, and slow-ish unless the engine has fast 4-bit + LoRA kernels.</li>
+<li><strong>(b) Merged into the original BF16 weights,</strong> $W_0 + sBA$.</li>
+<li><strong>(c) Merged, then re-quantized</strong> for serving (e.g. to NF4, AWQ, or FP8; 08.04).</li>
+</ul>
+<p>These are <strong>different models</strong>. The experiment below trains a LoRA against an NF4 base on a task whose true update is rank 4, then scores all three:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np, torch
+from scipy.stats import norm
+
+torch.set_num_threads(1)
+
+def nf4_codebook(offset=0.9677083):
+    pos = norm.ppf(np.linspace(offset, 0.5, 9)[:-1]); neg = -norm.ppf(np.linspace(offset, 0.5, 8)[:-1])
+    v = np.sort(np.concatenate([pos, [0.0], neg])); return v / np.abs(v).max()
+
+def nf4(w, block=64):
+    cb = nf4_codebook(); b = w.reshape(-1, block); a = np.abs(b).max(1, keepdims=True)
+    return (cb[np.abs((b / a)[..., None] - cb).argmin(-1)] * a).reshape(w.shape)
+
+rng = np.random.default_rng(0); torch.manual_seed(0)
+d, r, n = 256, 16, 2048
+W0 = rng.standard_normal((d, d)) * 0.05
+dW = rng.standard_normal((d, 4)) @ rng.standard_normal((4, d)) * 0.01       # true task update (rank 4)
+Q = nf4(W0)                                                                  # frozen 4-bit base (dequantized view)
+X, Xte = torch.randn(n, d), torch.randn(n, d)
+T = lambda a: torch.tensor(a, dtype=torch.float32)
+Yt, Yte = X @ T(W0 + dW).T, Xte @ T(W0 + dW).T
+
+A = (torch.randn(r, d) / d ** 0.5).requires_grad_(True); B = torch.zeros(d, r, requires_grad=True); s = 2.0
+opt = torch.optim.Adam([A, B], lr=3e-3)
+for _ in range(1500):                                                        # QLoRA: train LoRA on the NF4 base
+    loss = ((X @ (T(Q) + s * B @ A).T - Yt) ** 2).mean()
+    opt.zero_grad(); loss.backward(); opt.step()
+dL = (s * B @ A).detach().numpy()
+
+def rel_err(W):
+    with torch.no_grad():
+        return float(((Xte @ T(W).T - Yte) ** 2).mean() / (Yte ** 2).mean())
+
+res = {&quot;4-bit base, no adapter&quot;: rel_err(Q), &quot;(a) unmerged: NF4(W0) + BA&quot;: rel_err(Q + dL),
+       &quot;(b) merged into BF16: W0 + BA&quot;: rel_err(W0 + dL), &quot;(c) re-quantized: NF4(NF4(W0) + BA)&quot;: rel_err(nf4(Q + dL))}
+for k, v in res.items():
+    print(f&quot;{k:38s} relative error {v:.5f}&quot;)
+assert res[&quot;(b) merged into BF16: W0 + BA&quot;] &lt; res[&quot;(a) unmerged: NF4(W0) + BA&quot;] &lt; res[&quot;(c) re-quantized: NF4(NF4(W0) + BA)&quot;]</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Serving artefact</th>
+<th>Relative error</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>4-bit base, no adapter</td>
+<td>0.155</td>
+</tr>
+<tr>
+<td>(a) Unmerged on NF4 base (as trained)</td>
+<td>0.0059</td>
+</tr>
+<tr>
+<td><strong>(b) Merged into original BF16</strong></td>
+<td><strong>0.0013</strong></td>
+</tr>
+<tr>
+<td>(c) Merged, then re-quantized to NF4</td>
+<td>0.0146</td>
+</tr>
+</tbody></table>
+<p>Reading the results:</p>
+<ul>
+<li><strong>(b) wins here.</strong> The adapter learned the task update, and a rank-16 adapter can&#39;t absorb NF4&#39;s full-rank quantization error. Merging into the original weights removes that error entirely.</li>
+<li><strong>(c) is worst.</strong> Re-quantizing introduces <em>new</em> quantization error that the adapter never saw.</li>
+</ul>
+<p>Real models can behave differently, e.g. when an adapter partially compensated the low-rank structure of the quantization error. So the rule is operational, not theoretical: <strong>evaluate the exact artefact you serve</strong>, with 08.04 §4&#39;s slice-level gates. If you must serve 4-bit, prefer quantizing the merged BF16 model with a proper method (AWQ, GPTQ, FP8, NVFP4; 08.04) and calibration data, then gate it. Don&#39;t naively re-round to NF4.</p>
+<hr>
+<h2 id="6-production-challenges-and-solutions"><a class="anchor" href="#6-production-challenges-and-solutions">#</a> 6. Production Challenges and Solutions</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Solution</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Attention-only targets</strong></td>
+<td>LoRA underperforms full FT</td>
+<td><code>target_modules=&quot;all-linear&quot;</code></td>
+</tr>
+<tr>
+<td><strong>Rank ↑ doesn&#39;t help</strong></td>
+<td>r=128 no better than r=16</td>
+<td>LR too low for $\alpha/r$ at high rank: use rsLoRA or re-sweep LR (§2); or the task simply needs little capacity</td>
+</tr>
+<tr>
+<td><strong>LoRA ≪ full FT on a big dataset</strong></td>
+<td>Plateau above full-FT loss</td>
+<td>Capacity-limited: raise rank (256+), or switch to full FT</td>
+</tr>
+<tr>
+<td><strong>Large-batch degradation</strong></td>
+<td>Worse results at big effective batches</td>
+<td>Smaller effective batch, more steps</td>
+</tr>
+<tr>
+<td><strong>QLoRA OOM on long sequences</strong></td>
+<td>Spikes at long examples</td>
+<td>Paged optimizers, gradient checkpointing, chunked loss, length-bucketed batches</td>
+</tr>
+<tr>
+<td><strong>Slow QLoRA</strong></td>
+<td>2× the step time of LoRA</td>
+<td>Use BF16 LoRA if it fits; FlashAttention, packing, Unsloth-style fused kernels</td>
+</tr>
+<tr>
+<td><strong>Merged model differs from adapter eval</strong></td>
+<td>Quality drop after merge or quantization</td>
+<td>Evaluate the served artefact; §5.3 options; gate with slices</td>
+</tr>
+<tr>
+<td><strong>New special tokens not learned</strong></td>
+<td>Tool or format tokens ignored</td>
+<td>Train embeddings/<code>lm_head</code> via <code>modules_to_save</code> or <code>trainable_token_indices</code></td>
+</tr>
+<tr>
+<td><strong>fp16 overflow</strong></td>
+<td>NaN losses</td>
+<td>BF16 compute dtype; avoid fp16 on modern GPUs</td>
+</tr>
+<tr>
+<td><strong>Adapter on wrong base revision</strong></td>
+<td>Mysterious degradation</td>
+<td>Base digest in adapter metadata; checked at load (09.02 §6)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="7-hands-on-projects"><a class="anchor" href="#7-hands-on-projects">#</a> 7. Hands-On Projects</h2>
+<h3 id="project-1-reproduce-lora-vs-full-ft-on-your-data"><a class="anchor" href="#project-1-reproduce-lora-vs-full-ft-on-your-data">#</a> Project 1 — Reproduce &quot;LoRA vs Full FT&quot; on Your Data</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the ML lead</em>, I want to know, for our legislative tasks, when LoRA matches full fine-tuning and what rank, LR, and targets to standardise on.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Two datasets: a narrow task (1–3k bill summaries) and a broad one (≥ 50k mixed instruction examples from legislative services workflows plus general data).</li>
+<li>The grid covers:<ul>
+<li>full FT (LR sweep);</li>
+<li>LoRA r ∈ {4, 16, 64, 256}, each with its own LR sweep, under both $\alpha/r$ and rsLoRA;</li>
+<li>attention-only vs all-linear;</li>
+<li>effective batch {8, 32, 128}.</li>
+</ul>
+</li>
+<li>Deliverables: loss-vs-steps curves, a task metric with 95% CIs, and a finding for each claim in §3 (confirmed or refuted on your data).</li>
+<li>The standard config per task class goes into a shared template.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Freeze the datasets and eval sets (06.02), and build the TRL training script with a config grid (Hydra/YAML).</li>
+<li>Run the LR sweeps first (short runs), then full runs at the best LR per configuration.</li>
+<li>Plot final metric against trainable parameters, and learning curves against steps.</li>
+<li>Test each §3 claim explicitly, then write up the results and templates.</li>
+</ol>
+<h3 id="project-2-qlora-a-70b-model-on-one-gpu-and-ship-it"><a class="anchor" href="#project-2-qlora-a-70b-model-on-one-gpu-and-ship-it">#</a> Project 2 — QLoRA a 70B Model on One GPU, and Ship It</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the platform owner</em>, I want to adapt a 70B open model for statute Q&amp;A with our budget of a single 80 GB GPU, then serve it efficiently.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>QLoRA training fits on 1×80 GB (NF4, double quant, paged 8-bit AdamW, 4k context), with a measured peak memory within 15% of the §5.1 estimate.</li>
+<li>The tuned model beats the prompted base on the held-out statute-QA eval (with RAG context, RAFT-style; 09.01 §1) with CI excluding 0.</li>
+<li>The three serving artefacts from §5.3 (unmerged; merged BF16; merged then AWQ/FP8 via LLM Compressor) are evaluated with <code>quant_gate</code> (08.04 §4). The chosen artefact passes all slices and hard invariants.</li>
+<li>It is deployed on vLLM (08.03) with a bundle manifest recording the base digest, adapter hash, merge and quant method, and eval reports.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Build the dataset with retrieved contexts from the production retriever, including distractors.</li>
+<li>Run QLoRA training (§5.2) and log memory and throughput.</li>
+<li>Evaluate the unmerged adapter, then merge into the BF16 weights (on a large-RAM CPU box or across GPUs).</li>
+<li>Quantize the merged model with LLM Compressor (08.04 §3.6) and evaluate all three artefacts.</li>
+<li>Choose, gate, deploy, and document the result.</li>
+</ol>
+<h3 id="project-3-lora-and-nf4-from-scratch-verified-against-the-libraries"><a class="anchor" href="#project-3-lora-and-nf4-from-scratch-verified-against-the-libraries">#</a> Project 3 — LoRA and NF4 from Scratch, Verified Against the Libraries</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML engineer</em>, I want to own the implementation details so I can debug numerical issues and evaluate new variants.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>A pure-PyTorch <code>LoRALinear</code> with merge/unmerge, rsLoRA, and DoRA. Outputs match PEFT to within 1e-5 for identical weights.</li>
+<li>An NF4 quantize/dequantize implementation with double quantization, a &quot;QLoRA linear&quot; (dequantize-then-matmul plus LoRA), and gradients checked by <code>torch.autograd.gradcheck</code> on small shapes.</li>
+<li>The NF4 codebook matches bitsandbytes. Dequantized weights match <code>bitsandbytes.functional.dequantize_4bit</code> to within 1e-3 relative error on a real checkpoint layer (on a GPU box).</li>
+<li>A mini fine-tune of a ≤ 1.5B model with your QLoRA layer reaches within 2% of the PEFT+bitsandbytes eval loss.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Implement and unit-test <code>LoRALinear</code>, including merge exactness in FP32.</li>
+<li>Implement NF4 and double quantization, then compare the storage bits with the §5 math.</li>
+<li>Write a custom <code>autograd.Function</code> for dequantize-matmul, run gradcheck, then swap it into the model&#39;s linears.</li>
+<li>Train a small model and compare against the libraries.</li>
+<li>Write up the discrepancies and fixes.</li>
+</ol>
+<hr>
+<h2 id="8-foundational-papers-exact-titles"><a class="anchor" href="#8-foundational-papers-exact-titles">#</a> 8. Foundational Papers (exact titles)</h2>
+<ul>
+<li>Hu et al., 2021 — <em>LoRA: Low-Rank Adaptation of Large Language Models</em></li>
+<li>Dettmers et al., 2023 — <em>QLoRA: Efficient Finetuning of Quantized LLMs</em></li>
+<li>Kalajdzievski, 2023 — <em>A Rank Stabilization Scaling Factor for Fine-Tuning with LoRA</em> (rsLoRA)</li>
+<li>Liu et al., 2024 — <em>DoRA: Weight-Decomposed Low-Rank Adaptation</em></li>
+<li>Meng, Wang &amp; Zhang, 2024 — <em>PiSSA: Principal Singular Values and Singular Vectors Adaptation of Large Language Models</em></li>
+<li>Hayou, Ghosh &amp; Yu, 2024 — <em>LoRA+: Efficient Low Rank Adaptation of Large Models</em></li>
+<li>Li et al., 2023 — <em>LoftQ: LoRA-Fine-Tuning-Aware Quantization for Large Language Models</em></li>
+<li>Zhang et al., 2023 — <em>Adaptive Budget Allocation for Parameter-Efficient Fine-Tuning</em> (AdaLoRA)</li>
+<li>Biderman et al., 2024 — <em>LoRA Learns Less and Forgets Less</em></li>
+<li>Aghajanyan, Zettlemoyer &amp; Gupta, 2020 — <em>Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning</em></li>
+<li>Dettmers et al., 2022 — <em>8-bit Optimizers via Block-wise Quantization</em></li>
+<li>Schulman &amp; Thinking Machines Lab, 2025 — <em>LoRA Without Regret</em> (blog post / technical report)</li>
+</ul>
+<h2 id="9-essential-tooling"><a class="anchor" href="#9-essential-tooling">#</a> 9. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PEFT 0.21</strong></td>
+<td>LoRA and its variants, init schemes (PiSSA/OLoRA/EVA/CorDA/LoftQ), merge/unload</td>
+</tr>
+<tr>
+<td><strong>bitsandbytes</strong></td>
+<td>NF4/FP4 quantization, 8-bit and paged optimizers</td>
+</tr>
+<tr>
+<td><strong>TRL 1.13</strong></td>
+<td><code>peft_config</code> in every trainer; QLoRA via <code>quantization_config</code></td>
+</tr>
+<tr>
+<td><strong>Unsloth</strong></td>
+<td>Fused kernels for fast, memory-lean LoRA/QLoRA</td>
+</tr>
+<tr>
+<td><strong>Axolotl, LLaMA-Factory, torchtune</strong></td>
+<td>Recipe-driven LoRA/QLoRA training</td>
+</tr>
+<tr>
+<td><strong>vLLM</strong> (<code>--enable-lora</code>), LoRAX</td>
+<td>Adapter serving</td>
+</tr>
+<tr>
+<td><strong>LLM Compressor</strong> (08.04)</td>
+<td>Quantizing merged models properly for serving</td>
+</tr>
+</tbody></table>
+<p><strong>Image prompt (LoRA):</strong> <em>&quot;Technical diagram: input vector x enters two parallel paths — top path a large grey frozen matrix W0 (d×d, snowflake icon), bottom path a narrow orange matrix A (r×d) then orange matrix B (d×r), scaled by α/r; outputs summed into h. Annotations: &#39;B initialised to 0&#39;, &#39;trainable r(d_in+d_out)&#39;, &#39;merge: W0 + (α/r)BA&#39;. Clean flat vector, white background.&quot;</em></p>
+<p><strong>Image prompt (NF4):</strong> <em>&quot;Chart: standard normal bell curve with 16 vertical lines at NF4 quantile levels (denser near zero, sparse in tails), compared below with 16 evenly spaced INT4 levels; caption &#39;NF4 places levels where weights are&#39;. Minimal technical style.&quot;</em></p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-02-peft.html"><span>← Previous</span><b>02 peft</b></a>
+      <a class="next" href="./09-04-distillation.html"><span>Next →</span><b>04 distillation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

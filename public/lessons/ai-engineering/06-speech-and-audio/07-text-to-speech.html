@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Text-to-Speech (TTS) — From Tacotron to F5 and Kokoro — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/07-text-to-speech/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Text-to-Speech (TTS) — From Tacotron to F5 and Kokoro</h1>
+    <p class="lesson-sub">ASR inverts speech to text; TTS inverts text to speech. The 2026 stack is three parts: text → tokens, tokens → mel, mel → waveform. Each part has a default model that fits in a laptop.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 02 (Spectrograms &amp; Mel), Phase 5 · 09 (Seq2Seq), Phase 7 · 05 (Full Transformer)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="37.2" y="39.1" width="32.2" height="32.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(219 53.3 55.2)"/>
+        <rect x="32.4" y="34.8" width="31.0" height="31.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(201 47.9 50.3)"/>
+        <rect x="27.7" y="30.5" width="29.7" height="29.7" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(183 42.5 45.3)"/>
+        <rect x="22.9" y="126.2" width="28.4" height="28.4" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(166 37.1 140.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Text-to-Speech (TTS)</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— From Tacotron to…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have a string: &quot;Please remind me to water the plants at 6 pm.&quot; You need a 3-second audio clip that sounds natural, has correct prosody (pauses, stress), pronounces &quot;plants&quot; with the right vowel, and runs in under 300 ms on a CPU for a live voice assistant. You also need to swap voices, handle code-switched input (&quot;remind me at 6 pm, daijoubu?&quot;), and not embarrass yourself on names.</p>
+<p>Modern TTS pipelines look like this:</p>
+<ol>
+<li><strong>Text frontend.</strong> Normalize text (dates, numbers, emails), convert to phonemes or subword tokens, predict prosody features.</li>
+<li><strong>Acoustic model.</strong> Text → mel spectrogram. Tacotron 2 (2017), FastSpeech 2 (2020), VITS (2021), F5-TTS (2024), Kokoro (2024).</li>
+<li><strong>Vocoder.</strong> Mel → waveform. WaveNet (2016), WaveRNN, HiFi-GAN (2020), BigVGAN (2022), neural codec vocoders in 2024+.</li>
+</ol>
+<p>In 2026 the acoustic + vocoder split blurs with end-to-end diffusion and flow-matching models. But the mental model of three parts still holds for debugging.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/07-text-to-speech/assets/tts.svg" alt="Tacotron, FastSpeech, VITS, F5/Kokoro side-by-side" loading="lazy" /></figure></p>
+<p><strong>Tacotron 2 (2017).</strong> Seq2seq: char-embedding → BiLSTM encoder → location-sensitive attention → autoregressive LSTM decoder emits mel frames. Slow (AR), wobbly on long text. Still cited as a baseline.</p>
+<p><strong>FastSpeech 2 (2020).</strong> Non-autoregressive. Duration predictor outputs how many mel frames each phoneme gets. 1-pass, 10× faster than Tacotron. Loses some naturalness (monotonic alignment) but ships everywhere.</p>
+<p><strong>VITS (2021).</strong> Jointly trains encoder + flow-based duration + HiFi-GAN vocoder end-to-end with variational inference. High quality, single model. Dominant open-source TTS 2022–2024. Variants: YourTTS (multi-speaker zero-shot), XTTS v2 (2024, Coqui).</p>
+<p><strong>F5-TTS (2024).</strong> Diffusion transformer over flow matching. Natural prosody, zero-shot voice cloning with 5 seconds of reference audio. Top of the 2026 open-source TTS leaderboards. 335M params.</p>
+<p><strong>Kokoro (2024).</strong> Small (82M), CPU-runnable, best-in-class English TTS for real-time use. Closed-vocabulary English-only, apache-2.0.</p>
+<p><strong>OpenAI TTS-1-HD, ElevenLabs v2.5, Google Chirp-3.</strong> Commercial state of the art. ElevenLabs v2.5 emotion tags (&quot;[whispered]&quot;, &quot;[laughing]&quot;) and character voices dominate audiobook production in 2026.</p>
+<h3 id="vocoder-evolution"><a class="anchor" href="#vocoder-evolution">#</a> Vocoder evolution</h3>
+<table>
+<thead>
+<tr>
+<th>Era</th>
+<th>Vocoder</th>
+<th>Latency</th>
+<th>Quality</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2016</td>
+<td>WaveNet</td>
+<td>offline only</td>
+<td>SOTA at release</td>
+</tr>
+<tr>
+<td>2018</td>
+<td>WaveRNN</td>
+<td>~realtime</td>
+<td>good</td>
+</tr>
+<tr>
+<td>2020</td>
+<td>HiFi-GAN</td>
+<td>100× realtime</td>
+<td>near-human</td>
+</tr>
+<tr>
+<td>2022</td>
+<td>BigVGAN</td>
+<td>50× realtime</td>
+<td>generalizes across speakers/langs</td>
+</tr>
+<tr>
+<td>2024</td>
+<td>SNAC, DAC (neural codecs)</td>
+<td>integrated with AR models</td>
+<td>discrete tokens, bit-efficient</td>
+</tr>
+</tbody></table>
+<p>By 2026 most &quot;TTS&quot; models are end-to-end from text to waveform; the mel spectrogram is an internal representation.</p>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<ul>
+<li><strong>MOS (Mean Opinion Score).</strong> 1–5 scale, crowd-sourced. Still the gold standard; painfully slow.</li>
+<li><strong>CMOS (Comparative MOS).</strong> A-vs-B preference. Tighter confidence intervals per annotation.</li>
+<li><strong>UTMOS, DNSMOS.</strong> Reference-free neural MOS predictors. Used for leaderboards.</li>
+<li><strong>CER (Character Error Rate) via ASR.</strong> Run TTS output through Whisper, compute CER against the input text. Proxy for intelligibility.</li>
+<li><strong>SECS (Speaker Embedding Cosine Similarity).</strong> Voice-cloning quality.</li>
+</ul>
+<p>2026 numbers on LibriTTS test-clean:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>UTMOS</th>
+<th>CER (via Whisper)</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Ground truth</td>
+<td>4.08</td>
+<td>1.2%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>F5-TTS</td>
+<td>3.95</td>
+<td>2.1%</td>
+<td>335M</td>
+</tr>
+<tr>
+<td>XTTS v2</td>
+<td>3.81</td>
+<td>3.5%</td>
+<td>470M</td>
+</tr>
+<tr>
+<td>VITS</td>
+<td>3.62</td>
+<td>3.1%</td>
+<td>25M</td>
+</tr>
+<tr>
+<td>Kokoro v0.19</td>
+<td>3.87</td>
+<td>1.8%</td>
+<td>82M</td>
+</tr>
+<tr>
+<td>Parler-TTS Large</td>
+<td>3.76</td>
+<td>2.8%</td>
+<td>2.3B</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sp-tts-stack</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-phonemize-input"><a class="anchor" href="#step-1-phonemize-input">#</a> Step 1: phonemize input</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from phonemizer import phonemize
+ph = phonemize(&quot;Hello world&quot;, language=&quot;en-us&quot;, backend=&quot;espeak&quot;)
+# &#39;həloʊ wɜːld&#39;</code></pre>
+      </div>
+    <p>Phonemes are the universal bridge. Avoid feeding raw text to anything below VITS-level quality.</p>
+<h3 id="step-2-run-kokoro-2026-cpu-default"><a class="anchor" href="#step-2-run-kokoro-2026-cpu-default">#</a> Step 2: run Kokoro (2026 CPU default)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from kokoro import KPipeline
+tts = KPipeline(lang_code=&quot;a&quot;)  # &quot;a&quot; = American English
+audio, sr = tts(&quot;Please remind me to water the plants at 6 pm.&quot;, voice=&quot;af_bella&quot;)
+# audio: float32 tensor, sr=24000</code></pre>
+      </div>
+    <p>Runs offline, single file, 82M params.</p>
+<h3 id="step-3-run-f5-tts-with-voice-cloning"><a class="anchor" href="#step-3-run-f5-tts-with-voice-cloning">#</a> Step 3: run F5-TTS with voice cloning</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from f5_tts.api import F5TTS
+tts = F5TTS()
+wav = tts.infer(
+    ref_file=&quot;my_voice_5s.wav&quot;,
+    ref_text=&quot;The quick brown fox jumps over the lazy dog.&quot;,
+    gen_text=&quot;Please remind me to water the plants.&quot;,
+)</code></pre>
+      </div>
+    <p>Pass a 5-second reference clip + its transcript; F5 clones prosody and timbre.</p>
+<h3 id="step-4-hifi-gan-vocoder-from-scratch"><a class="anchor" href="#step-4-hifi-gan-vocoder-from-scratch">#</a> Step 4: HiFi-GAN vocoder from scratch</h3>
+<p>Too big to fit in a tutorial script, but the shape is:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class HiFiGAN(nn.Module):
+    def __init__(self, mel_channels=80, upsample_rates=[8, 8, 2, 2]):
+        super().__init__()
+        # 4 upsample blocks, total 256x to go from mel-rate to audio-rate
+        ...
+    def forward(self, mel):
+        return self.blocks(mel)  # -&gt; waveform</code></pre>
+      </div>
+    <p>Training: adversarial (discriminator on short windows) + mel-spectrogram reconstruction loss + feature-matching loss. Commoditized — use pretrained checkpoints from <code>hifi-gan</code> repo or nvidia-NeMo.</p>
+<h3 id="step-5-the-full-pipeline-pseudocode"><a class="anchor" href="#step-5-the-full-pipeline-pseudocode">#</a> Step 5: the full pipeline (pseudocode)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">text = &quot;Please remind me at 6 pm.&quot;
+phones = phonemize(text)
+mel = acoustic_model(phones, speaker=alice)      # [T, 80]
+wav = vocoder(mel)                                # [T * 256]
+soundfile.write(&quot;out.wav&quot;, wav, 24000)</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Real-time English voice assistant</td>
+<td>Kokoro (CPU) or XTTS v2 (GPU)</td>
+</tr>
+<tr>
+<td>Voice cloning from 5 s reference</td>
+<td>F5-TTS</td>
+</tr>
+<tr>
+<td>Commercial character voices</td>
+<td>ElevenLabs v2.5</td>
+</tr>
+<tr>
+<td>Audiobook narration</td>
+<td>ElevenLabs v2.5 or XTTS v2 + fine-tune</td>
+</tr>
+<tr>
+<td>Low-resource language</td>
+<td>Train VITS on 5–20 h target-lang data</td>
+</tr>
+<tr>
+<td>Expressive / emotion tags</td>
+<td>ElevenLabs v2.5 or StyleTTS 2 fine-tune</td>
+</tr>
+</tbody></table>
+<p>Open-source leader as of 2026: <strong>F5-TTS for quality, Kokoro for efficiency</strong>. Don&#39;t reach for Tacotron unless you are a historian.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>No text normalizer.</strong> &quot;Dr. Smith&quot; reads as &quot;Doctor&quot; or &quot;Drive&quot;? &quot;2026&quot; as &quot;twenty twenty six&quot; or &quot;two zero two six&quot;? Normalize BEFORE phonemizer.</li>
+<li><strong>OOV proper nouns.</strong> &quot;Ghumare&quot; → &quot;ghyu-mair&quot;? Ship a fallback grapheme-to-phoneme model for unknown tokens.</li>
+<li><strong>Clipping.</strong> Vocoder output rarely clips, but mel scaling mismatch at inference can overshoot ±1.0. Always <code>np.clip(wav, -1, 1)</code>.</li>
+<li><strong>Sample-rate mismatch.</strong> Kokoro outputs 24 kHz; your downstream pipeline expects 16 kHz → resample or get aliasing.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-tts-designer.md</code>. Design a TTS pipeline for a given voice, latency, and language target.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Builds a phoneme dictionary from a toy vocab, estimates duration per phoneme, and prints a fake &quot;mel&quot; schedule.</li>
+<li><strong>Medium.</strong> Install Kokoro, synthesize the same sentence at voice <code>af_bella</code> and <code>am_adam</code>. Compare audio durations and subjective quality.</li>
+<li><strong>Hard.</strong> Record a 5-second reference clip of yourself. Use F5-TTS to clone it. Report SECS between reference and cloned output.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Phoneme</td>
+<td>Sound unit</td>
+<td>Abstract sound class; 39 in English (ARPABet).</td>
+</tr>
+<tr>
+<td>Duration predictor</td>
+<td>How long each phoneme lasts</td>
+<td>Non-AR model output; integer frames per phoneme.</td>
+</tr>
+<tr>
+<td>Vocoder</td>
+<td>Mel → waveform</td>
+<td>Neural net mapping mel-spec to raw samples.</td>
+</tr>
+<tr>
+<td>HiFi-GAN</td>
+<td>Standard vocoder</td>
+<td>GAN-based; dominant 2020–2024.</td>
+</tr>
+<tr>
+<td>MOS</td>
+<td>Subjective quality</td>
+<td>1–5 mean opinion score from human raters.</td>
+</tr>
+<tr>
+<td>SECS</td>
+<td>Voice-clone metric</td>
+<td>Cosine similarity between target and output speaker embedding.</td>
+</tr>
+<tr>
+<td>F5-TTS</td>
+<td>2024 open-source SOTA</td>
+<td>Flow-matching diffusion; zero-shot cloning.</td>
+</tr>
+<tr>
+<td>Kokoro</td>
+<td>CPU English leader</td>
+<td>82M-param model, Apache 2.0.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1712.05884">Shen et al. (2017). Tacotron 2</a> — the seq2seq baseline.</li>
+<li><a href="https://arxiv.org/abs/2106.06103">Kim, Kong, Son (2021). VITS</a> — end-to-end flow-based.</li>
+<li><a href="https://arxiv.org/abs/2410.06885">Chen et al. (2024). F5-TTS</a> — current open-source SOTA.</li>
+<li><a href="https://arxiv.org/abs/2010.05646">Kong, Kim, Bae (2020). HiFi-GAN</a> — the vocoder that still ships in 2026.</li>
+<li><a href="https://huggingface.co/hexgrad/Kokoro-82M">Kokoro-82M on HuggingFace</a> — 2024 CPU-friendly English TTS.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-speaker-recognition-verification.html"><span>← Previous</span><b>speaker recognition verification</b></a>
+      <a class="next" href="./08-voice-cloning-conversion.html"><span>Next →</span><b>voice cloning conversion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

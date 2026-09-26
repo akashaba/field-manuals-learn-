@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gradient Clipping and Mixed Precision — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/45-gradient-clipping-amp/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns">Production Patterns</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Gradient Clipping and Mixed Precision</h1>
+    <p class="lesson-sub">The optimizer and schedule from the previous lesson assume gradients are sane. They usually are not. A single bad batch can spike the gradient norm by three orders of magnitude. Mixed-precision training amplifies this by introducing FP16 overflow on the loss side. This lesson builds the two safety belts that production training cannot ship without: gradient clipping to a configured global L2 norm, and a mixed-precision loop with autocast and GradScaler that detects NaN and Inf, skips the step cleanly, and logs the scaling factor for forensics.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 45">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="103.2" cy="100.5" r="9.0" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.4,100.6 L97.8,88.1 L106.1,100.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.6,95.3 L92.3,83.7 L100.1,95.3 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.8,90.0 L86.9,79.3 L94.0,90.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.0,84.7 L81.5,75.0 L87.9,84.7 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">45</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Gradient Clipping</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">and Mixed Precision</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compute the global L2 norm over all parameter gradients and clip in place when it exceeds a configured threshold.</li>
+<li>Wrap a training step in autocast plus a GradScaler so FP16 forward and backward passes survive overflow.</li>
+<li>Detect NaN and Inf in the loss or gradient, skip the optimizer step, and log the skip.</li>
+<li>Report the GradScaler&#39;s scaling factor every step so a long sequence of skips is visible immediately.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A training run that ran clean yesterday produces a loss curve that goes vertical at step 8,217. The culprit is a single batch whose gradient norm is 4,200, twenty times the previous peak. Without clipping the optimizer applies a step that resets every learning the model had done in the previous hour. With a global L2 clip at norm 1.0, the same batch contributes a unit-norm update; the loss stays on its trend line; the run survives.</p>
+<p>Mixed-precision training pushes throughput by 2-3x by computing the forward pass and most of the backward pass in FP16. The cost is that FP16 has a narrow exponent range. A typical gradient that overflows in FP16 evaluates to Inf, which propagates through subsequent layers as NaN, which sets every weight to NaN at the next optimizer step. PyTorch&#39;s GradScaler solves this by multiplying the loss by a large scaling factor before the backward pass and dividing the gradients by the same factor before the optimizer step. If any gradient is Inf or NaN at unscale time, the scaler skips the step and halves the scaling factor; if the previous N steps were clean, the scaler doubles the factor. Over the course of training the factor finds the highest value the FP16 range allows.</p>
+<p>The build problem is wiring the two correctly. Clip before unscale and the threshold is on scaled gradients; clip after unscale and the order of operations on the GradScaler matters. The right order is: <code>scaler.scale(loss).backward()</code>, then <code>scaler.unscale_(optimizer)</code>, then <code>clip_grad_norm_</code>, then <code>scaler.step(optimizer)</code>, then <code>scaler.update()</code>. Any other order produces a silently broken loop.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Forward[Forward in autocast] --&gt; Loss[Loss in FP32]
+  Loss --&gt; Scale[scaler.scale loss]
+  Scale --&gt; Backward[Backward pass FP16 grads]
+  Backward --&gt; Unscale[scaler.unscale optimizer]
+  Unscale --&gt; NormCheck[Compute global L2 norm]
+  NormCheck --&gt; Detect{NaN or Inf?}
+  Detect -- yes --&gt; Skip[Skip step + log + scaler.update halves]
+  Detect -- no --&gt; Clip[Clip grads to max_norm]
+  Clip --&gt; StepOpt[scaler.step optimizer]
+  StepOpt --&gt; Update[scaler.update doubles or halves]
+  Update --&gt; NextStep[Next step]
+  Skip --&gt; NextStep</pre></div><h3 id="global-l2-norm"><a class="anchor" href="#global-l2-norm">#</a> Global L2 norm</h3>
+<p>The global L2 norm is the Euclidean norm of the concatenated gradient vector, not the per-parameter norm. PyTorch implements this as <code>torch.nn.utils.clip_grad_norm_(parameters, max_norm)</code>. The function returns the pre-clip norm so the lesson can log both the natural and the clipped value, which is necessary for the &quot;we are clipping at every step&quot; diagnosis.</p>
+<h3 id="autocast-and-gradscaler"><a class="anchor" href="#autocast-and-gradscaler">#</a> autocast and GradScaler</h3>
+<p><code>torch.amp.autocast(device_type)</code> is the context manager that selectively runs eligible operations (most matmul-class operations) in FP16. <code>torch.amp.GradScaler(device_type)</code> is the helper that scales the loss before backward and inverse-scales the gradients before the optimizer step. The two are designed together; using one without the other is a configuration error the test should catch.</p>
+<p>The lesson uses CPU autocast because that is what runs in CI; the same pattern transfers verbatim to CUDA by changing <code>device_type=&quot;cpu&quot;</code> to <code>device_type=&quot;cuda&quot;</code>. The GradScaler on CPU is a stub (CPU autocast already operates in BF16 by default and does not need loss scaling), but the lesson includes the call sites so the wiring is identical to the GPU loop.</p>
+<h3 id="nan-and-inf-detection"><a class="anchor" href="#nan-and-inf-detection">#</a> NaN and Inf detection</h3>
+<p>The detection happens in two places. First, the loss itself is checked with <code>torch.isfinite</code> before backward; an Inf or NaN loss does not produce useful gradients and is skipped without entering the optimizer. Second, after <code>scaler.unscale_(optimizer)</code> the lesson scans the unscaled gradients with <code>has_non_finite_grad(...)</code> and treats any Inf or NaN as a skip. The two checks together cover both the forward-pass and the backward-pass failure modes.</p>
+<h3 id="scaling-factor-diagnostics"><a class="anchor" href="#scaling-factor-diagnostics">#</a> Scaling factor diagnostics</h3>
+<p>The scaling factor is the GradScaler&#39;s internal state. Every step the lesson reads <code>scaler.get_scale()</code> and logs it next to the learning rate and gradient norm. A healthy run shows the scaling factor climbing in powers of two until it saturates near <code>2^17</code> or <code>2^18</code>. A misbehaving run shows the factor oscillating between high and low values, which is the signal that the model&#39;s gradients are sometimes in range and sometimes not. The diagnostic is invisible without logging.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">grad-clip-monitor</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>clip_global_l2_norm</code> - a wrapper around <code>torch.nn.utils.clip_grad_norm_</code> that returns both the pre-clip and post-clip norm.</li>
+<li><code>has_non_finite_grad</code> - a helper that scans gradients for NaN and Inf.</li>
+<li><code>AmpTrainState</code> - wraps a model, an <code>AdamW</code> optimizer, a GradScaler, and an autocast device. Exposes a <code>step(inputs, targets)</code> that runs the full clipping, scaling, and skip-on-NaN pipeline.</li>
+<li><code>StepLog</code> and <code>SkipLog</code> - structured per-step records.</li>
+<li>A demo that trains a small <code>nn.Linear</code> model for 20 steps, injects an Inf into the gradient on step 5 to exercise the skip path, and prints the resulting log.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script exits zero and prints a per-step log with each row tagged <code>STEP</code> or <code>SKIP</code>; at least one row is a <code>SKIP</code>.</p>
+<h2 id="production-patterns"><a class="anchor" href="#production-patterns">#</a> Production Patterns</h2>
+<p>Four patterns elevate the loop to a production training step.</p>
+<p><strong>Skip counter as an alert, not a log line.</strong> A handful of skipped steps per training run is healthy. Hundreds of skips per epoch are a hard alert: the model is in a regime FP16 cannot hold and the loop is silently failing. The lesson tracks a 1,000-step rolling skip rate and would, in production, page on a rate above 5 percent.</p>
+<p><strong>Clip threshold lives in the config.</strong> <code>max_norm = 1.0</code> is the modern default for language-model training. Sweep it on a small model first; larger thresholds let the model recover from genuinely difficult batches; smaller thresholds bound the worst case at the cost of a noisier loss curve. The threshold belongs in the same YAML or JSON config as the schedule from lesson 44.</p>
+<p><strong>Norm log goes to a CSV with the schedule.</strong> The CSV columns are <code>step, lr, grad_l2_pre_clip, grad_l2_post_clip, loss, skipped, skip_reason, scaler_scale</code>. A reviewer who opens the file sees the schedule, the gradient story, the scaling factor, and the skip outcome (with its reason) in one row. Splitting the columns across files is a recipe for misaligned analyses.</p>
+<p><strong><code>scaler.update()</code> runs every step, even on skip.</strong> On a clean step the scaler reads its no-inf counter, increments it, and possibly doubles the factor. On a skipped step the scaler halves the factor and resets the counter. Forgetting <code>update()</code> on the skip path is the bug that produces &quot;the scaling factor never changed.&quot;</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Autocast device matches optimizer device.</strong> <code>torch.amp.autocast(device_type=&quot;cuda&quot;)</code> for GPU training; <code>torch.amp.autocast(device_type=&quot;cpu&quot;)</code> for CPU. Mixing devices produces a silent type error that surfaces as a loss curve that looks fine but a model that is not learning.</li>
+<li><strong>Loss check before backward.</strong> <code>torch.isfinite(loss).all()</code> is one tensor reduction; the cost is negligible and the savings on a NaN loss are an entire training step. Always run it.</li>
+<li><strong><code>set_to_none=True</code> in <code>zero_grad</code>.</strong> Sets gradients to <code>None</code> instead of zero, which lets the optimizer skip computation for unaffected parameter groups. The setting is a free throughput improvement and a slight bug-surface reduction.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-clip-amp.md</code> would, on a real project, describe which clip threshold and autocast device the training step uses, where the per-step CSV lives in version control, and what the production skip-rate alert threshold is. This lesson ships the engine.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Replace the synthetic Inf injection with a real loss spike (multiply one batch&#39;s target by 1e8) and verify the skip path triggers.</li>
+<li>Add a <code>--bf16</code> mode that switches autocast to BF16 instead of FP16. BF16 has a wider exponent range than FP16 and rarely needs loss scaling; verify the skip rate drops to zero on the same demo.</li>
+<li>Add a unit test that the gradient-clip wrapper returns the pre-clip and post-clip norm correctly when no clipping occurs.</li>
+<li>Add a rolling-window skip-rate computation and a CLI flag that fails the run if the rate exceeds a configured threshold for 100 consecutive steps.</li>
+<li>Wire the loop to write the canonical CSV (<code>step, lr, grad_l2_pre_clip, grad_l2_post_clip, loss, skipped, skip_reason, scaler_scale</code>) and confirm the file survives a Ctrl-C by flushing after every row.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Global L2 norm</td>
+<td>&quot;Clip target&quot;</td>
+<td>Euclidean norm of the concatenated gradient vector across all trainable parameters</td>
+</tr>
+<tr>
+<td>autocast</td>
+<td>&quot;Mixed precision&quot;</td>
+<td>Selective FP16 (or BF16) execution of eligible operations inside a <code>with</code> block</td>
+</tr>
+<tr>
+<td>GradScaler</td>
+<td>&quot;Loss scaler&quot;</td>
+<td>Helper that multiplies the loss before backward and inverse-scales gradients before the optimizer step</td>
+</tr>
+<tr>
+<td>Skip</td>
+<td>&quot;Bad step&quot;</td>
+<td>An optimizer step refused because the gradient or loss was non-finite; the scaler halves the factor</td>
+</tr>
+<tr>
+<td>Scaling factor</td>
+<td>&quot;Scaler state&quot;</td>
+<td>The GradScaler&#39;s current multiplier; doubles after clean stretches and halves on every skip</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1710.03740">Micikevicius et al., Mixed Precision Training (arXiv 1710.03740)</a> - the original loss-scaling proposal</li>
+<li><a href="https://arxiv.org/abs/1211.5063">Pascanu, Mikolov, Bengio, On the difficulty of training recurrent neural networks (arXiv 1211.5063)</a> - the gradient-clipping reference paper</li>
+<li><a href="https://docs.pytorch.org/docs/stable/amp.html">PyTorch torch.amp.GradScaler</a> - the scaler API this lesson wraps</li>
+<li><a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html">PyTorch torch.nn.utils.clip_grad_norm_</a> - the clipping primitive this lesson uses</li>
+<li>Phase 19 · 42 - the downloader whose corpus feeds the loop</li>
+<li>Phase 19 · 43 - the dataloader the loop consumes</li>
+<li>Phase 19 · 44 - the schedule this loop composes with</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./44-cosine-lr-warmup.html"><span>← Previous</span><b>cosine lr warmup</b></a>
+      <a class="next" href="./46-gradient-accumulation.html"><span>Next →</span><b>gradient accumulation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

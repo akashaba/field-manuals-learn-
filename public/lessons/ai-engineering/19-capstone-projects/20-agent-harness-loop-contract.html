@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Harness Loop Contract — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/20-agent-harness-loop-contract/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-frame">The frame</a></li><li><a href="#the-states">The states</a></li><li><a href="#the-hook-topics">The hook topics</a></li><li><a href="#the-pull-points">The pull points</a></li><li><a href="#the-event-stream">The event stream</a></li><li><a href="#the-budget-envelope">The budget envelope</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Agent Harness Loop Contract</h1>
+    <p class="lesson-sub">The harness is the agent. The model is a coprocessor. This lesson freezes the loop contract you can wire any model into.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 lessons 01-07, Phase 14 lesson 01</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 20">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="19.8" y="123.5" width="27.6" height="27.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(154 33.6 137.3)"/>
+        <rect x="15.0" y="119.2" width="26.3" height="26.3" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(136 28.2 132.3)"/>
+        <circle cx="22.7" cy="127.4" r="12.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">20</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Agent Harness Loop</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Contract</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Specify an agent harness loop as a deterministic state machine with explicit transitions.</li>
+<li>Implement ten lifecycle hook topics that operators wire policy, telemetry, and guardrails into.</li>
+<li>Define two pull points where the loop yields control back to the caller and resumes on a fresh input.</li>
+<li>Enforce per-session budgets (turns, tool calls, wall-clock) without leaking partial state on exceeding.</li>
+<li>Emit a typed stream of eleven event types so downstream UIs and tracers can subscribe without inspecting the loop directly.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-loop-contract</code></pre>
+      </div>
+    <h2 id="the-frame"><a class="anchor" href="#the-frame">#</a> The frame</h2>
+<p>A coding agent that runs unattended for forty turns is not a chat loop. It is a state machine whose nodes the operator can intercept and whose edges the operator can audit. Once you write the contract down, swapping models, tools, or policies stops being a refactor. It becomes a registration call.</p>
+<p>This lesson builds that contract. We name six states, ten hook topics, two pull points, eleven event types, and a budget envelope. Everything else in the harness (tool registry, JSON-RPC transport, dispatcher, planner) plugs into this shape.</p>
+<h2 id="the-states"><a class="anchor" href="#the-states">#</a> The states</h2>
+<p>The loop has six states. Five are active. One is terminal.</p>
+<div class="fig"><pre class="mermaid">stateDiagram-v2
+    [*] --&gt; IDLE
+    IDLE --&gt; PLANNING: run(goal)
+    PLANNING --&gt; EXECUTING: plan committed
+    EXECUTING --&gt; AWAITING_TOOL: tool_call needed
+    AWAITING_TOOL --&gt; REFLECTING: result
+    EXECUTING --&gt; REFLECTING: no_tool step done
+    REFLECTING --&gt; EXECUTING: next step
+    REFLECTING --&gt; PLANNING: replan
+    REFLECTING --&gt; DONE: goal_met
+    PLANNING --&gt; DONE: no_plan
+    DONE --&gt; [*]</pre></div><p><code>IDLE</code> is the only legal entry point. <code>DONE</code> is the only legal exit. <code>AWAITING_TOOL</code> is the only state that yields a pull point. Every other transition is internal.</p>
+<p>The state machine is deterministic. Given the same event log, the harness re-enters the same state. That property is what lets you replay sessions for debugging without re-calling the model.</p>
+<h2 id="the-hook-topics"><a class="anchor" href="#the-hook-topics">#</a> The hook topics</h2>
+<p>Hooks are the operator&#39;s seam into the loop. The harness fires ten topics. Each topic accepts any number of subscribers. Subscribers fire in registration order. A subscriber may mutate the payload, raise to abort the turn, or return a sentinel to skip the next step.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">before_plan         after_plan
+before_tool_call    after_tool_call
+before_step         after_step
+on_error
+on_pause
+on_budget_exceeded
+on_complete</code></pre>
+      </div>
+    <p>The shape mirrors what Claude Code, Cursor, and OpenCode all converged on by mid-2025. The names are functional, not branded. A hook that blocks <code>rm -rf</code> lives in <code>before_tool_call</code>. A hook that ships an OpenTelemetry span lives in <code>after_step</code>. A hook that resumes on a paused session lives in <code>on_pause</code>.</p>
+<h2 id="the-pull-points"><a class="anchor" href="#the-pull-points">#</a> The pull points</h2>
+<p>The loop yields control twice. First on <code>AWAITING_TOOL</code> when it cannot make progress without a tool result. Second on <code>on_pause</code> when the budget is exhausted or a hook explicitly requests human review.</p>
+<p>A pull point is not an exception. It is a return. The caller inspects the harness state, fetches whatever the harness asked for, and calls <code>resume(payload)</code>. The harness picks up where it stopped. This is the same shape as a Python generator. The transport over the pull point is your choice. In a TUI it is keypress. Over MCP it is <code>tools/call</code>. Over a queue it is a job poll.</p>
+<h2 id="the-event-stream"><a class="anchor" href="#the-event-stream">#</a> The event stream</h2>
+<p>The loop appends events to a typed stream at specific points in the contract. The stream is append-only and subscribers can replay from any offset. The eleven implemented event types are:</p>
+<ul>
+<li><code>session.start</code> — emitted once when <code>run(goal)</code> is called</li>
+<li><code>plan.draft</code> — emitted when the planner returns a draft plan</li>
+<li><code>plan.commit</code> — emitted after the draft is committed as the active plan</li>
+<li><code>step.start</code> — emitted at the start of each executing step</li>
+<li><code>step.end</code> — emitted at the end of each executing step</li>
+<li><code>tool.call</code> — emitted when a tool-requiring step yields control to the caller</li>
+<li><code>tool.result</code> — emitted on resume with a tool result</li>
+<li><code>tool.error</code> — emitted on resume with an error or when a hook aborts the call</li>
+<li><code>budget.warn</code> — emitted when a budget limit is reached</li>
+<li><code>session.pause</code> — emitted when the loop yields on a pause (budget or hook)</li>
+<li><code>session.complete</code> — emitted once when the loop reaches <code>DONE</code></li>
+</ul>
+<p>The events do not duplicate hook payloads. Hooks are imperative (mutate, abort). Events are observational (record, ship). Treat them as orthogonal.</p>
+<h2 id="the-budget-envelope"><a class="anchor" href="#the-budget-envelope">#</a> The budget envelope</h2>
+<p>A session carries three limits. Turn count, tool call count, wall-clock seconds. Each turn increments turns by one. Each tool call increments tool calls by one. Wall-clock is checked on every state transition. When any limit is reached, the loop fires <code>on_budget_exceeded</code>, emits <code>budget.warn</code>, then transitions to <code>IDLE</code> with a budget-exceeded reason on the next pull point.</p>
+<p>The budget is not a kill switch. It is a yield. The caller decides whether to extend the budget and resume, or to close the session.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not call a model. It does not register real tools. It does not implement a transport. Those are the next four lessons. This lesson nails the contract so the next four can plug into it without rewriting.</p>
+<p>The deterministic planner in <code>main.py</code> is a stand-in. It returns a hardcoded plan of three steps, two of which require a tool result. The point is the loop, not the plan.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>HarnessLoop</code> is the main class. It holds state, fires hooks, emits events. <code>Budget</code> tracks limits. <code>Event</code> is the typed envelope on the stream. <code>HookRegistry</code> is the dispatch table. <code>_transition</code> is the only function that changes state, so the state machine invariants live in one place.</p>
+<p>Read <code>main.py</code> top to bottom. Then read <code>code/tests/test_loop.py</code>. The tests pin every transition and every hook firing order.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>The hardest part of building a harness in production is not the state machine. It is making the contract enforceable. The contract has to survive a hot reload of the planner. It has to survive a tool that returns malformed JSON. It has to survive a hook that raises in <code>before_tool_call</code> two-thirds of the way through a forty-turn session. The tests in this lesson exercise those failure modes. Run them. Break them. Add cases.</p>
+<p>The next lesson adds the tool registry. After that, the JSON-RPC transport. After that, the dispatcher. By lesson twenty-four, the loop in this file will be running a real plan against real tools with real budgets enforced.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./17-personal-ai-tutor.html"><span>← Previous</span><b>personal ai tutor</b></a>
+      <a class="next" href="./21-tool-registry-schema-validation.html"><span>Next →</span><b>tool registry schema validation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

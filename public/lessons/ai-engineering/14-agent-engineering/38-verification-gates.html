@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verification Gates — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/38-verification-gates/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Verification Gates</h1>
+    <p class="lesson-sub">The agent does not get to mark its own work as done. A verification gate reads the scope contract, the feedback log, the rule report, and the diff, and answers a single question: is this task actually complete? If the gate says no, the task is not done, no matter what the chat says.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 33 (Rules), Phase 14 · 36 (Scope), Phase 14 · 37 (Feedback)</b></div><div><span>Time</span><b>~55 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 38">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="124.2" cy="119.7" r="11.5" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="118.8" cy="114.7" r="10.9" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="113.4" cy="109.8" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.0" cy="104.9" r="9.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.6" cy="99.9" r="8.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.8,100.0 L97.1,87.6 L105.4,100.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">38</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Verification Gates</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Define a verification gate as a deterministic function over workbench artifacts.</li>
+<li>Combine rule report, scope report, feedback records, and diff into a single verdict.</li>
+<li>Emit a <code>verification_report.json</code> the reviewer agent and CI can both read.</li>
+<li>Refuse to advance a task on any block-severity failure, without exception.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Agents declare success too easily. Three failure shapes dominate:</p>
+<ul>
+<li>&quot;Looks good.&quot; The model read its own diff and decided it was correct.</li>
+<li>&quot;Tests passed.&quot; Said with confidence. No record of the test actually running.</li>
+<li>&quot;Acceptance met.&quot; Acceptance criteria interpreted loosely enough to mean &quot;anything resembling done.&quot;</li>
+</ul>
+<p>The workbench fix is a single verification gate that reads the artifacts the agent has already produced and makes the call. The gate is deterministic. The gate is in version control. The gate is wired into CI. The agent cannot bribe it.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Diff[Diff] --&gt; Gate[verify_agent.py]
+  Scope[scope_report.json] --&gt; Gate
+  Rules[rule_report.json] --&gt; Gate
+  Feedback[feedback_record.jsonl] --&gt; Gate
+  Gate --&gt; Verdict[verification_report.json]
+  Verdict --&gt; Pass{passed?}
+  Pass -- yes --&gt; Review[Reviewer Agent]
+  Pass -- no --&gt; Refuse[refuse done + surface to human]</pre></div><h3 id="what-the-gate-checks"><a class="anchor" href="#what-the-gate-checks">#</a> What the gate checks</h3>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Source artifact</th>
+<th>Severity</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>All acceptance commands ran</td>
+<td><code>feedback_record.jsonl</code></td>
+<td>block</td>
+</tr>
+<tr>
+<td>All acceptance commands exited zero</td>
+<td><code>feedback_record.jsonl</code></td>
+<td>block</td>
+</tr>
+<tr>
+<td>Scope check has no forbidden writes</td>
+<td><code>scope_report.json</code></td>
+<td>block</td>
+</tr>
+<tr>
+<td>Scope check has no off-scope writes</td>
+<td><code>scope_report.json</code></td>
+<td>block or warn</td>
+</tr>
+<tr>
+<td>All block-severity rules pass</td>
+<td><code>rule_report.json</code></td>
+<td>block</td>
+</tr>
+<tr>
+<td>No <code>null</code> exit codes in feedback</td>
+<td><code>feedback_record.jsonl</code></td>
+<td>block</td>
+</tr>
+<tr>
+<td>Touched files match <code>scope.allowed_files</code></td>
+<td>both</td>
+<td>warn</td>
+</tr>
+</tbody></table>
+<p>A <code>warn</code> finding annotates the verdict; a <code>block</code> finding prevents <code>passed: true</code>.</p>
+<h3 id="deterministic-not-probabilistic"><a class="anchor" href="#deterministic-not-probabilistic">#</a> Deterministic, not probabilistic</h3>
+<p>The gate must produce the same verdict for the same artifact set every time. No LLM judges. LLM judges belong on the reviewer side (Phase 14 · 39) where the goal is qualitative evaluation, not status.</p>
+<h3 id="one-report-one-path"><a class="anchor" href="#one-report-one-path">#</a> One report, one path</h3>
+<p>The gate emits one <code>verification_report.json</code> per task close-out, written under <code>outputs/verification/&lt;task_id&gt;.json</code>. CI consumes the same path. Multiple gates with different paths fork the source of truth.</p>
+<h3 id="refuse-without-exception"><a class="anchor" href="#refuse-without-exception">#</a> Refuse without exception</h3>
+<p>Block-severity findings cannot be overridden by the agent. They can only be overridden by a human, with a recorded <code>override_reason</code> and an <code>overridden_by</code> user id. The override is a signed change, not an agent decision.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">wb-gate-sequence</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li>A loader for each input artifact, all stubbed locally so the lesson is self-contained.</li>
+<li>A <code>verify(task_id, artifacts) -&gt; VerdictReport</code> pure function.</li>
+<li>A printer that shows the per-check results and the final pass/fail.</li>
+<li>A demo with three task scenarios: clean pass, scope creep, missing acceptance.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: three verdict reports, each saved next to the script.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Four patterns elevate the gate from &quot;another lint job&quot; to &quot;the deciding edge.&quot;</p>
+<p><strong>Defense-in-depth, not single gate.</strong> Pre-commit hook → CI status check → pre-tool authz hook → pre-merge gate. Each layer is deterministic so a failure in one layer is caught by the next. microservices.io&#39;s March 2026 playbook is explicit: the pre-commit hook is non-bypassable because, unlike a model-side skill, it does not depend on the agent following instructions. The verification gate sits at the CI / pre-merge layer.</p>
+<p><strong>Defense by deterministic check, model-judge only for nuance.</strong> Anthropic&#39;s 2026 Hybrid Norm pairing: verifiable rewards (unit tests, schema checks, exit codes) answer &quot;did the code solve the problem?&quot; — LLM rubrics answer &quot;is the code readable, secure, on-style?&quot; The gate runs the first class; the reviewer (Phase 14 · 39) runs the second. Mixing them collapses the signal.</p>
+<p><strong>Signed override log, not Slack threads.</strong> Every override emits a row in <code>outputs/verification/overrides.jsonl</code> with: timestamp, finding code, reason, signing user, current HEAD commit. The runtime refuses any override that lacks the signature; the audit trail is git-tracked. This is the line between an override policy and an override theater.</p>
+<p><strong>Coverage floor as a first-class check.</strong> A <code>coverage_report.json</code> feeds a <code>coverage_floor</code> (default 80%) check. The gate fails if measured coverage drops below the floor or below the previous merge&#39;s floor by more than 1 percentage point. Without this check, agents quietly delete tests that fail and the verification reports stay green.</p>
+<p><strong><code>--strict</code> mode promotes warns to blocks.</strong> For release branches, ship-blocking PRs, or post-incident triage, <code>--strict</code> makes every warning a hard fail. The flag is opt-in by branch; not the global default, because strict-on-everything corrodes day-to-day flow.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>CI step.</strong> A <code>verify_agent</code> job runs the gate against the agent&#39;s final artifacts. Merge protection refuses without <code>passed: true</code>.</li>
+<li><strong>Pre-handoff hook.</strong> The agent runtime calls the gate before generating the handoff doc. No green verdict, no handoff.</li>
+<li><strong>Manual triage.</strong> Operators read the report when an agent claims success and a human suspects it.</li>
+</ul>
+<p>The gate is the deciding edge in the workbench flow. Every other surface is upstream of it.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-verification-gate.md</code> wires the gate into a specific project: which acceptance commands feed it, which rules are block-severity, which off-scope writes are tolerated, how the override audit log is stored.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>coverage_floor</code> check: the test command must produce a coverage report with at least 80%. Decide which artifact carries the floor.</li>
+<li>Support a <code>--strict</code> mode that promotes every <code>warn</code> to <code>block</code>. Document the cases where strict mode is the right default.</li>
+<li>Make the gate produce a Markdown summary in addition to JSON. Defend which fields belong in the summary.</li>
+<li>Add a <code>time_since_last_human_touch</code> check: any file edited within 60 seconds of a human keystroke is exempt from off-scope flags.</li>
+<li>Run the gate on a real agent diff from your product. How many findings are real and how many are noise? Where does the gate need to grow?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Verification gate</td>
+<td>&quot;The check that stops things&quot;</td>
+<td>Deterministic function over workbench artifacts producing a pass/fail verdict</td>
+</tr>
+<tr>
+<td>Block severity</td>
+<td>&quot;Hard fail&quot;</td>
+<td>A finding that prevents <code>passed: true</code> and requires a signed override</td>
+</tr>
+<tr>
+<td>Override log</td>
+<td>&quot;Why we let it through&quot;</td>
+<td>Signed entries with reason and user id, audited by review</td>
+</tr>
+<tr>
+<td>Acceptance command</td>
+<td>&quot;The proof&quot;</td>
+<td>A shell command whose zero exit is what <code>done</code> means</td>
+</tr>
+<tr>
+<td>One report path</td>
+<td>&quot;Source of truth&quot;</td>
+<td><code>outputs/verification/&lt;task_id&gt;.json</code>, consumed by CI and humans alike</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">Anthropic, Harness design for long-running application development</a></li>
+<li><a href="https://openai.github.io/openai-agents-python/guardrails/">OpenAI Agents SDK guardrails</a></li>
+<li><a href="https://microservices.io/post/architecture/2026/03/09/genai-development-platform-part-1-development-guardrails.html">microservices.io, GenAI dev platform: guardrails</a> — defense in depth between pre-commit and CI</li>
+<li><a href="https://icmd.app/article/the-2026-playbook-for-agentic-ai-ops-guardrails-costs-and-reliability-at-scale-1776661990431">ICMD, The 2026 Playbook for Agentic AI Ops</a> — approval-gate ladder (draft → approval → auto under thresholds)</li>
+<li><a href="https://arxiv.org/pdf/2604.01483">Type-Checked Compliance: Deterministic Guardrails (arXiv 2604.01483)</a> — Lean 4 as the upper bound of deterministic gating</li>
+<li><a href="https://github.com/logi-cmd/agent-guardrails">logi-cmd/agent-guardrails — merge gate spec</a> — scope + mutation-testing gates</li>
+<li><a href="https://guardrailsai.com/blog/guardrails-mlflow">Guardrails AI x MLflow</a> — deterministic validators as CI scorers</li>
+<li><a href="https://www.akira.ai/blog/real-time-guardrails-agentic-systems">Akira, Real-Time Guardrails for Agentic Systems</a> — pre/post-tool gates</li>
+<li>Phase 14 · 27 — prompt injection defenses (the gate&#39;s adversarial pair)</li>
+<li>Phase 14 · 36 — the scope contract this gate enforces</li>
+<li>Phase 14 · 37 — the feedback log this gate scores</li>
+<li>Phase 14 · 39 — the reviewer agent the gate hands off to</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./37-runtime-feedback-loops.html"><span>← Previous</span><b>runtime feedback loops</b></a>
+      <a class="next" href="./39-reviewer-agent.html"><span>Next →</span><b>reviewer agent</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

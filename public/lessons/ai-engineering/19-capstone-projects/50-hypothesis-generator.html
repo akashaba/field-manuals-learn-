@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hypothesis Generator — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/50-hypothesis-generator/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-generate-then-filter">Why generate, then filter</a></li><li><a href="#the-hypothesis-shape">The Hypothesis shape</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#temperature-ramp">Temperature ramp</a></li><li><a href="#novelty-filter">Novelty filter</a></li><li><a href="#rank-score">Rank score</a></li><li><a href="#mock-language-model">Mock language model</a></li><li><a href="#output-queue">Output queue</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#where-this-slots-in">Where this slots in</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Hypothesis Generator</h1>
+    <p class="lesson-sub">A research agent that asks the same question twice is wasting tokens. The trick is forcing each draft to land somewhere new.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track A lessons 20-29</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 50">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="18.6" y="122.4" width="27.3" height="27.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(150 32.2 136.0)"/>
+        <rect x="13.8" y="118.1" width="26.0" height="26.0" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(132 26.8 131.1)"/>
+        <circle cx="21.4" cy="126.1" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">50</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hypothesis Generator</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Drive a sampler from a seed prompt and turn its outputs into typed hypothesis records.</li>
+<li>Ramp the sampler temperature on each pass so the next draft drifts further from the last.</li>
+<li>Filter near duplicates with a small embedding model and a cosine distance threshold.</li>
+<li>Rank the survivors with a scoring function that blends novelty, specificity, and testability.</li>
+<li>Hold every step deterministic so the same seed always produces the same queue.</li>
+</ul>
+<h2 id="why-generate-then-filter"><a class="anchor" href="#why-generate-then-filter">#</a> Why generate, then filter</h2>
+<p>A planner that asks one model one time gets one hypothesis. That is fine for a worked example. For a research loop it is the wrong shape. The loop wants a ranked queue with depth, so when the first hypothesis fails the runner has the next one ready without paying for another full sampling pass.</p>
+<p>Two ideas combine to produce that queue. The first is temperature ramping: each pass through the sampler raises the temperature a notch, so later drafts are encouraged to wander. The second is novelty filtering: after each draft, the generator measures the embedding distance from every prior survivor and rejects anything inside the cluster.</p>
+<p>The lesson ships a mock language model that returns scripted token sequences for fixed prompts. The mock is enough to exercise the full path: seed prompt in, temperature ramp applied, candidates parsed, novelty filter run, ranked queue out.</p>
+<h2 id="the-hypothesis-shape"><a class="anchor" href="#the-hypothesis-shape">#</a> The Hypothesis shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">Hypothesis
+  id             : int           (monotonic within a run)
+  text           : str           (the claim)
+  variables      : list[str]     (what changes between conditions)
+  metric         : str           (what the runner will measure)
+  baseline_ref   : str | None    (which paper or run the comparison cites)
+  draft_pass     : int           (which sampler pass produced this)
+  temperature    : float         (the sampler setting at draft time)
+  novelty_score  : float         (distance from prior survivors, 0..1)
+  rank_score     : float         (weighted sum used for ordering)</code></pre>
+      </div>
+    <p><code>variables</code> and <code>metric</code> are not free text. The parser pulls them from a tagged response. The runner in lesson fifty-two reads these fields directly when it builds the experiment config.</p>
+<p><code>baseline_ref</code> is optional but recommended. The evaluator in lesson fifty-three needs a baseline to compare against. If the hypothesis omits one, the evaluator falls back to the previous run on the same metric.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-novelty-ramp</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[seed prompt] --&gt; B[temperature ramp]
+    B --&gt; C[mock language model draft]
+    C --&gt; D[parse tagged response]
+    D --&gt; E{novelty filter}
+    E -- duplicate --&gt; F[discard]
+    E -- novel --&gt; G[append to survivors]
+    G --&gt; H{pass budget hit}
+    H -- no --&gt; B
+    H -- yes --&gt; I[rank survivors]
+    I --&gt; J[hypothesis queue]</pre></div><p>The loop is straight forward. The interesting part is each box has a hard contract.</p>
+<h2 id="temperature-ramp"><a class="anchor" href="#temperature-ramp">#</a> Temperature ramp</h2>
+<p>Start at <code>t_min</code>, end at <code>t_max</code>, step <code>(t_max - t_min) / (n_passes - 1)</code>. Each pass calls the sampler at the current temperature, producing <code>n_passes</code> evenly spaced values from <code>GeneratorConfig.schedule()</code>. The mock model honors temperature by switching between a small set of scripted responses keyed on <code>(prompt, temp_bucket)</code>. The buckets are open intervals so a small change in temperature picks a different bucket and produces a different draft. In production the sampler would be a real model with <code>temperature=t</code> passed through.</p>
+<p>The default schedule is six passes from <code>0.2</code> to <code>1.2</code>. Six is enough to fill the queue without paying for samples that the novelty filter will reject anyway. Below <code>0.2</code> the model parrots the seed back. Above <code>1.2</code> the responses tend to drift off topic and fail the parser.</p>
+<h2 id="novelty-filter"><a class="anchor" href="#novelty-filter">#</a> Novelty filter</h2>
+<p>After each draft is parsed, the generator embeds the text and compares against every accepted hypothesis. The embedding is a small hashed bag of word tokens, normalised to unit length. Cosine distance between two unit vectors is <code>1 - dot(a, b)</code>. A draft passes if its minimum distance to any prior survivor is above <code>novelty_threshold</code>. Default is <code>0.25</code>.</p>
+<p>The hashed embedding is not fancy. It is deterministic, has zero dependencies, and is enough to catch the obvious case: two drafts that share most of their nouns. A production deployment would swap in a small sentence model. The interface stays the same.</p>
+<h2 id="rank-score"><a class="anchor" href="#rank-score">#</a> Rank score</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">rank_score = w_novelty * novelty_score
+           + w_specificity * specificity_score
+           + w_testability * testability_score</code></pre>
+      </div>
+    <p>Three sub scores. <code>novelty_score</code> is the minimum embedding distance from prior survivors. <code>specificity_score</code> is the count of concrete variables in the hypothesis divided by a target count. <code>testability_score</code> is one if the hypothesis specifies both a metric and a baseline, half if it only has a metric, zero otherwise.</p>
+<p>Default weights are <code>0.4</code>, <code>0.3</code>, <code>0.3</code>. The weights live in the generator config so a downstream lesson can shift them without forking the code.</p>
+<h2 id="mock-language-model"><a class="anchor" href="#mock-language-model">#</a> Mock language model</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class MockLLM:
+    def sample(self, prompt: str, temperature: float, seed: int) -&gt; str:
+        ...</code></pre>
+      </div>
+    <p>The sampler is deterministic given a <code>(prompt, temperature, seed)</code> triple. The mock keeps a scripted response table keyed on <code>(prompt_signature, temperature_bucket)</code>. If the table has no entry for a key, the sampler returns a fallback that fails the parser. The fallback path is exercised by one of the tests.</p>
+<p>The seed is mixed into the response so the same <code>(prompt, temperature)</code> pair with different seeds produces different drafts. In tests we pin the seed to keep results reproducible. In a real deployment the seed would come from a system clock or a counter.</p>
+<h2 id="output-queue"><a class="anchor" href="#output-queue">#</a> Output queue</h2>
+<p>The output is a list of <code>Hypothesis</code> records sorted by <code>rank_score</code> descending. The runner in lesson fifty-two pops the head, runs the experiment, and the evaluator in lesson fifty-three writes a verdict back. If the verdict says the hypothesis was wrong, the runner pops the next one.</p>
+<p>The queue is finite. When it is empty the orchestrator can either widen the seed prompt and run the generator again or stop and report the budget exhausted.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>Hypothesis</code>, <code>MockLLM</code>, <code>HypothesisGenerator</code>, and a deterministic demo. The generator exposes a single <code>run(seed_prompt)</code> method that returns a sorted queue; the pass count is read from <code>GeneratorConfig.n_passes</code> rather than passed as an argument. The embedding is a hashed bag of tokens. The novelty filter is a single function. The rank score is a single function. Nothing depends on <code>numpy</code>; the embedding math is pure stdlib so the lesson stays portable.</p>
+<p><code>code/tests/test_generator.py</code> covers the linear path, the duplicate rejection path, the parser failure path, the temperature ramp boundaries, and the rank ordering.</p>
+<h2 id="where-this-slots-in"><a class="anchor" href="#where-this-slots-in">#</a> Where this slots in</h2>
+<p>Lesson fifty produces the queue. Lesson fifty-one takes the head of the queue and runs a literature search to confirm or refute it. Lesson fifty-two takes the same head and runs an actual experiment. Lesson fifty-three reads both outputs and writes a verdict. The four lessons compose into a research loop with no human in it; a human can step in at any boundary.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./49-lm-eval-harness.html"><span>← Previous</span><b>lm eval harness</b></a>
+      <a class="next" href="./51-literature-retrieval.html"><span>Next →</span><b>literature retrieval</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

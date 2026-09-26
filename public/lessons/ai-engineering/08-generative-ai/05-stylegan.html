@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>StyleGAN — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/05-stylegan/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#stylegan-1-2-3">StyleGAN 1 → 2 → 3</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-why-stylegan-still-ships-in-2026">Production note: why StyleGAN still ships in 2026</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">StyleGAN</h1>
+    <p class="lesson-sub">Most generators stir `z` into every layer at the same time. StyleGAN split it apart: first map `z` to an intermediate `w`, then *inject* `w` at every resolution level through AdaIN. That single change untangled the latent space and made photorealistic faces a solved problem for seven years running.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 03 (GANs), Phase 4 · 08 (Normalization), Phase 3 · 07 (CNNs)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="28.0" y="30.8" width="29.8" height="29.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(185 42.9 45.7)"/>
+        <rect x="23.2" y="126.6" width="28.5" height="28.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(167 37.5 140.8)"/>
+        <rect x="18.5" y="122.3" width="27.2" height="27.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(149 32.1 135.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">StyleGAN</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A DCGAN maps <code>z</code> to an image through a stack of transposed convolutions. The problem: <code>z</code> controls everything — pose, lighting, identity, background — entangled together. Move along one axis of <code>z</code>, all four change. You cannot ask the model &quot;same person, different pose&quot; because the representation does not factor that way.</p>
+<p>Karras et al. (2019, NVIDIA) proposed: stop feeding <code>z</code> directly into conv layers. Feed a constant <code>4×4×512</code> tensor as the network input. Learn an 8-layer MLP that maps <code>z ∈ Z → w ∈ W</code>. Inject <code>w</code> at every resolution via <em>adaptive instance normalization</em> (AdaIN): normalize each conv feature map, then scale and shift by affine projections of <code>w</code>. Add per-layer noise for stochastic detail (skin pores, hair strands).</p>
+<p>The result: <code>W</code> has roughly orthogonal axes for &quot;high-level style&quot; (pose, identity) vs &quot;fine style&quot; (lighting, color). You can swap styles between two images by using image A&#39;s <code>w</code> for the low-resolution levels and image B&#39;s <code>w</code> for the high. This unlocked editing, cross-domain stylization, and the entire &quot;StyleGAN-inversion&quot; line of research.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/05-stylegan/assets/stylegan.svg" alt="StyleGAN: mapping network + AdaIN + per-layer noise" loading="lazy" /></figure></p>
+<p><strong>Mapping network.</strong> <code>f: Z → W</code>, an 8-layer MLP. <code>Z = N(0, I)^512</code>. <code>W</code> is not forced to be Gaussian — it learns a data-adapted shape.</p>
+<p><strong>Synthesis network.</strong> Starts from a learned constant <code>4×4×512</code>. Each resolution block: <code>upsample → conv → AdaIN(w_i) → noise → conv → AdaIN(w_i) → noise</code>. Resolutions double: 4, 8, 16, 32, 64, 128, 256, 512, 1024.</p>
+<p><strong>AdaIN.</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">AdaIN(x, y) = y_scale · (x - mean(x)) / std(x) + y_bias</code></pre>
+      </div>
+    <p>where <code>y_scale</code> and <code>y_bias</code> come from affine projections of <code>w</code>. Normalize per feature map, then restyle. &quot;Style&quot; here is the first- and second-order statistics of the feature map.</p>
+<p><strong>Per-layer noise.</strong> Single-channel Gaussian noise added to each feature map, scaled by a learned per-channel factor. Controls stochastic detail without affecting global structure.</p>
+<p><strong>Truncation trick.</strong> At inference, sample <code>z</code>, compute <code>w = mapping(z)</code>, then <code>w&#39; = ŵ + ψ·(w - ŵ)</code> where <code>ŵ</code> is the mean <code>w</code> over many samples. <code>ψ &lt; 1</code> trades diversity for quality. Almost every StyleGAN demo uses <code>ψ ≈ 0.7</code>.</p>
+<h2 id="stylegan-1-2-3"><a class="anchor" href="#stylegan-1-2-3">#</a> StyleGAN 1 → 2 → 3</h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Year</th>
+<th>Innovation</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>StyleGAN</td>
+<td>2019</td>
+<td>Mapping network + AdaIN + noise + progressive growing.</td>
+</tr>
+<tr>
+<td>StyleGAN2</td>
+<td>2020</td>
+<td>Weight demodulation replaces AdaIN (fixes droplet artifacts); skip/residual architecture; path-length regularization.</td>
+</tr>
+<tr>
+<td>StyleGAN3</td>
+<td>2021</td>
+<td>Alias-free convolution + equivariant kernels; eliminates texture sticking to pixel grid.</td>
+</tr>
+<tr>
+<td>StyleGAN-XL</td>
+<td>2022</td>
+<td>Class-conditional, 1024², ImageNet.</td>
+</tr>
+<tr>
+<td>R3GAN</td>
+<td>2024</td>
+<td>Rebrands with stronger reg; closes gap to diffusion on FFHQ-1024 with 20x fewer params.</td>
+</tr>
+</tbody></table>
+<p>In 2026 StyleGAN3 remains the default for (a) narrow-domain photorealism at high FPS, (b) few-shot domain adaptation (train on a new dataset with 100 images, freeze mapping), (c) inversion-based editing (find the <code>w</code> that reconstructs a real photo, then edit that <code>w</code>). For open-domain text-to-image, it is not the tool — diffusion is.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gx-stylegan-mapping</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements a toy &quot;style-GAN lite&quot; in 1-D: a mapping MLP, a synthesis function that takes a learned constant vector and modulates it with <code>w</code>-derived scale/bias, and per-layer noise. It shows that injecting <code>w</code> via affine-modulation matches or beats concatenating <code>z</code> into the generator&#39;s input.</p>
+<h3 id="step-1-mapping-network"><a class="anchor" href="#step-1-mapping-network">#</a> Step 1: mapping network</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def mapping(z, M):
+    h = z
+    for i in range(num_layers):
+        h = leaky_relu(add(matmul(M[f&quot;W{i}&quot;], h), M[f&quot;b{i}&quot;]))
+    return h</code></pre>
+      </div>
+    <h3 id="step-2-adaptive-instance-normalization"><a class="anchor" href="#step-2-adaptive-instance-normalization">#</a> Step 2: adaptive instance normalization</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def adain(x, w_scale, w_bias):
+    mu = mean(x)
+    sd = std(x)
+    x_norm = [(xi - mu) / (sd + 1e-8) for xi in x]
+    return [w_scale * xi + w_bias for xi in x_norm]</code></pre>
+      </div>
+    <p>Per-feature-map scale and bias come from <code>w</code> via linear projection.</p>
+<h3 id="step-3-per-layer-noise"><a class="anchor" href="#step-3-per-layer-noise">#</a> Step 3: per-layer noise</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def add_noise(x, sigma, rng):
+    return [xi + sigma * rng.gauss(0, 1) for xi in x]</code></pre>
+      </div>
+    <p>Sigma per-channel is learnable.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Droplet artifacts.</strong> StyleGAN 1 produced a blobby droplet in the feature maps because AdaIN zeroed out mean. StyleGAN 2&#39;s weight demodulation fixes it by scaling the convolution weights instead.</li>
+<li><strong>Texture sticking.</strong> StyleGAN 1 and 2 textures followed pixel coordinates, not object coordinates (visible when interpolating). StyleGAN 3&#39;s alias-free convolutions fix this with windowed sinc filters.</li>
+<li><strong>Mode coverage.</strong> Truncation <code>ψ &lt; 0.7</code> looks clean but samples from a narrow cone; use <code>ψ = 1.0</code> if you need diversity.</li>
+<li><strong>Inversion is lossy.</strong> Inverting a real photo into <code>W</code> is usually done through optimization or an encoder (e4e, ReStyle, HyperStyle). Results drift over many iterations.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Approach</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Photoreal human faces (anime, product, narrow)</td>
+<td>StyleGAN3 FFHQ / custom fine-tune</td>
+</tr>
+<tr>
+<td>Face editing from a photo</td>
+<td>e4e inversion + StyleSpace / InterFaceGAN directions</td>
+</tr>
+<tr>
+<td>Face swap / reenactment</td>
+<td>StyleGAN + encoder + blending</td>
+</tr>
+<tr>
+<td>Avatar pipelines</td>
+<td>StyleGAN3 w/ ADA for low-data fine-tune</td>
+</tr>
+<tr>
+<td>Domain adaptation from a few images</td>
+<td>Freeze mapping network, fine-tune synthesis</td>
+</tr>
+<tr>
+<td>Multi-modal or text-conditioned generation</td>
+<td>Don&#39;t — use diffusion</td>
+</tr>
+</tbody></table>
+<p>For product-grade demos where the answer is &quot;photo of a person&#39;s face&quot;, StyleGAN beats diffusion on inference cost (single forward pass, &lt;10ms on a 4090) and sharpness for the same quality bar.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-stylegan-inversion.md</code>. Skill takes a real photo and outputs: inversion method (e4e / ReStyle / HyperStyle), expected latent loss, editing budget (how far in <code>W</code> you can move before artifacts), and a list of known-good editing directions (age, expression, pose).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code> with <code>adain_on=True</code> and <code>adain_on=False</code>. Compare the spread of outputs for a fixed latent vs perturbed latent.</li>
+<li><strong>Medium.</strong> Implement mixing regularization: for a training batch, compute <code>w_a</code>, <code>w_b</code>, and apply <code>w_a</code> for the first half of synthesis and <code>w_b</code> for the second half. Does the decoder learn disentangled styles?</li>
+<li><strong>Hard.</strong> Take a pretrained StyleGAN3 FFHQ model (ffhq-1024.pkl). Find the <code>w</code> direction that controls &quot;smile&quot; by training an SVM on labelled samples; report how far you can push before identity drifts.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Mapping network</td>
+<td>&quot;The MLP&quot;</td>
+<td><code>f: Z → W</code>, 8 layers, decouples latent geometry from data statistics.</td>
+</tr>
+<tr>
+<td>W space</td>
+<td>&quot;The style space&quot;</td>
+<td>Output of the mapping network; roughly disentangled.</td>
+</tr>
+<tr>
+<td>AdaIN</td>
+<td>&quot;Adaptive instance norm&quot;</td>
+<td>Normalize feature map, then scale + shift by <code>w</code>-projection.</td>
+</tr>
+<tr>
+<td>Truncation trick</td>
+<td>&quot;Psi&quot;</td>
+<td><code>w = mean + ψ·(w - mean)</code>, ψ&lt;1 trades diversity for quality.</td>
+</tr>
+<tr>
+<td>Path-length regularization</td>
+<td>&quot;PL reg&quot;</td>
+<td>Penalizes large changes in image per unit change in <code>w</code>; makes <code>W</code> smoother.</td>
+</tr>
+<tr>
+<td>Weight demodulation</td>
+<td>&quot;The StyleGAN2 fix&quot;</td>
+<td>Normalize conv weights instead of activations; kills droplet artifacts.</td>
+</tr>
+<tr>
+<td>Alias-free</td>
+<td>&quot;StyleGAN3&#39;s trick&quot;</td>
+<td>Windowed sinc filters; eliminates texture sticking to the pixel grid.</td>
+</tr>
+<tr>
+<td>Inversion</td>
+<td>&quot;Find w for a real image&quot;</td>
+<td>Optimize or encode <code>x → w</code> so <code>G(w) ≈ x</code>.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-why-stylegan-still-ships-in-2026"><a class="anchor" href="#production-note-why-stylegan-still-ships-in-2026">#</a> Production note: why StyleGAN still ships in 2026</h2>
+<p>StyleGAN3 on a 4090 generates a 1024² FFHQ face in under 10 ms — <code>num_steps = 1</code>, no VAE decode, no cross-attention pass. In production terms this is the floor latency for any image generator. A 50-step SDXL + VAE-decode pipeline at the same resolution is ~3 seconds. That is a <strong>300× gap</strong>, and for narrow-domain products (avatar services, ID document pipelines, stock face generation) it wins on TCO.</p>
+<p>Two operational consequences:</p>
+<ul>
+<li><strong>No scheduler, no batcher.</strong> Static batch at the target occupancy is optimal. Continuous batching (essential for LLMs and diffusion) provides zero benefit because every request takes the same FLOPs.</li>
+<li><strong>Truncation <code>ψ</code> is the safety knob.</strong> <code>ψ &lt; 0.7</code> samples from a narrow cone of the mapping network&#39;s range. This is the only lever the serving layer has over sample variance. Lower <code>ψ</code> at peak load, raise it for premium users.</li>
+</ul>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1812.04948">Karras et al. (2019). A Style-Based Generator Architecture for GANs</a> — StyleGAN.</li>
+<li><a href="https://arxiv.org/abs/1912.04958">Karras et al. (2020). Analyzing and Improving the Image Quality of StyleGAN</a> — StyleGAN2.</li>
+<li><a href="https://arxiv.org/abs/2106.12423">Karras et al. (2021). Alias-Free Generative Adversarial Networks</a> — StyleGAN3.</li>
+<li><a href="https://arxiv.org/abs/2102.02766">Tov et al. (2021). Designing an Encoder for StyleGAN Image Manipulation</a> — e4e inversion.</li>
+<li><a href="https://arxiv.org/abs/2202.00273">Sauer et al. (2022). StyleGAN-XL: Scaling StyleGAN to Large Diverse Datasets</a> — StyleGAN-XL.</li>
+<li><a href="https://arxiv.org/abs/2501.05441">Huang et al. (2024). R3GAN: The GAN is dead; long live the GAN!</a> — modern minimal GAN recipe.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-conditional-gans-pix2pix.html"><span>← Previous</span><b>conditional gans pix2pix</b></a>
+      <a class="next" href="./06-diffusion-ddpm-from-scratch.html"><span>Next →</span><b>diffusion ddpm from scratch</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

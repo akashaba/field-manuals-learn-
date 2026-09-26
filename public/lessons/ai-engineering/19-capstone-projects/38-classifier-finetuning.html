@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Lesson 38: Classifier Fine-Tuning by Head Swap — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/38-classifier-finetuning/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#the-pooling-question">The Pooling Question</a></li><li><a href="#the-data">The Data</a></li><li><a href="#the-metrics">The Metrics</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#what-you-will-build">What you will build</a></li><li><a href="#why-the-comparison-matters">Why the comparison matters</a></li><li><a href="#stretch-goals">Stretch goals</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone Lesson 38: Classifier Fine-Tuning by Head Swap</h1>
+    <p class="lesson-sub">Track B&#39;s first capstone. A pretrained language model is a stack of self-attention blocks ending in a token-prediction head. When you want spam vs ham, the head is wrong but the body is mostly right. This lesson rips the head off, glues a two-class linear layer onto the pooled representation, and trains the classifier two different ways: final-layer only, and full fine-tuning. The eval is precision, recall, and F1 on a held-out split. You learn what each strategy buys you and what it costs.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (torch, numpy)</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (NLP LLM track: tokenizer, embedding table, attention block, transformer body, pre-training loop, checkpointing, generation, perplexity)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 38">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M71.9,81.2 L77.9,72.1 L83.9,81.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M67.1,75.8 L72.5,67.8 L77.9,75.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.3,78.3 L67.1,51.7 L84.8,78.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M44.5,73.0 L61.6,47.4 L78.7,73.0 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">38</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Lesson 38:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Classifier…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Replace a language-model head with a classification head without re-initialising the body.</li>
+<li>Implement two training regimes: frozen body (head-only) and full fine-tuning, sharing one training loop.</li>
+<li>Build a tokeniser-aware data pipeline that pads, masks padding, and pools attention output.</li>
+<li>Compute precision, recall, F1, and a confusion matrix from raw logits.</li>
+<li>Reason about the trade-off between parameter count, training time, and head-room.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You pre-trained a small transformer on a generic corpus. The output head projects the last hidden state to a 1000-token vocabulary. You now have 800 SMS messages labelled spam or ham and you want a binary classifier. Three options exist.</p>
+<p>The wrong option is to train a fresh classifier from scratch on 800 examples. The body of the pretrained model already encodes useful structure: word identity, position, simple co-occurrence. Throwing it away wastes the compute that built it.</p>
+<p>The two right options are head swap with the body frozen, and head swap with the body trainable. Head-only training is fast, almost free in memory, and rarely overfits with this little data. Full fine-tuning is slower, can overfit on small data, but reaches higher accuracy when the downstream domain drifts from the pretraining corpus.</p>
+<p>This lesson builds both, so you can compare them on the same fixture.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  T[Tokens] --&gt; E[Token + position&lt;br/&gt;embeddings]
+  E --&gt; B[Transformer body&lt;br/&gt;N blocks]
+  B --&gt; H1[Old: LM head&lt;br/&gt;vocab projection]
+  B --&gt; H2[New: classifier head&lt;br/&gt;linear to 2 logits]
+  H2 --&gt; L[Cross-entropy loss&lt;br/&gt;vs label]</pre></div><p>The model is a function <code>f_theta(tokens) -&gt; hidden_states</code>. The head is a function <code>g_phi(hidden) -&gt; logits</code>. Swapping heads means keeping <code>theta</code> and replacing <code>g_phi</code>. The body&#39;s parameters are the expensive part. The head is a single linear layer.</p>
+<p>Two trainable parameter sets matter:</p>
+<ul>
+<li><code>theta</code> (the body): tens of thousands of weights per attention block.</li>
+<li><code>phi</code> (the head): <code>hidden_dim * num_classes</code> weights plus a bias.</li>
+</ul>
+<p>In head-only training you compute gradients against <code>phi</code> and zero them against <code>theta</code>. PyTorch lets you do this by setting <code>requires_grad=False</code> on body parameters. The optimiser then sees only the head and the body stays frozen.</p>
+<p>In full fine-tuning you let gradients flow back through the whole stack. The body&#39;s weights drift to fit the classification objective. The risk is catastrophic forgetting on small data: the body&#39;s pretraining gets washed out by overfitting noise.</p>
+<h2 id="the-pooling-question"><a class="anchor" href="#the-pooling-question">#</a> The Pooling Question</h2>
+<p>A classifier needs one vector per sequence, not one vector per token. Three common choices:</p>
+<ul>
+<li><strong>Mean pool</strong>: average the hidden states across the sequence, weighted by the attention mask.</li>
+<li><strong>CLS pool</strong>: prepend a special token and use only its output. This is what BERT does.</li>
+<li><strong>Last-token pool</strong>: use the last non-padding token. This is what GPT-class classifiers do.</li>
+</ul>
+<p>This lesson uses mean pooling with explicit attention-mask weighting. It is the simplest, gives a stable signal across sequence lengths, and does not require pretraining a CLS token.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+  H[Hidden states&lt;br/&gt;B x T x D] --&gt; M[Mask out pads]
+  M --&gt; S[Sum across T]
+  S --&gt; N[Divide by&lt;br/&gt;non-pad count]
+  N --&gt; P[Pooled&lt;br/&gt;B x D]
+  P --&gt; C[Classifier head&lt;br/&gt;D x 2]</pre></div><h2 id="the-data"><a class="anchor" href="#the-data">#</a> The Data</h2>
+<p>Eight hundred SMS messages, balanced 400 spam and 400 ham, are generated deterministically in <code>code/main.py</code>. The generator uses a fixed seed, picks templates and substitutes slot fillers, and emits messages between 5 and 25 tokens long. Real datasets have noise this fixture does not. The point of the fixture is reproducibility.</p>
+<p>The data splits 80/20: 640 train, 160 test. Splits are stratified so the test set keeps the 50/50 balance. A held-out set with a known balance lets precision and recall be read as honest numbers.</p>
+<h2 id="the-metrics"><a class="anchor" href="#the-metrics">#</a> The Metrics</h2>
+<p>Binary classification with class 1 as the positive class (spam). Counts are:</p>
+<ul>
+<li><code>TP</code>: predicted spam, was spam.</li>
+<li><code>FP</code>: predicted spam, was ham.</li>
+<li><code>FN</code>: predicted ham, was spam.</li>
+<li><code>TN</code>: predicted ham, was ham.</li>
+</ul>
+<p>The three headline metrics:</p>
+<ul>
+<li><code>precision = TP / (TP + FP)</code>. Of the messages flagged spam, what fraction actually are?</li>
+<li><code>recall = TP / (TP + FN)</code>. Of the actual spam, what fraction did the model flag?</li>
+<li><code>F1 = 2 * P * R / (P + R)</code>. The harmonic mean of the two.</li>
+</ul>
+<p>A confusion matrix prints the four counts as a 2x2 grid. The demo writes this to stdout for both training regimes.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-classifier-head-swap</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Toks[(SMS fixture&lt;br/&gt;800 labelled)] --&gt; Tok[ByteTokenizer&lt;br/&gt;vocab 260]
+  Tok --&gt; DS[ClassificationDataset&lt;br/&gt;pad + mask]
+  DS --&gt; DL[DataLoader&lt;br/&gt;batched]
+  DL --&gt; M[Classifier&lt;br/&gt;body + mean-pool + head]
+  M --&gt; L[Cross-entropy loss]
+  L --&gt; O[Adam optimiser]
+  O --&gt;|head-only| M
+  O --&gt;|full FT| M
+  M --&gt; E[Evaluator&lt;br/&gt;P / R / F1]</pre></div><p>The body is a deliberately tiny transformer: vocab 260, hidden 64, 4 heads, 2 blocks, max sequence 32. It is small enough to train both regimes to convergence inside ninety seconds on CPU. It is not pretrained in the lesson; instead, the <code>pretrain_quick</code> helper does five epochs of LM training on the same fixture&#39;s text to give the body a non-trivial starting point. This keeps the lesson self-contained.</p>
+<h2 id="what-you-will-build"><a class="anchor" href="#what-you-will-build">#</a> What you will build</h2>
+<p>The implementation is one <code>main.py</code> plus one test module (<code>code/tests/test_main.py</code>).</p>
+<ol>
+<li><code>ByteTokenizer</code>: maps bytes to ids, reserves a pad id.</li>
+<li><code>Block</code>: a transformer block with multi-head attention and a feed-forward layer. Pre-norm.</li>
+<li><code>LMBody</code>: token + position embeddings plus a stack of blocks. Returns hidden states.</li>
+<li><code>MeanPool</code>: mask-weighted average over the sequence axis.</li>
+<li><code>Classifier</code>: body, pool, linear head. The body is the same instance across regimes.</li>
+<li><code>freeze_body</code> and <code>unfreeze_body</code>: toggle <code>requires_grad</code> on body parameters.</li>
+<li><code>train_classifier</code>: one shared loop. Accepts the model and an optimiser configured for whichever parameter group is trainable.</li>
+<li><code>evaluate</code>: runs the test set and returns <code>Metrics(precision, recall, f1, confusion)</code>.</li>
+<li><code>run_demo</code>: pretrains the body briefly, then trains and evaluates head-only, then full, prints both reports, and exits zero.</li>
+</ol>
+<h2 id="why-the-comparison-matters"><a class="anchor" href="#why-the-comparison-matters">#</a> Why the comparison matters</h2>
+<p>The head-only regime usually trains faster and underfits more gracefully. On this fixture you typically see precision near 0.9 and recall near 0.85 after twenty epochs of head-only training. Full fine-tuning takes about three times longer and lands within a couple of points either way, depending on the random seed.</p>
+<p>The lesson does not pick a winner. It teaches you to read the numbers and the cost. On 800 examples and a tiny body, head-only is the right call. On 80,000 examples and a bigger body, full fine-tuning starts to pay off. The contract you take from this lesson is the API: the same <code>train_classifier</code> function handles both, and the toggle is one call.</p>
+<h2 id="stretch-goals"><a class="anchor" href="#stretch-goals">#</a> Stretch goals</h2>
+<ul>
+<li>Add a third regime that unfreezes only the last block. This is sometimes called partial fine-tuning. It costs less than full FT and learns more than head-only.</li>
+<li>Add a learning-rate scheduler. A cosine schedule on the head plus a smaller constant rate on the body is a common production setup.</li>
+<li>Replace mean pooling with a learned attention pool: a small attention layer with one learned query. This often beats mean pool on longer sequences.</li>
+</ul>
+<p>The implementation gives you the hooks. The tests pin the contract. The numbers are yours to push.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./37-loading-pretrained-weights.html"><span>← Previous</span><b>loading pretrained weights</b></a>
+      <a class="next" href="./39-instruction-tuning-sft.html"><span>Next →</span><b>instruction tuning sft</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

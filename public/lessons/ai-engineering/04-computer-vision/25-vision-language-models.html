@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vision-Language Models — The ViT-MLP-LLM Pattern — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/25-vision-language-models/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Vision-Language Models — The ViT-MLP-LLM Pattern</h1>
+    <p class="lesson-sub">A vision encoder converts an image into tokens. An MLP projector maps those tokens into the LLM&#39;s embedding space. A language model does the rest. That pattern — ViT-MLP-LLM — is every production VLM in 2026.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Use</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 14 (ViT), Phase 4 Lesson 18 (CLIP), Phase 7 Lesson 02 (Self-Attention)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 25">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="17.1" y="121.0" width="26.9" height="26.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(144 30.5 134.5)"/>
+        <rect x="12.3" y="116.8" width="25.6" height="25.6" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(126 25.1 129.5)"/>
+        <circle cx="19.7" cy="124.6" r="12.1" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">25</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Vision-Language</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Models — The…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>State the ViT-MLP-LLM architecture and explain what each of the three components contributes</li>
+<li>Compare Qwen3-VL, InternVL3.5, LLaVA-Next, and GLM-4.6V on parameter count, context length, and benchmark performance</li>
+<li>Explain DeepStack: why multi-level ViT features tighten vision-language alignment better than a single last-layer feature</li>
+<li>Measure VLM hallucination in production with Cross-Modal Error Rate (CMER) and act on the signal</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>CLIP (Phase 4 Lesson 18) gives you a shared embedding space for images and text, which is enough for zero-shot classification and retrieval. It cannot answer &quot;how many red cars are in this image?&quot; because CLIP does not generate text — it only scores similarities.</p>
+<p>Vision-Language Models (VLMs) — Qwen3-VL, InternVL3.5, LLaVA-Next, GLM-4.6V — bolt a CLIP-family image encoder to a full language model. The model sees an image plus a question and generates an answer. In 2026 open-source VLMs rival or beat GPT-5 and Gemini-2.5-Pro on multimodal benchmarks (MMMU, MMBench, DocVQA, ChartQA, MathVista, OSWorld).</p>
+<p>The trio of pieces (ViT, projector, LLM) is the standard. The differences between models are in which ViT, which projector, which LLM, the training data, and the alignment recipe. Once you understand the pattern, swapping any component is mechanical.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-vit-mlp-llm-architecture"><a class="anchor" href="#the-vit-mlp-llm-architecture">#</a> The ViT-MLP-LLM architecture</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    IMG[&quot;Image&lt;br/&gt;(H x W x 3)&quot;] --&gt; ViT[&quot;Vision encoder&lt;br/&gt;(ViT, CLIP-L,&lt;br/&gt;SigLIP, DINOv3)&quot;]
+    ViT --&gt; FEATS[&quot;Image tokens&lt;br/&gt;(N, d_vit)&quot;]
+    FEATS --&gt; PROJ[&quot;Projector&lt;br/&gt;(2-4 layer MLP&lt;br/&gt;or Q-former)&quot;]
+    PROJ --&gt; VTOK[&quot;Image tokens&lt;br/&gt;in LLM space&lt;br/&gt;(N, d_llm)&quot;]
+    TXT[&quot;Text prompt&quot;] --&gt; TOK[&quot;LLM tokenizer&quot;]
+    TOK --&gt; TTOK[&quot;Text tokens&lt;br/&gt;(M, d_llm)&quot;]
+    VTOK --&gt; CONCAT[&quot;Interleave&lt;br/&gt;or concat&quot;]
+    TTOK --&gt; CONCAT
+    CONCAT --&gt; LLM[&quot;Decoder LLM&lt;br/&gt;(Qwen3, LLaMA, etc.)&quot;]
+    LLM --&gt; OUT[&quot;Text answer&quot;]
+
+    style ViT fill:#dbeafe,stroke:#2563eb
+    style PROJ fill:#fef3c7,stroke:#d97706
+    style LLM fill:#dcfce7,stroke:#16a34a</pre></div><ol>
+<li><strong>Vision encoder</strong> — a pretrained ViT (CLIP-L/14, SigLIP, DINOv3, or a fine-tuned variant). Produces patch tokens.</li>
+<li><strong>Projector</strong> — a small module (2-4 layer MLP, or a Q-former) that maps vision tokens into the LLM&#39;s embedding dimension. This is where most of the fine-tuning happens.</li>
+<li><strong>LLM</strong> — a decoder-only language model (Qwen3, Llama, Mistral, GLM, InternLM). Reads the vision + text tokens in sequence, generates text.</li>
+</ol>
+<p>All three pieces are trainable in principle. In practice, the vision encoder and LLM stay mostly frozen while the projector trains — a few billion parameters of signal for cheap.</p>
+<h3 id="deepstack"><a class="anchor" href="#deepstack">#</a> DeepStack</h3>
+<p>Vanilla projection uses only the last ViT layer. DeepStack (Qwen3-VL) samples features from multiple ViT depths and stacks them. Deeper layers carry high-level semantics; shallower layers carry fine-grained spatial and textural information. Feeding both into the LLM closes the gap between &quot;what does the image contain&quot; (semantics) and &quot;where exactly&quot; (spatial grounding).</p>
+<h3 id="three-training-stages"><a class="anchor" href="#three-training-stages">#</a> Three training stages</h3>
+<p>Modern VLMs train in stages:</p>
+<ol>
+<li><strong>Alignment</strong> — freeze ViT and LLM. Train only the projector on image-caption pairs. Teaches the projector to map vision space into language space.</li>
+<li><strong>Pre-training</strong> — unfreeze everything. Train on large-scale interleaved image-text data (500M+ pairs). Builds the model&#39;s visual knowledge.</li>
+<li><strong>Instruction tuning</strong> — fine-tune on curated (image, question, answer) triples. Teaches conversational behaviour and task formats. This is what turns a &quot;vision-aware LM&quot; into a usable assistant.</li>
+</ol>
+<p>Most LoRA fine-tunes target stage 3 with a small labelled dataset.</p>
+<h3 id="model-family-comparison-early-2026"><a class="anchor" href="#model-family-comparison-early-2026">#</a> Model family comparison (early 2026)</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Params</th>
+<th>Vision encoder</th>
+<th>LLM</th>
+<th>Context</th>
+<th>Strengths</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Qwen3-VL-235B-A22B (MoE)</td>
+<td>235B (22B active)</td>
+<td>custom ViT + DeepStack</td>
+<td>Qwen3</td>
+<td>256K</td>
+<td>General SOTA, GUI agent</td>
+</tr>
+<tr>
+<td>Qwen3-VL-30B-A3B (MoE)</td>
+<td>30B (3B active)</td>
+<td>custom ViT + DeepStack</td>
+<td>Qwen3</td>
+<td>256K</td>
+<td>Smaller MoE alternative</td>
+</tr>
+<tr>
+<td>Qwen3-VL-8B (dense)</td>
+<td>8B</td>
+<td>custom ViT</td>
+<td>Qwen3</td>
+<td>128K</td>
+<td>Production dense default</td>
+</tr>
+<tr>
+<td>InternVL3.5-38B</td>
+<td>38B</td>
+<td>InternViT-6B</td>
+<td>Qwen3 + GPT-OSS</td>
+<td>128K</td>
+<td>Strong MMBench / MMVet</td>
+</tr>
+<tr>
+<td>InternVL3.5-241B-A28B</td>
+<td>241B (28B active)</td>
+<td>InternViT-6B</td>
+<td>Qwen3</td>
+<td>128K</td>
+<td>Competitive with GPT-4o</td>
+</tr>
+<tr>
+<td>LLaVA-Next 72B</td>
+<td>72B</td>
+<td>SigLIP</td>
+<td>Llama-3</td>
+<td>32K</td>
+<td>Open, easy to fine-tune</td>
+</tr>
+<tr>
+<td>GLM-4.6V</td>
+<td>~70B</td>
+<td>custom</td>
+<td>GLM</td>
+<td>64K</td>
+<td>Open-source, strong OCR</td>
+</tr>
+<tr>
+<td>MiniCPM-V-2.6</td>
+<td>8B</td>
+<td>SigLIP</td>
+<td>MiniCPM</td>
+<td>32K</td>
+<td>Edge-friendly</td>
+</tr>
+</tbody></table>
+<h3 id="visual-agents"><a class="anchor" href="#visual-agents">#</a> Visual agents</h3>
+<p>Qwen3-VL-235B reaches top global performance on OSWorld — a benchmark for <strong>visual agents</strong> that operate GUIs (desktop, mobile, web). The model sees a screenshot, understands the UI, and emits actions (click, type, scroll). Combined with tools, it closes the loop on common desktop tasks. This is what most 2026 &quot;AI PC&quot; demos run under the hood.</p>
+<h3 id="agentic-capabilities-rope-variants"><a class="anchor" href="#agentic-capabilities-rope-variants">#</a> Agentic capabilities + RoPE variants</h3>
+<p>VLMs need to know <strong>when</strong> a frame is in a video. Qwen3-VL evolved from T-RoPE (temporal rotary position embeddings) to <strong>text-based time alignment</strong> — explicit timestamp text tokens interleaved with video frames. The model sees &quot;<code>&lt;timestamp 00:32&gt;</code> frame, prompt&quot; and can reason about temporal relationships.</p>
+<h3 id="the-alignment-problem"><a class="anchor" href="#the-alignment-problem">#</a> The alignment problem</h3>
+<p>12% of image-text pairs in a crawled dataset contain descriptions not fully grounded in the image. A VLM trained on this silently learns to hallucinate — fabricate objects, misread numbers, invent relationships. In production this is the dominant failure mode.</p>
+<p>Skywork.ai introduced the <strong>Cross-Modal Error Rate (CMER)</strong> to track it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">CMER = fraction of outputs where the text confidence is high but the image-text similarity (via a CLIP-family checker) is low</code></pre>
+      </div>
+    <p>High CMER means the model is confidently saying things not grounded in the image. Monitoring CMER and treating it as a production KPI cut hallucination rate by ~35% in their deployment. The trick is not &quot;fix the model&quot; but &quot;route high-CMER outputs to human review.&quot;</p>
+<h3 id="fine-tuning-with-lora-qlora"><a class="anchor" href="#fine-tuning-with-lora-qlora">#</a> Fine-tuning with LoRA / QLoRA</h3>
+<p>Full fine-tuning of a 70B VLM is out of reach for most teams. LoRA (rank 16-64) on attention + projector layers, or QLoRA with 4-bit base weights, fits on a single A100 / H100. Cost: 5,000-50,000 examples, $100-$5,000 in compute, 2-10 hours of training.</p>
+<h3 id="spatial-reasoning-is-still-weak"><a class="anchor" href="#spatial-reasoning-is-still-weak">#</a> Spatial reasoning is still weak</h3>
+<p>Current VLMs score 50-60% on spatial reasoning benchmarks (above-below, left-right, counting, distance). If your use case depends on &quot;which object is on top of which,&quot; validate heavily — generic VLM performance is below human. Better-than-VLM alternatives for pure spatial tasks: a specialised keypoint / pose estimator, a depth model, or a detection model with box geometry post-processed.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">v4-vlm-projector</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-the-projector"><a class="anchor" href="#step-1-the-projector">#</a> Step 1: The projector</h3>
+<p>The part you will train most often. 2-4 layer MLP with GELU.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+
+class Projector(nn.Module):
+    def __init__(self, vit_dim=768, llm_dim=4096, hidden=4096):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(vit_dim, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, llm_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)</code></pre>
+      </div>
+    <p>Input is a <code>(N_patches, d_vit)</code> token tensor. Output is <code>(N_patches, d_llm)</code>. The LLM treats every output row as just another token.</p>
+<h3 id="step-2-assemble-vit-mlp-llm-end-to-end"><a class="anchor" href="#step-2-assemble-vit-mlp-llm-end-to-end">#</a> Step 2: Assemble ViT-MLP-LLM end-to-end</h3>
+<p>Skeleton of the forward pass for a minimal VLM. Real code uses <code>transformers</code>; this is the conceptual layout.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class MinimalVLM(nn.Module):
+    def __init__(self, vit, projector, llm, image_token_id):
+        super().__init__()
+        self.vit = vit
+        self.projector = projector
+        self.llm = llm
+        self.image_token_id = image_token_id  # placeholder token in text prompt
+
+    def forward(self, image, input_ids, attention_mask):
+        # 1. vision features
+        vision_tokens = self.vit(image)                     # (B, N_patches, d_vit)
+        vision_embeds = self.projector(vision_tokens)       # (B, N_patches, d_llm)
+
+        # 2. text embeddings
+        text_embeds = self.llm.get_input_embeddings()(input_ids)  # (B, M, d_llm)
+
+        # 3. replace image placeholder tokens with vision embeds
+        merged = self._merge(text_embeds, vision_embeds, input_ids)
+
+        # 4. run LLM
+        return self.llm(inputs_embeds=merged, attention_mask=attention_mask)
+
+    def _merge(self, text_embeds, vision_embeds, input_ids):
+        out = text_embeds.clone()
+        expected = vision_embeds.size(1)
+        for b in range(input_ids.size(0)):
+            positions = (input_ids[b] == self.image_token_id).nonzero(as_tuple=True)[0]
+            if len(positions) != expected:
+                raise ValueError(
+                    f&quot;batch item {b} has {len(positions)} image tokens but vision_embeds has {expected} patches.&quot;
+                    &quot; Every sample in the batch must be pre-padded to the same number of image placeholder tokens.&quot;)
+            out[b, positions] = vision_embeds[b]
+        return out</code></pre>
+      </div>
+    <p>The <code>&lt;image&gt;</code> placeholder token in the text gets replaced with real image embeddings — same pattern LLaVA, Qwen-VL, and InternVL use.</p>
+<h3 id="step-3-cmer-computation"><a class="anchor" href="#step-3-cmer-computation">#</a> Step 3: CMER computation</h3>
+<p>A lightweight runtime check.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn.functional as F
+
+
+def cross_modal_error_rate(image_emb, text_emb, text_confidence, sim_threshold=0.25, conf_threshold=0.8):
+    &quot;&quot;&quot;
+    image_emb, text_emb: embeddings of image and generated text (normalised internally)
+    text_confidence:     mean per-token probability in [0, 1]
+    Returns:             fraction of high-confidence outputs with low image-text alignment
+    &quot;&quot;&quot;
+    image_emb = F.normalize(image_emb, dim=-1)
+    text_emb = F.normalize(text_emb, dim=-1)
+    sim = (image_emb * text_emb).sum(dim=-1)        # cosine similarity
+    high_conf_low_sim = (text_confidence &gt; conf_threshold) &amp; (sim &lt; sim_threshold)
+    return high_conf_low_sim.float().mean().item()</code></pre>
+      </div>
+    <p>Treat CMER as a production KPI. Monitor it per endpoint, per prompt type, per customer. Rising CMER indicates the model is starting to hallucinate on some input distribution.</p>
+<h3 id="step-4-toy-vlm-classifier-runnable"><a class="anchor" href="#step-4-toy-vlm-classifier-runnable">#</a> Step 4: Toy VLM classifier (runnable)</h3>
+<p>Demonstrate the projector trains. Fake &quot;ViT features&quot; go in; a tiny LLM-style token predicts a class.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ToyVLM(nn.Module):
+    def __init__(self, vit_dim=32, llm_dim=64, num_classes=5):
+        super().__init__()
+        self.projector = Projector(vit_dim, llm_dim, hidden=64)
+        self.head = nn.Linear(llm_dim, num_classes)
+
+    def forward(self, vision_tokens):
+        projected = self.projector(vision_tokens)
+        pooled = projected.mean(dim=1)
+        return self.head(pooled)</code></pre>
+      </div>
+    <p>One can fit this on synthetic (feature, class) pairs in under 200 steps — enough to show the projector pattern works.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Three ways production teams use VLMs in 2026:</p>
+<ul>
+<li><strong>Hosted API</strong> — OpenAI Vision, Anthropic Claude Vision, Google Gemini Vision. Zero infra, vendor risk.</li>
+<li><strong>Open-source self-host</strong> — Qwen3-VL or InternVL3.5 via <code>transformers</code> and <code>vllm</code>. Full control, higher up-front effort.</li>
+<li><strong>Fine-tune on domain</strong> — load Qwen2.5-VL-7B or LLaVA-1.6-7B, LoRA on 5k-50k custom examples, serve with <code>vllm</code> or <code>TGI</code>.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoProcessor, AutoModelForVision2Seq
+import torch
+from PIL import Image
+
+model_id = &quot;Qwen/Qwen3-VL-8B-Instruct&quot;
+processor = AutoProcessor.from_pretrained(model_id)
+model = AutoModelForVision2Seq.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map=&quot;auto&quot;)
+
+messages = [{
+    &quot;role&quot;: &quot;user&quot;,
+    &quot;content&quot;: [
+        {&quot;type&quot;: &quot;image&quot;, &quot;image&quot;: Image.open(&quot;plot.png&quot;)},
+        {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;What does this chart show?&quot;},
+    ],
+}]
+inputs = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors=&quot;pt&quot;).to(&quot;cuda&quot;)
+generated = model.generate(**inputs, max_new_tokens=256)
+answer = processor.decode(generated[0][inputs[&quot;input_ids&quot;].shape[1]:], skip_special_tokens=True)</code></pre>
+      </div>
+    <p><code>apply_chat_template</code> hides the <code>&lt;image&gt;</code> placeholder tokenisation; the model handles the merge internally.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-vlm-selector.md</code> — picks Qwen3-VL / InternVL3.5 / LLaVA-Next / API given accuracy, latency, context length, and budget.</li>
+<li><code>outputs/skill-cmer-monitor.md</code> — emits the code to instrument a production VLM endpoint with cross-modal error rate, per-endpoint dashboards, and alerting thresholds.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run three prompts (&quot;what is this?&quot;, &quot;count the objects&quot;, &quot;describe the scene&quot;) through any open VLM on five images. Score each answer as correct / partially correct / hallucinated by hand. Compute a first-pass CMER-like rate.</li>
+<li><strong>(Medium)</strong> Fine-tune Qwen2.5-VL-3B or LLaVA-1.6-7B with LoRA (rank 16) on 500 images of a target domain with captions. Compare zero-shot vs fine-tuned MMBench-style accuracy.</li>
+<li><strong>(Hard)</strong> Replace the VLM&#39;s image encoder with DINOv3 instead of its default SigLIP/CLIP. Re-train only the projector (frozen LLM + frozen DINOv3). Measure whether dense-prediction tasks (counting, spatial reasoning) improve.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ViT-MLP-LLM</td>
+<td>&quot;The VLM pattern&quot;</td>
+<td>Vision encoder + projector + language model; every 2026 VLM</td>
+</tr>
+<tr>
+<td>Projector</td>
+<td>&quot;The bridge&quot;</td>
+<td>2-4 layer MLP (or Q-former) that maps vision tokens into LLM embedding space</td>
+</tr>
+<tr>
+<td>DeepStack</td>
+<td>&quot;Qwen3-VL feature trick&quot;</td>
+<td>Multi-level ViT features stacked rather than last-layer only</td>
+</tr>
+<tr>
+<td>Image token</td>
+<td>&quot;<image> placeholder&quot;</td>
+<td>Special token in the text stream replaced by projected vision embeddings</td>
+</tr>
+<tr>
+<td>CMER</td>
+<td>&quot;Hallucination KPI&quot;</td>
+<td>Cross-Modal Error Rate; high when text confidence is high but image-text similarity is low</td>
+</tr>
+<tr>
+<td>Visual agent</td>
+<td>&quot;VLM that clicks&quot;</td>
+<td>VLM operating GUIs (OSWorld, mobile, web) with tool calls</td>
+</tr>
+<tr>
+<td>Q-former</td>
+<td>&quot;Fixed-count token bridge&quot;</td>
+<td>BLIP-2 style projector producing a fixed number of visual query tokens</td>
+</tr>
+<tr>
+<td>Alignment / pre-training / instruction tuning</td>
+<td>&quot;Three stages&quot;</td>
+<td>Standard VLM training pipeline</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2511.21631">Qwen3-VL Technical Report (arXiv 2511.21631)</a></li>
+<li><a href="https://arxiv.org/html/2508.18265v1">InternVL3.5 Advancing Open-Source Multimodal Models (arXiv 2508.18265)</a></li>
+<li><a href="https://llava-vl.github.io/blog/2024-05-10-llava-next-stronger-llms/">LLaVA-Next series</a></li>
+<li><a href="https://www.bentoml.com/blog/multimodal-ai-a-guide-to-open-source-vision-language-models">BentoML: Best Open-Source VLMs 2026</a></li>
+<li><a href="https://mmmu-benchmark.github.io/">MMMU: Multi-discipline Multimodal Understanding benchmark</a></li>
+<li><a href="https://www.roboticstomorrow.com/story/2026/03/when-machines-learn-to-see-like-experts-the-rise-of-vision-language-models-in-manufacturing/26335/">VLMs in manufacturing (Robotics Tomorrow, March 2026)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./24-sam3-open-vocab-segmentation.html"><span>← Previous</span><b>sam3 open vocab segmentation</b></a>
+      <a class="next" href="./26-monocular-depth.html"><span>Next →</span><b>monocular depth</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Critic Loop — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/55-critic-loop/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-five-fixed-dimensions">Why five fixed dimensions</a></li><li><a href="#the-critique-shape">The Critique shape</a></li><li><a href="#convergence-rules-in-order">Convergence rules, in order</a></li><li><a href="#why-plateau-detection-runs-over-two-rounds">Why plateau detection runs over two rounds</a></li><li><a href="#the-deterministic-critic-in-this-lesson">The deterministic critic in this lesson</a></li><li><a href="#the-full-loop-contract">The full loop contract</a></li><li><a href="#the-trace-output">The Trace output</a></li><li><a href="#budgets-that-protect-against-bad-critics">Budgets that protect against bad critics</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Critic Loop</h1>
+    <p class="lesson-sub">A critic that returns &quot;looks good&quot; the first time is broken. A critic that always returns &quot;needs work&quot; is broken. The interesting critic is the one that converges, and you have to engineer convergence.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 50-53</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 55">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M72.8,82.2 L79.0,73.0 L85.1,82.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M68.1,76.9 L73.6,68.6 L79.1,76.9 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M50.3,79.4 L68.1,52.6 L86.0,79.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M45.5,74.1 L62.7,48.2 L80.0,74.1 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="40.7" y="42.2" width="33.2" height="33.2" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(232 57.3 58.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">55</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Critic Loop</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Score a paper draft across five fixed dimensions: clarity, novelty, evidence, methodology, related-work.</li>
+<li>Apply each round&#39;s critique as a structured revision diff rather than a freeform rewrite.</li>
+<li>Detect convergence by comparing scores across rounds; stop on plateau, target met, or budget exhausted.</li>
+<li>Cap rounds with a max-iteration budget so a non-converging critic does not run forever.</li>
+<li>Emit a per-round trace so the dashboard or the next stage can render the score trajectory.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-critic-converge</code></pre>
+      </div>
+    <h2 id="why-five-fixed-dimensions"><a class="anchor" href="#why-five-fixed-dimensions">#</a> Why five fixed dimensions</h2>
+<p>A freeform critic is a model that returns a paragraph of suggestions. The next round&#39;s revision treats the paragraph as ambient context. Whether the rewrite addresses the criticism is unverifiable because the criticism never had structure.</p>
+<p>Five dimensions give the harness a contract.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    Draft[Paper draft] --&gt; Critic[Critic]
+    Critic --&gt; Scores
+    Scores --&gt; Clar[clarity 0-10]
+    Scores --&gt; Nov[novelty 0-10]
+    Scores --&gt; Ev[evidence 0-10]
+    Scores --&gt; Meth[methodology 0-10]
+    Scores --&gt; Rel[related-work 0-10]
+    Scores --&gt; Revs[revision suggestions]</pre></div><p>The score is a vector. The harness watches each dimension across rounds. A revision that raises clarity but tanks evidence is a regression on evidence, and the convergence check sees it. A model-only critic cannot offer that guarantee.</p>
+<h2 id="the-critique-shape"><a class="anchor" href="#the-critique-shape">#</a> The Critique shape</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+    Critique[Critique] --&gt; Scores[scores dict]
+    Critique --&gt; Sugg[suggestions list]
+    Sugg --&gt; S1[Suggestion: dimension, target, edit]
+    Critique --&gt; Round[round int]
+    Critique --&gt; Reason[overall reason str]</pre></div><p>Every suggestion carries the dimension it improves, the section it targets, and an <code>edit</code> instruction the reviser can apply. The reviser is also a callable. The lesson ships a deterministic reviser that interprets the edit instruction as an append-to-section operation. A model-driven reviser would interpret the same field as a prompt. The contract does not change.</p>
+<h2 id="convergence-rules-in-order"><a class="anchor" href="#convergence-rules-in-order">#</a> Convergence rules, in order</h2>
+<p>The critic loop terminates when any one of three conditions fires.</p>
+<div class="fig"><pre class="mermaid">flowchart TB
+    Start[Round n complete] --&gt; A{All five dimensions ge target?}
+    A -- yes --&gt; Stop1[converged: target]
+    A -- no --&gt; B{Plateau detected?}
+    B -- yes --&gt; Stop2[converged: plateau]
+    B -- no --&gt; C{Round ge max?}
+    C -- yes --&gt; Stop3[stopped: budget]
+    C -- no --&gt; Next[Run round n plus 1]</pre></div><p>The target is the strictest case: every one of the five dimensions (clarity, novelty, evidence, methodology, related_work) must hit <code>&gt;= target_score</code> (default <code>8.0</code>) before the loop returns success. A high mean with one weak dimension is not enough. Plateau detection compares the current round&#39;s mean to the previous round&#39;s mean. If the improvement is below <code>plateau_epsilon</code> (default <code>0.1</code>) for two consecutive rounds, the loop exits with <code>plateau</code>. The budget is a hard cap on rounds (default <code>5</code>) and exits with <code>budget</code>.</p>
+<p>The order matters. Target wins over plateau wins over budget. If round three hits the target on the same iteration that would also trigger a plateau, the result is <code>target</code>, not <code>plateau</code>.</p>
+<h2 id="why-plateau-detection-runs-over-two-rounds"><a class="anchor" href="#why-plateau-detection-runs-over-two-rounds">#</a> Why plateau detection runs over two rounds</h2>
+<p>A one-round plateau is noise. A real critic returns a slightly different score each iteration even on a fixed draft, because deterministic scoring still depends on which suggestions were applied and in what order. Requiring two consecutive plateau rounds filters that noise out. If the harness reports a plateau, the draft has genuinely stopped improving.</p>
+<h2 id="the-deterministic-critic-in-this-lesson"><a class="anchor" href="#the-deterministic-critic-in-this-lesson">#</a> The deterministic critic in this lesson</h2>
+<p>The lesson does not call a model. The shipped critic is a callable that scores a draft based on three signals: average section body length (clarity), figure count and citation count (evidence), and an <code>originality_tag</code> field on the paper metadata (novelty). The reviser knows how to push each score upward.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">clarity      grows when the average section body length increases
+novelty      grows when originality_tag is set to &quot;high&quot;
+evidence     grows when a section&#39;s figure_refs is non-empty
+methodology  grows when a section titled &quot;Method&quot; exists with body
+related-work grows when a section titled &quot;Related Work&quot; exists with body</code></pre>
+      </div>
+    <p>The reviser interprets each suggestion as a targeted append. After round one, the harness can observe the score going up. The tests use this property to assert the loop reduces the gap.</p>
+<h2 id="the-full-loop-contract"><a class="anchor" href="#the-full-loop-contract">#</a> The full loop contract</h2>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant H as Harness
+    participant C as Critic
+    participant R as Reviser
+    H-&gt;&gt;C: critique(draft, round=1)
+    C--&gt;&gt;H: Critique{scores, suggestions}
+    H-&gt;&gt;R: revise(draft, suggestions)
+    R--&gt;&gt;H: revised draft
+    H-&gt;&gt;H: convergence check
+    alt converged
+        H--&gt;&gt;H: stop with reason
+    else continue
+        H-&gt;&gt;C: critique(draft, round=2)
+    end</pre></div><p>The harness owns the round counter, the trace, and the convergence check. The critic owns the score. The reviser owns the diff. None of the three touches the others&#39; state.</p>
+<h2 id="the-trace-output"><a class="anchor" href="#the-trace-output">#</a> The Trace output</h2>
+<p>Every round emits one trace event with the round number, the score vector, the suggestion count, and the convergence verdict. The full trace is returned alongside the final draft. A downstream dashboard can render the score-per-round chart. The next lesson, the iteration scheduler, reads the trace to decide whether the branch is worth keeping.</p>
+<h2 id="budgets-that-protect-against-bad-critics"><a class="anchor" href="#budgets-that-protect-against-bad-critics">#</a> Budgets that protect against bad critics</h2>
+<p>A critic that produces suggestions that never improve the score will lock the loop into the max-iteration ceiling. The trace makes that visible: five rounds, scores flat, verdict <code>budget</code>. The user reads that as a critic bug, not a draft bug. The alternative, surfacing only the final draft, hides the diagnosis. Trace-first design surfaces it.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>Critique</code>, <code>Suggestion</code>, <code>Critic</code> protocol, <code>Reviser</code> protocol, <code>CriticLoop</code>, and a <code>make_deterministic_critic_pair</code> factory that returns the deterministic critic and a matching reviser. A minimal <code>Paper</code> shape is included so the lesson stands alone.</p>
+<p><code>code/tests/test_critic_loop.py</code> covers: monotone improvement after round one, target convergence on a tuned draft, plateau detection after two flat rounds, budget exhaustion when no suggestion improves, suggestion application by the reviser, and trace shape.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>Two extensions a real implementation will want. First, dimension weights: a paper for a workshop weights novelty higher than methodology; a journal weights the inverse. The convergence check becomes a weighted mean. Second, paired critics: one critic scores, a second critic adjudicates the suggestions before the reviser sees them. Both add value, both compose on the same <code>Critique</code> shape.</p>
+<p>The bet is the score vector. Once the critique is structured, every other improvement, convergence rule, dashboard, paired critic, drops in without changing the loop.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./54-paper-writer.html"><span>← Previous</span><b>paper writer</b></a>
+      <a class="next" href="./56-iteration-scheduler.html"><span>Next →</span><b>iteration scheduler</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

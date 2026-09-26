@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Result Evaluator — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/53-result-evaluator/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-a-paired-test">Why a paired test</a></li><li><a href="#direction-aware-improvement">Direction aware improvement</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#log-normalisation">Log normalisation</a></li><li><a href="#per-seed-paired-test">Per seed paired test</a></li><li><a href="#the-verdict-shape">The Verdict shape</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#where-this-slots-in">Where this slots in</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Result Evaluator</h1>
+    <p class="lesson-sub">The runner produced numbers. The evaluator decides whether those numbers are an improvement, a regression, or noise. Build the verdict path that turns metrics into a one line conclusion.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track A lessons 20-29</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 53">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="31.7" y="34.1" width="30.8" height="30.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(198 47.1 49.5)"/>
+        <rect x="26.9" y="129.8" width="29.5" height="29.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(181 41.6 144.6)"/>
+        <rect x="22.1" y="125.6" width="28.2" height="28.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(163 36.2 139.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">53</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Result Evaluator</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compare a candidate run against a baseline using direction aware improvement and a fixed threshold.</li>
+<li>Run a paired t test from scratch over per seed metrics and read the resulting p value.</li>
+<li>Normalise log scaled metrics so a downstream report can blend them with linear metrics.</li>
+<li>Emit a per hypothesis verdict that the orchestrator can attach to the queue from lesson fifty.</li>
+<li>Keep every step pure so the same inputs always produce the same verdict.</li>
+</ul>
+<h2 id="why-a-paired-test"><a class="anchor" href="#why-a-paired-test">#</a> Why a paired test</h2>
+<p>A single number from the runner does not say whether the change is real. The same configuration with a different seed gives a different perplexity. The change might be noise. The right comparison is paired: the same seeds with the same data, ran once with the candidate and once with the baseline. Each seed contributes a difference. The mean of those differences is the effect. The standard error of those differences is the noise floor.</p>
+<p>The lesson implements the test from scratch. There is no <code>scipy.stats</code>. The math is small enough to read in one screen.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">diffs    = [a_i - b_i for i in seeds]
+mean     = sum(diffs) / n
+variance = sum((d - mean) ** 2 for d in diffs) / (n - 1)
+t_stat   = mean / sqrt(variance / n)
+df       = n - 1
+p_value  = two_sided_p(t_stat, df)</code></pre>
+      </div>
+    <p>The two sided p value uses a regularised incomplete beta function. The lesson ships a small implementation that uses the Lentz continued fraction. The whole thing is sixty lines of stdlib math.</p>
+<h2 id="direction-aware-improvement"><a class="anchor" href="#direction-aware-improvement">#</a> Direction aware improvement</h2>
+<p>Some metrics improve when they go up (accuracy, throughput). Others improve when they go down (loss, perplexity, wall time). The evaluator carries a <code>direction</code> field on each metric.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">if direction == &quot;higher_is_better&quot;:
+    improvement = (candidate - baseline) / abs(baseline)
+elif direction == &quot;lower_is_better&quot;:
+    improvement = (baseline - candidate) / abs(baseline)</code></pre>
+      </div>
+    <p>Improvement is signed. A negative improvement on a higher is better metric means the candidate is worse. The verdict path reads the sign and the magnitude together.</p>
+<p>A flat threshold (<code>improvement_threshold=0.02</code>, two percent) decides whether the change is large enough to call. Below that the verdict is &quot;noise&quot; regardless of the p value; the loop is not interested in changes the user could not measure.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-paired-verdict</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[ExperimentResult candidate] --&gt; N[normalise metrics]
+    B[ExperimentResult baseline] --&gt; N
+    N --&gt; I[direction aware improvement]
+    N --&gt; T[paired t test]
+    I --&gt; V[verdict path]
+    T --&gt; V
+    V --&gt; O[Verdict record]
+    O --&gt; Q[attach to hypothesis queue]</pre></div><p>The evaluator runs three independent computations and joins them in the verdict path. Each computation is a pure function with no shared state.</p>
+<h2 id="log-normalisation"><a class="anchor" href="#log-normalisation">#</a> Log normalisation</h2>
+<p>Perplexity is exponential in loss. A 0.1 drop in loss is a much larger drop in perplexity. Comparing perplexity directly across two configurations is fine, but blending it with linear metrics in a single report requires normalisation.</p>
+<p>The lesson normalises any metric whose <code>scale</code> field is <code>&quot;log&quot;</code> by taking the natural log before computing the improvement. The threshold is then applied in log space. A perplexity drop from 32 to 28 is <code>log(28) - log(32) = -0.133</code> on a lower is better metric, which is well above the two percent threshold.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">if scale == &quot;log&quot;:
+    a = log(candidate)
+    b = log(baseline)
+else:
+    a = candidate
+    b = baseline</code></pre>
+      </div>
+    <p>Metrics with <code>scale=&quot;linear&quot;</code> (default) skip the transform. The same code path handles both.</p>
+<h2 id="per-seed-paired-test"><a class="anchor" href="#per-seed-paired-test">#</a> Per seed paired test</h2>
+<p>The runner from lesson fifty-two emits one final metrics blob per run. For the paired test the evaluator needs one blob per seed for the candidate and one per seed for the baseline. The orchestrator runs the same experiment under both configurations across a list of seeds and hands the evaluator two lists of <code>ExperimentResult</code> records.</p>
+<p>The evaluator pairs them by seed (the seed lives in <code>result.metrics[&quot;seed&quot;]</code>) and walks the requested metric. If the seeds do not match across the two lists, the evaluator raises a <code>PairingError</code>. The orchestrator should re run.</p>
+<h2 id="the-verdict-shape"><a class="anchor" href="#the-verdict-shape">#</a> The Verdict shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">Verdict
+  hypothesis_id          : int
+  metric                 : str
+  direction              : &quot;higher_is_better&quot; | &quot;lower_is_better&quot;
+  scale                  : &quot;linear&quot; | &quot;log&quot;
+  candidate_mean         : float
+  baseline_mean          : float
+  improvement            : float       (signed, fraction; see direction rules)
+  p_value                : float | None  (None if n &lt; 2)
+  significance_threshold : float
+  improvement_threshold  : float
+  verdict                : &quot;improved&quot; | &quot;regressed&quot; | &quot;noise&quot; | &quot;failed&quot;
+  rationale              : str</code></pre>
+      </div>
+    <p>The verdict path is a small decision table:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">1. If any candidate result has terminal != &quot;ok&quot;: verdict = &quot;failed&quot;
+2. else if |improvement| &lt; improvement_threshold:  verdict = &quot;noise&quot;
+3. else if p_value is None or p_value &gt; significance: verdict = &quot;noise&quot;
+4. else if improvement &gt; 0:                          verdict = &quot;improved&quot;
+5. else:                                             verdict = &quot;regressed&quot;</code></pre>
+      </div>
+    <p>Rationale is a one line human readable sentence the orchestrator can log against the hypothesis id.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>MetricSpec</code>, <code>Verdict</code>, <code>Evaluator</code>, the t statistic and incomplete beta helpers, and a deterministic demo. The t test is implemented in pure stdlib math; numpy is used only to read the metrics list and compute means and variances.</p>
+<p><code>code/tests/test_evaluator.py</code> covers the improved path, the regressed path, the noise path (small improvement), the noise path (low n), the failed terminal path, the log normalised path, the t test against a known reference value, and the pairing error.</p>
+<h2 id="where-this-slots-in"><a class="anchor" href="#where-this-slots-in">#</a> Where this slots in</h2>
+<p>Lesson fifty produced the hypothesis queue. Lesson fifty-one filtered out anything the literature settled. Lesson fifty-two ran the experiment under candidate and baseline configurations across seeds. Lesson fifty-three reads those runs and writes the verdict. The orchestrator stitches the four together:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">for hypothesis in queue:
+    literature = retrieval.search(hypothesis.text)
+    if literature_settles(hypothesis, literature):
+        attach(hypothesis, verdict=&quot;settled&quot;)
+        continue
+    candidates = runner.run_all(specs_for(hypothesis))
+    baselines  = runner.run_all(baseline_specs_for(hypothesis))
+    metric_spec = MetricSpec(&quot;perplexity&quot;, direction=LOWER, scale=LOG)
+    verdict = evaluator.evaluate(hypothesis.id, metric_spec, candidates, baselines)
+    attach(hypothesis, verdict)</code></pre>
+      </div>
+    <p>That orchestrator is not in this lesson; the four lessons compose into it without any glue beyond the dataclasses each one defines.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./52-experiment-runner.html"><span>← Previous</span><b>experiment runner</b></a>
+      <a class="next" href="./54-paper-writer.html"><span>Next →</span><b>paper writer</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

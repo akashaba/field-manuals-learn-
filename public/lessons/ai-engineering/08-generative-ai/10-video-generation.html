@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Generation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/10-video-generation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#the-2026-production-landscape">The 2026 production landscape</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-video-latents-are-a-memory-bandwidth-problem">Production note: video latents are a memory-bandwidth problem</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Video Generation</h1>
+    <p class="lesson-sub">An image is a 2-D tensor. A video is a 3-D one. The theory is the same; the compute is 10-100x harder. OpenAI&#39;s Sora (Feb 2024) proved it was possible. By 2026 Veo 2, Kling 1.5, Runway Gen-3, Pika 2.0, and WAN 2.2 ship production video from text at 1080p — and the open-weights stack (CogVideoX, HunyuanVideo, Mochi-1, WAN 2.2) is 12 months behind.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 07 (Latent Diffusion), Phase 7 · 09 (ViT), Phase 8 · 06 (DDPM)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="34.2" y="36.4" width="31.4" height="31.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(208 49.9 52.1)"/>
+        <rect x="29.4" y="32.1" width="30.2" height="30.2" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(190 44.5 47.2)"/>
+        <rect x="24.6" y="127.8" width="28.9" height="28.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(172 39.1 142.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Video Generation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A 10-second 1080p video at 24fps is 240 frames of 1920×1080×3 pixels. That&#39;s ~1.5 GB of raw data per clip. Pixel-space diffusion is infeasible. You need:</p>
+<ol>
+<li><strong>Spatiotemporal compression.</strong> A VAE that encodes videos, not frames, into a sequence of spatial-temporal patches.</li>
+<li><strong>Temporal coherence.</strong> Frames need to share content, lighting, and object identity over seconds. The net has to model motion.</li>
+<li><strong>Compute budget.</strong> Video training is 10-100x more expensive than image for the same model size.</li>
+<li><strong>Conditioning.</strong> Text, image (first-frame), audio, or another video. Most production models accept all four.</li>
+</ol>
+<p>The architecture that solved this is the <strong>Diffusion Transformer (DiT)</strong> applied to spatiotemporal patches, trained on huge (prompt, caption, video) datasets. Same diffusion loss as Lesson 06.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/10-video-generation/assets/video-generation.svg" alt="Video diffusion: patchify, DiT, decode" loading="lazy" /></figure></p>
+<h3 id="patchify"><a class="anchor" href="#patchify">#</a> Patchify</h3>
+<p>Encode the video with a 3D VAE (learned spatiotemporal compression). The latent is shape <code>[T_latent, H_latent, W_latent, C_latent]</code>. Split into patches of size <code>[t_p, h_p, w_p]</code>. For Sora-style models, <code>t_p = 1</code> (per-frame patches) or <code>t_p = 2</code> (every two frames). A 10-second 1080p video compresses to ~20,000-100,000 patches.</p>
+<h3 id="spatiotemporal-dit"><a class="anchor" href="#spatiotemporal-dit">#</a> Spatiotemporal DiT</h3>
+<p>A transformer processes the flat sequence of patches. Each patch has a 3D positional embedding (time + y + x). Attention is usually factorized:</p>
+<ul>
+<li><strong>Spatial attention</strong> within each frame&#39;s patches.</li>
+<li><strong>Temporal attention</strong> across frames at the same spatial location.</li>
+<li><strong>Full 3D attention</strong> is 16-100x more expensive; used only at low resolution or in research.</li>
+</ul>
+<h3 id="text-conditioning"><a class="anchor" href="#text-conditioning">#</a> Text conditioning</h3>
+<p>Cross-attention with a large text encoder (T5-XXL for Sora, CogVideoX-5B uses T5-XXL). Long prompts matter — Sora&#39;s training set had GPT-generated dense re-captions averaging 200 tokens per clip.</p>
+<h3 id="training"><a class="anchor" href="#training">#</a> Training</h3>
+<p>Standard diffusion loss (ε or v prediction) over spatiotemporal latents. Data: web video + ~100M curated clips + synthetic text captions. Compute: 10,000+ GPU hours for even a small research run; Sora-scale is 100,000+.</p>
+<h2 id="the-2026-production-landscape"><a class="anchor" href="#the-2026-production-landscape">#</a> The 2026 production landscape</h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Date</th>
+<th>Max duration</th>
+<th>Max res</th>
+<th>Open weights?</th>
+<th>Notable</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sora (OpenAI)</td>
+<td>2024-02</td>
+<td>60s</td>
+<td>1080p</td>
+<td>No</td>
+<td>First model to show world simulator properties at scale</td>
+</tr>
+<tr>
+<td>Sora Turbo</td>
+<td>2024-12</td>
+<td>20s</td>
+<td>1080p</td>
+<td>No</td>
+<td>Production Sora at 5x faster inference</td>
+</tr>
+<tr>
+<td>Veo 2 (Google)</td>
+<td>2024-12</td>
+<td>8s</td>
+<td>4K</td>
+<td>No</td>
+<td>Highest quality + physics in 2025</td>
+</tr>
+<tr>
+<td>Veo 3</td>
+<td>2025 Q3</td>
+<td>15s</td>
+<td>4K</td>
+<td>No</td>
+<td>Native audio and stronger camera control</td>
+</tr>
+<tr>
+<td>Kling 1.5 / 2.1 (Kuaishou)</td>
+<td>2024-2025</td>
+<td>10s</td>
+<td>1080p</td>
+<td>No</td>
+<td>Best human motion in 2025 Q1</td>
+</tr>
+<tr>
+<td>Runway Gen-3 Alpha</td>
+<td>2024-06</td>
+<td>10s</td>
+<td>768p</td>
+<td>No</td>
+<td>Professional video tools on top</td>
+</tr>
+<tr>
+<td>Pika 2.0</td>
+<td>2024-10</td>
+<td>5s</td>
+<td>1080p</td>
+<td>No</td>
+<td>Strongest character consistency</td>
+</tr>
+<tr>
+<td>CogVideoX (THUDM)</td>
+<td>2024</td>
+<td>10s</td>
+<td>720p</td>
+<td>Yes (2B, 5B)</td>
+<td>First open 5B-scale video</td>
+</tr>
+<tr>
+<td>HunyuanVideo (Tencent)</td>
+<td>2024-12</td>
+<td>5s</td>
+<td>720p</td>
+<td>Yes (13B)</td>
+<td>Open SOTA late 2024</td>
+</tr>
+<tr>
+<td>Mochi-1 (Genmo)</td>
+<td>2024-10</td>
+<td>5.4s</td>
+<td>480p</td>
+<td>Yes (10B)</td>
+<td>Most permissively licensed</td>
+</tr>
+<tr>
+<td>WAN 2.2 (Alibaba)</td>
+<td>2025-07</td>
+<td>5s</td>
+<td>720p</td>
+<td>Yes</td>
+<td>Strongest open model mid-2025</td>
+</tr>
+</tbody></table>
+<p>Open weights are closing the gap faster than in the image space: HunyuanVideo + WAN 2.2 LoRAs already power most open-source workflows by mid-2026.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">video-diffusion-denoise</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> simulates the core spatiotemporal DiT idea: patchify a small synthetic video, add a per-patch position embedding, and denoise the whole sequence with a transformer-style attention over patches. No numpy; pure Python. We show that temporal coherence emerges even in 1-D when adjacent-frame patches share a denoiser and position embeddings.</p>
+<h3 id="step-1-patchify-a-synthetic-1-d-video"><a class="anchor" href="#step-1-patchify-a-synthetic-1-d-video">#</a> Step 1: patchify a synthetic 1-D &quot;video&quot;</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def make_video(T_frames=8, rng=None):
+    # a &quot;video&quot; is a sequence of 1-D values following a smooth trajectory
+    base = rng.gauss(0, 1)
+    return [base + 0.3 * t + rng.gauss(0, 0.1) for t in range(T_frames)]</code></pre>
+      </div>
+    <h3 id="step-2-position-embedding-per-frame"><a class="anchor" href="#step-2-position-embedding-per-frame">#</a> Step 2: position embedding per frame</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def pos_embed(t, dim):
+    return sinusoidal(t, dim)</code></pre>
+      </div>
+    <h3 id="step-3-denoiser-sees-the-whole-sequence"><a class="anchor" href="#step-3-denoiser-sees-the-whole-sequence">#</a> Step 3: denoiser sees the whole sequence</h3>
+<p>Instead of denoising each frame independently, our tiny net concatenates all frame values + their position embeddings and predicts the noise for all frames jointly.</p>
+<h3 id="step-4-temporal-coherence-test"><a class="anchor" href="#step-4-temporal-coherence-test">#</a> Step 4: temporal coherence test</h3>
+<p>After training, sample a video. Measure the frame-to-frame delta. If the model has learned temporal structure, the deltas stay smaller than sampling each frame independently.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Independent per-frame sampling = flicker.</strong> If you run image diffusion on each frame separately, the output flickers because each frame&#39;s noise is independent. Video diffusion fixes this by coupling the frames through attention or shared noise.</li>
+<li><strong>Naive 3D attention = OOM.</strong> Full 3D attention on a 10-second 1080p latent is hundreds of billions of operations. Factorize into spatial + temporal.</li>
+<li><strong>Data captioning matters more than size.</strong> Sora&#39;s main upgrade over prior work was training on ~10x more detailed captions (GPT-4 re-labelled clips). OpenAI&#39;s technical report is explicit on this.</li>
+<li><strong>First-frame conditioning.</strong> Most production models also accept an image as the first frame. This is &quot;image-to-video&quot; mode; training includes this variant.</li>
+<li><strong>Physics drift.</strong> Long clips (&gt;10s) accumulate subtle inconsistencies. Sliding-window generation + keyframe anchoring helps.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>2026 pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Highest-quality text-to-video, hosted</td>
+<td>Veo 3 or Sora</td>
+</tr>
+<tr>
+<td>Camera-controlled cinematic</td>
+<td>Runway Gen-3 with motion brushes</td>
+</tr>
+<tr>
+<td>Character consistency across clips</td>
+<td>Pika 2.0 or Kling 2.1</td>
+</tr>
+<tr>
+<td>Open weights, fast fine-tune</td>
+<td>WAN 2.2 + LoRA</td>
+</tr>
+<tr>
+<td>Image-to-video</td>
+<td>WAN 2.2-I2V, Kling 2.1 I2V, or Runway</td>
+</tr>
+<tr>
+<td>Audio-to-video lip sync</td>
+<td>Veo 3 (native audio) or a dedicated lip-sync model</td>
+</tr>
+<tr>
+<td>Video editing</td>
+<td>Runway Act-Two, Kling Motion Brush, Flux-Kontext (still-frame)</td>
+</tr>
+</tbody></table>
+<p>Cost per second of video at quality parity has dropped 20x between 2024 and 2026.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-video-brief.md</code>. Skill takes a video brief (duration, aspect ratio, style, camera plan, subject consistency, audio) and outputs: model + hosting, prompt scaffolding (camera language, subject description, motion descriptors), seed + reproducibility protocol, and a frame-level QA checklist.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> In <code>code/main.py</code>, compare frame-to-frame delta for (a) independent per-frame sampling, (b) joint sequence sampling. Report the mean and variance of the deltas.</li>
+<li><strong>Medium.</strong> Add a first-frame condition: pin frame 0 to a given value and sample the rest. Measure how the pinned value propagates.</li>
+<li><strong>Hard.</strong> Use HuggingFace diffusers to run CogVideoX-2B on a local GPU. Time 20 inference steps at 720p for a 6-second clip. Profile the spatiotemporal attention to identify the bottleneck.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Video VAE</td>
+<td>&quot;3-D VAE&quot;</td>
+<td>Encoder that compresses <code>(T, H, W, C)</code> → spatiotemporal latent.</td>
+</tr>
+<tr>
+<td>Patches</td>
+<td>&quot;The tokens&quot;</td>
+<td>Fixed-size 3-D blocks of the latent; input to the DiT.</td>
+</tr>
+<tr>
+<td>Factorized attention</td>
+<td>&quot;Spatial + temporal&quot;</td>
+<td>Run attention over space, then over time; skip full 3-D attention.</td>
+</tr>
+<tr>
+<td>Image-to-video (I2V)</td>
+<td>&quot;Animate this photo&quot;</td>
+<td>Model takes an image + text, outputs a video that starts from it.</td>
+</tr>
+<tr>
+<td>Keyframe conditioning</td>
+<td>&quot;Anchor frames&quot;</td>
+<td>Pin specific frames to control the video&#39;s arc.</td>
+</tr>
+<tr>
+<td>Motion brush</td>
+<td>&quot;Directional hint&quot;</td>
+<td>UI input where the user paints motion vectors onto the image.</td>
+</tr>
+<tr>
+<td>Re-captioning</td>
+<td>&quot;Dense captions&quot;</td>
+<td>Using an LLM to re-label training clips with detailed prompts.</td>
+</tr>
+<tr>
+<td>Flicker</td>
+<td>&quot;Temporal artifact&quot;</td>
+<td>Frame-to-frame inconsistency; fixed with coupled denoising.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-video-latents-are-a-memory-bandwidth-problem"><a class="anchor" href="#production-note-video-latents-are-a-memory-bandwidth-problem">#</a> Production note: video latents are a memory-bandwidth problem</h2>
+<p>A 10-second 1080p clip at 24 fps is 240 frames × 1920 × 1080 × 3 ≈ 1.5 GB of raw pixels. After a 4× video VAE compression (<code>2 × spatial × 2 × temporal</code>) the latent is ~100 MB per request. Run this through a spatiotemporal DiT for 30 steps at batch 1 and you are moving ~3 GB/step through HBM — memory bandwidth, not FLOPs, is the bottleneck.</p>
+<p>Three production knobs, all straight from production-inference literature inference chapter:</p>
+<ul>
+<li><strong>TP across the DiT.</strong> Text-to-video models are routinely ≥10B params. TP=4 across 4 H100s is standard; PP=2 × TP=2 for 405B-class models. Latency per step drops roughly linearly with TP up to the all-reduce wall.</li>
+<li><strong>Frame batching = continuous batching.</strong> At generation time, video is conceptually a batch of frames linked by attention. Continuous batching (in-flight scheduling) applies: start rendering frame <code>t+1</code> while frame <code>t-1</code> is being returned, if the model architecture allows sliding-window generation.</li>
+<li><strong>Clip-level prefill cache.</strong> For image-to-video, the first-frame conditioning is analogous to an LLM&#39;s prompt prefill: compute it once, reuse across the temporal decoder passes. This is effectively a KV-cache for video.</li>
+</ul>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://openai.com/index/video-generation-models-as-world-simulators/">Brooks et al. (2024). Video generation models as world simulators</a> — Sora technical report.</li>
+<li><a href="https://arxiv.org/abs/2408.06072">Yang et al. (2024). CogVideoX: Text-to-Video Diffusion Models with An Expert Transformer</a> — CogVideoX.</li>
+<li><a href="https://arxiv.org/abs/2412.03603">Kong et al. (2024). HunyuanVideo: A Systematic Framework for Large Video Generative Models</a> — HunyuanVideo.</li>
+<li><a href="https://www.genmo.ai/blog/mochi">Genmo (2024). Mochi-1 Technical Report</a> — Mochi-1.</li>
+<li><a href="https://wanvideo.io/">Alibaba (2025). WAN 2.2</a> — open SOTA mid-2025.</li>
+<li><a href="https://arxiv.org/abs/2204.03458">Ho, Salimans, Gritsenko et al. (2022). Video Diffusion Models</a> — the seminal video diffusion paper.</li>
+<li><a href="https://arxiv.org/abs/2304.08818">Blattmann et al. (2023). Align your Latents (Video LDM)</a> — Stable Video Diffusion&#39;s ancestor.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-inpainting-outpainting-editing.html"><span>← Previous</span><b>inpainting outpainting editing</b></a>
+      <a class="next" href="./11-audio-generation.html"><span>Next →</span><b>audio generation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

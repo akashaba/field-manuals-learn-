@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multimodal RAG and Cross-Modal Retrieval — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/24-multimodal-rag-cross-modal/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Multimodal RAG and Cross-Modal Retrieval</h1>
+    <p class="lesson-sub">Vision-native document RAG is one slice. Production multimodal RAG goes wider — retrieving across text, images, audio, and video for workflows like trip planning (&quot;find me a quiet vegan brunch with natural light&quot;), medical triage (&quot;what injury matches this photo + these notes&quot;), e-commerce (&quot;outfits similar to this selfie, in my size&quot;), and field service (&quot;diagnose this engine sound plus photo of the part&quot;). Three 2025 surveys — Abootorabi et al., Mei et al., Zhao et al. — codified the sub-problems: cross-modal retrieval, retrieval fusion, generation grounding, multimodal evaluation. This lesson reads the surveys and designs a production pipeline.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, cross-modal retriever with fusion + grounded generator)</b></div><div><span>Prerequisites</span><b>Phase 12 · 23 (ColPali), Phase 11 (RAG basics)</b></div><div><span>Time</span><b>~180 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 24">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="17.3" y="121.2" width="26.9" height="26.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(145 30.7 134.6)"/>
+        <rect x="12.5" y="116.9" width="25.6" height="25.6" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(127 25.3 129.7)"/>
+        <circle cx="19.9" cy="124.8" r="12.2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">24</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multimodal RAG and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Cross-Modal…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Design cross-modal retrieval: text → image, image → text, audio → video, etc.</li>
+<li>Compare three fusion strategies: score fusion, attention-based fusion, MoE fusion.</li>
+<li>Explain generation grounding: what &quot;cite your sources&quot; looks like when sources are a mix of modalities.</li>
+<li>Name the three canonical multimodal RAG surveys of 2025 and their sub-problem taxonomy.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Single-modality RAG is a solved pattern: embed query, embed chunks, retrieve, stuff into LLM. Multimodal RAG requires:</p>
+<ol>
+<li>Multiple retrieval heads (each modality needs embeddings in a compatible space).</li>
+<li>Fusion of retrieval results across modalities.</li>
+<li>Generation grounding that cites sources across modalities.</li>
+<li>Evaluation metrics that cover cross-modal signal.</li>
+</ol>
+<p>The 2025 surveys all arrive at the same taxonomy.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="cross-modal-retrieval"><a class="anchor" href="#cross-modal-retrieval">#</a> Cross-modal retrieval</h3>
+<p>Retrieve documents of modality B given a query of modality A. Three patterns:</p>
+<ol>
+<li><p>Shared embedding space. CLIP and CLAP produce text + image / text + audio embeddings in a shared space. Cosine similarity across modalities works directly. Limited to CLIP-trained pairs.</p>
+</li>
+<li><p>Per-modality encoder + translation. Text encoder + image encoder + a small translator module mapping between spaces. Sen2Sen by Gupta et al. and other 2024 designs. Flexible but adds complexity.</p>
+</li>
+<li><p>VLM as encoder. Use a VLM&#39;s hidden states as the retrieval representation. Any modality the VLM supports works. Higher quality, more expensive.</p>
+</li>
+</ol>
+<p>Choice: CLIP / SigLIP 2 for text+image; CLAP for text+audio; VLM-hidden-states for cross-modal at frontier quality.</p>
+<h3 id="fusion-strategies"><a class="anchor" href="#fusion-strategies">#</a> Fusion strategies</h3>
+<p>You retrieved 10 results: 5 images, 3 text passages, 2 audio clips. How do you merge?</p>
+<p>Score fusion (cheapest). Each modality has its own retriever, each returns scores. Normalize scores within-modality then sum. Simple, often works.</p>
+<p>Attention-based fusion. Concatenate all retrieved items, let a small attention network weight them. Needs training.</p>
+<p>MoE fusion. Gating network routes to modality-specific experts. Different query types route differently — a visual question weights images higher.</p>
+<p>Production default: score fusion with a slight bias toward the query&#39;s dominant modality. Upgrade to MoE if A/B shows clear wins on your domain.</p>
+<h3 id="generation-grounding"><a class="anchor" href="#generation-grounding">#</a> Generation grounding</h3>
+<p>The LLM should cite which retrieved item drove each claim. For multi-modal:</p>
+<ul>
+<li>Text source: standard citation <code>[1]</code>.</li>
+<li>Image source: <code>[img 3]</code> with a short caption.</li>
+<li>Audio: <code>[audio 2 at 0:34]</code>.</li>
+</ul>
+<p>Train the generator with grounding-aware data: each claim in the training target is tagged with the source index. At inference, the model naturally emits citations.</p>
+<h3 id="the-2025-surveys"><a class="anchor" href="#the-2025-surveys">#</a> The 2025 surveys</h3>
+<p>Abootorabi et al. (arXiv:2502.08826, &quot;Ask in Any Modality&quot;): taxonomy for multimodal RAG. Covers retrieval, fusion, generation. Broadest coverage.</p>
+<p>Mei et al. (arXiv:2504.08748, &quot;A Survey of Multimodal RAG&quot;): focuses on sub-task benchmarks and failure modes. Useful for evaluation design.</p>
+<p>Zhao et al. (arXiv:2503.18016): vision-focused survey. Strong on ColPali-family work.</p>
+<p>Reading all three gives you the state of the art as of spring 2025. Most of the sub-problems are still open.</p>
+<h3 id="murag-the-foundational-paper"><a class="anchor" href="#murag-the-foundational-paper">#</a> MuRAG — the foundational paper</h3>
+<p>MuRAG (Chen et al., 2022) was the first multimodal RAG. Retrieved image + text from a multimodal KB, generated answers. Showed feasibility before the VLM wave. Modern systems (REACT, VisRAG, M3DocRAG) build on it.</p>
+<h3 id="a-production-trip-planner-example"><a class="anchor" href="#a-production-trip-planner-example">#</a> A production trip-planner example</h3>
+<p>Query: &quot;find me a quiet vegan brunch with natural light.&quot;</p>
+<p>Pipeline:</p>
+<ol>
+<li>Decompose query. &quot;quiet&quot; → audio/review keyword; &quot;vegan brunch&quot; → menu item; &quot;natural light&quot; → image feature.</li>
+<li>Retrieve per modality:<ul>
+<li>Text retrieval on reviews: &quot;vegan brunch, quiet ambiance.&quot;</li>
+<li>Image retrieval on restaurant photos: &quot;natural light, airy.&quot;</li>
+<li>Audio retrieval on ambient-sound clips: &quot;low decibel, no music.&quot;</li>
+</ul>
+</li>
+<li>Fuse scores. Each restaurant has a composite score.</li>
+<li>Top-k restaurants → VLM generator with all evidence → answer with citations.</li>
+</ol>
+<p>This is well beyond text-RAG. Each modality adds signal that text alone misses.</p>
+<h3 id="agentic-multimodal-rag"><a class="anchor" href="#agentic-multimodal-rag">#</a> Agentic multimodal RAG</h3>
+<p>Multi-hop: if the first retrieval does not return high-confidence answers, the LLM reformulates and retrieves again. Agentic RAG patterns from Phase 14 apply here. Examples:</p>
+<ul>
+<li>Retrieve initial top-10 → LLM asks &quot;too noisy, filter for &lt;40 dB&quot; → re-retrieve.</li>
+<li>Retrieve images → LLM sees one has a menu → retrieve the menu text → answer.</li>
+</ul>
+<p>Adds complexity but handles queries that single-shot retrieval cannot.</p>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<p>Cross-modal evaluation is still immature. Common proxies:</p>
+<ul>
+<li>Recall@k per modality.</li>
+<li>Fused top-k accuracy.</li>
+<li>Human-judged end-to-end satisfaction.</li>
+<li>Task-specific (bookings completed, purchases made).</li>
+</ul>
+<p>No standard benchmark spans all modalities. Most papers evaluate on domain-specific tasks.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">contrastive-matrix</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code>:</p>
+<ul>
+<li>Three mock retrievers (text, image, audio) operating on a shared corpus of restaurants.</li>
+<li>Score fusion that combines modality scores with configurable weights.</li>
+<li>A generator stub that emits a final answer with citations.</li>
+<li>A simple agentic loop that reformulates the query if confidence is low.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-multimodal-rag-designer.md</code>. Given a product spec with a multimodal query flow, designs retrievers, fusion, generator, and evaluation.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Propose a medical-triage multimodal RAG: query = photo of injury + text symptoms. What modalities retrieve from what KB?</p>
+</li>
+<li><p>Score fusion is a simple weighted sum. What failure mode does it have that MoE fusion avoids?</p>
+</li>
+<li><p>Read Abootorabi et al.&#39;s taxonomy (Section 3). What are the three canonical sub-problems and how do they map to your chosen product?</p>
+</li>
+<li><p>Design an eval spec for a trip-planner multimodal RAG. What metrics cover image recall, audio recall, and composite correctness?</p>
+</li>
+<li><p>Agentic multi-hop RAG has a latency tax per round-trip. At what query difficulty does the accuracy gain justify the latency?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cross-modal retrieval</td>
+<td>&quot;Query one modality, retrieve another&quot;</td>
+<td>Text query retrieves images; image query retrieves text; requires a shared space or translator</td>
+</tr>
+<tr>
+<td>Score fusion</td>
+<td>&quot;Combine scores&quot;</td>
+<td>Weighted sum of per-modality retrieval scores; simplest fusion</td>
+</tr>
+<tr>
+<td>MoE fusion</td>
+<td>&quot;Modality-routed experts&quot;</td>
+<td>Gating network picks which modality&#39;s scores to trust per query</td>
+</tr>
+<tr>
+<td>Grounded generation</td>
+<td>&quot;Cite your sources&quot;</td>
+<td>Each claim in the answer tagged with the source index</td>
+</tr>
+<tr>
+<td>MuRAG</td>
+<td>&quot;First multimodal RAG&quot;</td>
+<td>2022 paper that established the multimodal RAG pattern</td>
+</tr>
+<tr>
+<td>Agentic multi-hop</td>
+<td>&quot;Reformulate and retry&quot;</td>
+<td>LLM re-queries retrievers when first-pass confidence is low</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2502.08826">Abootorabi et al. — Ask in Any Modality (arXiv:2502.08826)</a></li>
+<li><a href="https://arxiv.org/abs/2504.08748">Mei et al. — A Survey of Multimodal RAG (arXiv:2504.08748)</a></li>
+<li><a href="https://arxiv.org/abs/2503.18016">Zhao et al. — Vision RAG Survey (arXiv:2503.18016)</a></li>
+<li><a href="https://arxiv.org/abs/2210.02928">Chen et al. — MuRAG (arXiv:2210.02928)</a></li>
+<li><a href="https://arxiv.org/abs/2301.10382">Liu et al. — REACT (arXiv:2301.10382)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./23-colpali-vision-native-rag.html"><span>← Previous</span><b>colpali vision native rag</b></a>
+      <a class="next" href="./25-multimodal-agents-computer-use.html"><span>Next →</span><b>multimodal agents computer use</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

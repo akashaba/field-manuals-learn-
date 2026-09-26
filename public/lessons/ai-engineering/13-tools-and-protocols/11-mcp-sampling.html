@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP Model Input: Sampling Migration and Stateless MRTR — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/11-mcp-sampling/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-decision-before-the-protocol">The Decision Before the Protocol</a></li><li><a href="#the-stateless-contract">The Stateless Contract</a></li><li><a href="#one-mrtr-round">One MRTR Round</a></li><li><a href="#multi-round-state">Multi-Round State</a></li><li><a href="#model-preferences-are-hints">Model Preferences Are Hints</a></li><li><a href="#safety-invariants">Safety Invariants</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#legacy-compatibility">Legacy Compatibility</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">MCP Model Input: Sampling Migration and Stateless MRTR</h1>
+    <p class="lesson-sub">MCP 2026-07-28 deprecates Sampling for new designs and removes the server-to-client request channel. If an existing workflow still needs the client&#39;s model, the server returns an `input_required` result and the client retries the original request with the model output. The reasoning loop becomes explicit, bounded, and stateless at the protocol layer.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 · 07 (MCP server), Phase 13 · 10 (resources and prompts)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="103.1" cy="100.5" r="9.0" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.3,100.5 L97.7,88.0 L106.0,100.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.5,95.2 L92.3,83.6 L100.0,95.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.8,89.9 L86.8,79.3 L93.9,89.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.0,84.6 L81.4,74.9 L87.9,84.6 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">MCP Model Input:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Sampling Migration…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why Sampling is deprecated in MCP 2026-07-28 and choose the direct model integration default for new servers.</li>
+<li>Implement a compatibility workflow that carries <code>sampling/createMessage</code> through Multi Round-Trip Requests (MRTR).</li>
+<li>Put the protocol revision and client capabilities in every request <code>_meta</code> object.</li>
+<li>Return <code>resultType: &quot;input_required&quot;</code> and retry the original method with a fresh JSON-RPC id.</li>
+<li>Integrity-protect <code>requestState</code> and bind it to the principal, method, arguments, and expiry.</li>
+<li>Bound model-assisted loops with capability checks, approval, response validation, and a round limit.</li>
+</ul>
+<h2 id="the-decision-before-the-protocol"><a class="anchor" href="#the-decision-before-the-protocol">#</a> The Decision Before the Protocol</h2>
+<p>A tool such as <code>summarize_repo</code> needs two kinds of work:</p>
+<ol>
+<li>Deterministic work: list files, read allowed files, validate paths, and assemble content.</li>
+<li>Model work: choose representative files and synthesize the summary.</li>
+</ol>
+<p>You now have two valid architectures.</p>
+<h3 id="new-server-integrate-with-a-model-provider-directly"><a class="anchor" href="#new-server-integrate-with-a-model-provider-directly">#</a> New server: integrate with a model provider directly</h3>
+<p>This is the current default. The server owns model selection, credentials, budgets, retries, and observability. It returns one ordinary <code>tools/call</code> result to the MCP client.</p>
+<p>Choose this when the server is already a hosted service or when predictable model behavior matters more than using the host&#39;s model.</p>
+<h3 id="existing-sampling-workflow-migrate-it-to-mrtr"><a class="anchor" href="#existing-sampling-workflow-migrate-it-to-mrtr">#</a> Existing Sampling workflow: migrate it to MRTR</h3>
+<p>Sampling still exists during its deprecation window. A server targeting 2026-07-28 cannot send a live <code>sampling/createMessage</code> request back to the client. It instead embeds that request in an <code>InputRequiredResult</code>.</p>
+<p>Choose this compatibility path only when using the client&#39;s model and credentials is a real product requirement. Record a removal plan because new implementations should not adopt deprecated Sampling.</p>
+<h2 id="the-stateless-contract"><a class="anchor" href="#the-stateless-contract">#</a> The Stateless Contract</h2>
+<p>The July 2026 protocol has no <code>initialize</code> exchange, no <code>notifications/initialized</code>, and no <code>Mcp-Session-Id</code>. Every request carries the information that used to live in the handshake:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;summarize_repo&quot;,
+    &quot;arguments&quot;: {&quot;audience&quot;: &quot;developer&quot;},
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {&quot;sampling&quot;: {}},
+      &quot;io.modelcontextprotocol/clientInfo&quot;: {
+        &quot;name&quot;: &quot;lesson-client&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The server validates the revision on every request. A missing or non-string version is invalid params, <code>-32602</code>. An unsupported string returns <code>-32022</code> with exact data <code>{&quot;supported&quot;:[&quot;2026-07-28&quot;],&quot;requested&quot;:&quot;&lt;client version&gt;&quot;}</code>. A missing Sampling capability returns <code>-32021</code> with <code>data.requiredCapabilities</code> set to <code>{&quot;sampling&quot;:{}}</code>.</p>
+<p>An envelope without a JSON-RPC <code>id</code> is a notification. The receiver may process it, but it emits neither a success response nor an error response. A Streamable HTTP adapter returns <code>202 Accepted</code> with no body for an accepted notification.</p>
+<p>The server also implements <code>server/discover</code> with the exact <code>supportedVersions</code> key, capabilities, <code>ttlMs</code>, and <code>cacheScope</code> so a client can learn and cache the server contract before calling a tool. Because discovery advertises <code>tools</code>, the server also implements mandatory <code>tools/list</code>. Its deterministic <code>summarize_repo</code> descriptor includes a valid object <code>inputSchema</code>, <code>resultType: &quot;complete&quot;</code>, server identity metadata, and public cache hints.</p>
+<p>Every successful modern result has a discriminator:</p>
+<ul>
+<li><code>resultType: &quot;complete&quot;</code> means the operation finished.</li>
+<li><code>resultType: &quot;input_required&quot;</code> means the client must fulfill embedded requests and retry.</li>
+<li>Extensions may define additional result types. The Tasks extension adds <code>&quot;task&quot;</code> in Lesson 13.</li>
+</ul>
+<h2 id="one-mrtr-round"><a class="anchor" href="#one-mrtr-round">#</a> One MRTR Round</h2>
+<p>The server cannot call the client while handling the request. It returns this result instead:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;result&quot;: {
+    &quot;resultType&quot;: &quot;input_required&quot;,
+    &quot;inputRequests&quot;: {
+      &quot;pick_files&quot;: {
+        &quot;method&quot;: &quot;sampling/createMessage&quot;,
+        &quot;params&quot;: {
+          &quot;messages&quot;: [
+            {
+              &quot;role&quot;: &quot;user&quot;,
+              &quot;content&quot;: {
+                &quot;type&quot;: &quot;text&quot;,
+                &quot;text&quot;: &quot;Choose three representative files and return a JSON array.&quot;
+              }
+            }
+          ],
+          &quot;systemPrompt&quot;: &quot;Return only the requested value.&quot;,
+          &quot;modelPreferences&quot;: {
+            &quot;costPriority&quot;: 0.8,
+            &quot;intelligencePriority&quot;: 0.2
+          },
+          &quot;maxTokens&quot;: 400
+        }
+      }
+    },
+    &quot;requestState&quot;: &quot;opaque-integrity-protected-value&quot;
+  }
+}</code></pre>
+      </div>
+    <p>The client verifies that it supports Sampling, applies its approval and model policies, and obtains a model response. Then it sends a new request with a different JSON-RPC id:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 2,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;summarize_repo&quot;,
+    &quot;arguments&quot;: {&quot;audience&quot;: &quot;developer&quot;},
+    &quot;inputResponses&quot;: {
+      &quot;pick_files&quot;: {
+        &quot;role&quot;: &quot;assistant&quot;,
+        &quot;content&quot;: {
+          &quot;type&quot;: &quot;text&quot;,
+          &quot;text&quot;: &quot;[\&quot;README.md\&quot;, \&quot;server.py\&quot;, \&quot;docs/intro.md\&quot;]&quot;
+        },
+        &quot;model&quot;: &quot;host-model&quot;,
+        &quot;stopReason&quot;: &quot;endTurn&quot;
+      }
+    },
+    &quot;requestState&quot;: &quot;opaque-integrity-protected-value&quot;,
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {&quot;sampling&quot;: {}}
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The retry is not a continuation of a protocol session. It is a new request that repeats the original method and arguments, adds only the current round&#39;s <code>inputResponses</code>, and echoes <code>requestState</code> byte for byte.</p>
+<p>MRTR is allowed only on <code>tools/call</code>, <code>prompts/get</code>, and <code>resources/read</code>. A server must not return <code>input_required</code> from unrelated methods.</p>
+<h2 id="multi-round-state"><a class="anchor" href="#multi-round-state">#</a> Multi-Round State</h2>
+<p>This lesson needs two model calls:</p>
+<ol>
+<li><code>pick_files</code> returns a JSON array.</li>
+<li><code>summary</code> returns the final prose.</li>
+</ol>
+<p>Each retry carries only the responses for that round. The server therefore puts the phase and validated intermediate data into the next <code>requestState</code>.</p>
+<p>Treat that value as attacker-controlled. Signing a raw phase name is not enough. Bind the state to:</p>
+<ul>
+<li>the authenticated principal, not self-reported <code>clientInfo</code>;</li>
+<li>the originating method;</li>
+<li>a digest of the original arguments;</li>
+<li>a short expiry;</li>
+<li>the current phase and validated intermediate values.</li>
+</ul>
+<p>Use HMAC when confidentiality is not required. Use authenticated encryption when the client must not read the state. Reject a bad signature, expired value, changed principal, or changed arguments with <code>-32602</code>.</p>
+<p>The client must not parse or modify <code>requestState</code>. Its only job is to echo the exact string on the retry.</p>
+<h2 id="model-preferences-are-hints"><a class="anchor" href="#model-preferences-are-hints">#</a> Model Preferences Are Hints</h2>
+<p><code>costPriority</code>, <code>speedPriority</code>, and <code>intelligencePriority</code> are independent preferences. They are not a probability distribution and do not need to sum to one. The client may ignore them because the client owns model policy.</p>
+<p>Keep <code>includeContext</code> at <code>&quot;none&quot;</code> if you maintain a legacy Sampling flow. Other context modes increase leakage risk and are themselves deprecated. Pass the minimum explicit context in the request.</p>
+<h2 id="safety-invariants"><a class="anchor" href="#safety-invariants">#</a> Safety Invariants</h2>
+<p>The client is the trust boundary for embedded Sampling requests.</p>
+<ul>
+<li>Show the user what the server is asking the model to do when policy requires approval.</li>
+<li>Cap MRTR rounds. A malicious server can otherwise create a model-spend loop.</li>
+<li>Validate every sampling response before using it as a filename, URL, or tool input.</li>
+<li>Limit bytes and tokens per round.</li>
+<li>Refuse an input request that was not declared in current client capabilities.</li>
+<li>Keep model output out of authorization decisions.</li>
+<li>Log the originating method and input-request key without logging sensitive prompt content.</li>
+</ul>
+<p><code>clientInfo</code> and <code>serverInfo</code> are display and diagnostics metadata. Never use either as an authenticated identity.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">t3-sampling-flip</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements the full two-round flow with no third-party package:</p>
+<ul>
+<li><code>server/discover</code> returns <code>supportedVersions</code>, advertises tool support, and returns cache hints.</li>
+<li><code>tools/list</code> returns a deterministic, cacheable <code>summarize_repo</code> descriptor with an object input schema.</li>
+<li><code>tools/call</code> validates per-request metadata.</li>
+<li>The first result embeds <code>sampling/createMessage</code> for file selection.</li>
+<li>The first retry validates the model result and embeds a second request.</li>
+<li>HMAC-protected <code>requestState</code> carries the phase between independent requests.</li>
+<li>The final result uses <code>resultType: &quot;complete&quot;</code>.</li>
+</ul>
+<p>The fake host model makes the example deterministic. Replace only <code>fake_host_model</code> when connecting a real host. The server-side state machine should stay deterministic and testable.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>From the repository root:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/11-mcp-sampling/code
+python3 main.py
+python3 -m unittest discover tests -v</code></pre>
+      </div>
+    <p>Expected checkpoints:</p>
+<ul>
+<li>Discovery returns a complete result with <code>ttlMs</code> and <code>cacheScope</code>.</li>
+<li>Tool discovery returns the same sorted descriptor with <code>resultType</code>, server identity, and cache hints.</li>
+<li>Missing capabilities and unsupported versions use exact <code>-32021</code> and <code>-32022</code> error data.</li>
+<li>An id-less notification produces no JSON-RPC response.</li>
+<li>Request ids are <code>[1, 2, 3]</code>, proving each MRTR round is independent.</li>
+<li>The first two results are <code>input_required</code>.</li>
+<li>The final result is <code>complete</code> and contains the selected files plus summary.</li>
+<li>Changing the original arguments on a retry fails the request-state check.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-sampling-loop-designer.md</code> is now a migration planner. It first decides whether Sampling should be removed in favor of direct model integration. If compatibility is required, it produces the MRTR rounds, state binding, capability gate, budget, validation, and removal plan.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Change the file-selection response to invalid JSON. Confirm the server returns <code>-32602</code> instead of trusting model output.</li>
+<li>Change <code>audience</code> between the first call and retry. Explain why the sealed state blocks cross-request reuse.</li>
+<li>Add a third round that asks the host to critique the summary. Carry the earlier summary inside signed state and cap the entire flow at three rounds.</li>
+<li>Remove Sampling by replacing the fake host callback with a server-owned model adapter. List which approval, billing, and observability responsibilities move to the server.</li>
+<li>Add an expiry test using a state value that is one second past its deadline.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning in 2026-07-28</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sampling</td>
+<td>Deprecated feature that asks the client&#39;s model for a completion</td>
+</tr>
+<tr>
+<td>MRTR</td>
+<td>Stateless retry pattern for client input required during a request</td>
+</tr>
+<tr>
+<td><code>InputRequiredResult</code></td>
+<td>Result with <code>resultType: &quot;input_required&quot;</code></td>
+</tr>
+<tr>
+<td><code>inputRequests</code></td>
+<td>Server-assigned map of embedded elicitation, sampling, or roots requests</td>
+</tr>
+<tr>
+<td><code>inputResponses</code></td>
+<td>Current round&#39;s client results keyed like <code>inputRequests</code></td>
+</tr>
+<tr>
+<td><code>requestState</code></td>
+<td>Opaque server state echoed exactly by the client and verified by the server</td>
+</tr>
+<tr>
+<td><code>resultType</code></td>
+<td>Required discriminator for modern MCP results</td>
+</tr>
+<tr>
+<td>Direct model integration</td>
+<td>Recommended replacement for new servers that need model inference</td>
+</tr>
+<tr>
+<td>Capability gate</td>
+<td>Rule that prevents sending an embedded request the client did not advertise</td>
+</tr>
+<tr>
+<td>Loop budget</td>
+<td>Maximum rounds, tokens, bytes, time, and spend allowed for the operation</td>
+</tr>
+</tbody></table>
+<h2 id="legacy-compatibility"><a class="anchor" href="#legacy-compatibility">#</a> Legacy Compatibility</h2>
+<p>A client pinned to 2025-11-25 may still use the older server-initiated <code>sampling/createMessage</code> flow over a live connection. Keep that behavior in a version-specific adapter only. Do not make the sessionful path the architecture for a 2026-07-28 server.</p>
+<p>Official SDKs can translate modern <code>input_required</code> handlers for older peers. That shim is a compatibility boundary, not permission to add new session-dependent logic.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr">MCP 2026-07-28 Multi Round-Trip Requests</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/changelog">MCP 2026-07-28 changelog</a></li>
+<li><a href="https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging">MCP Sampling deprecation</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP 2026-07-28 server discovery</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-mcp-resources-and-prompts.html"><span>← Previous</span><b>mcp resources and prompts</b></a>
+      <a class="next" href="./12-mcp-roots-and-elicitation.html"><span>Next →</span><b>mcp roots and elicitation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

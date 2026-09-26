@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Diffusion Transformers &amp; Rectified Flow — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/23-diffusion-transformers-rectified-flow/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Diffusion Transformers &amp; Rectified Flow</h1>
+    <p class="lesson-sub">The U-Net is not the secret of diffusion. Replace it with a transformer, swap the noise schedule for a straight-line flow, and suddenly you have SD3, FLUX, and every 2026 text-to-image model.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 10 (Diffusion DDPM), Phase 4 Lesson 14 (ViT), Phase 7 Lesson 02 (Self-Attention)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 23">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M68.9,77.9 L74.6,69.4 L80.2,77.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M51.1,80.4 L69.1,53.4 L87.1,80.4 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.4,75.0 L63.7,49.0 L81.1,75.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.6" y="43.0" width="33.4" height="33.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(235 58.3 59.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">23</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Diffusion</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Transformers &amp;…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Trace the evolution from U-Net DDPM (Lesson 10) to Diffusion Transformer (DiT), MMDiT (SD3), and single+double-stream DiT (FLUX)</li>
+<li>Explain rectified flow: why a straight-line trajectory between noise and data lets models sample in 20 steps instead of 1000</li>
+<li>Implement a tiny DiT block and a rectified-flow training loop, both under 100 lines</li>
+<li>Distinguish model variants (SD3, FLUX.1-dev, FLUX.1-schnell, Z-Image, Qwen-Image) by architecture, parameter count, and licensing</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Lesson 10 built a DDPM with a U-Net denoiser. That recipe dominated 2020-2023: U-Net + beta schedule + noise-prediction loss. It produced Stable Diffusion 1.5 and 2.1 and DALL-E 2.</p>
+<p>Every 2026 state-of-the-art text-to-image model has moved past it. Stable Diffusion 3, FLUX, SD4, Z-Image, Qwen-Image, Hunyuan-Image — none use a U-Net. They use Diffusion Transformers (DiT). SD3 and FLUX also swap the DDPM noise schedule for rectified flow, which straightens the path from noise to data and enables 1-4 step inference with consistency or distilled variants.</p>
+<p>The shift matters because it is the reason diffusion-based image generation became controllable, prompt-accurate (SD3/SD4 solved text rendering), and production-fast. Understanding DiT + rectified flow is understanding the 2026 generative-image stack.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="from-u-net-to-transformer"><a class="anchor" href="#from-u-net-to-transformer">#</a> From U-Net to transformer</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph UNET[&quot;DDPM U-Net (2020)&quot;]
+        U1[&quot;Conv encoder&quot;] --&gt; U2[&quot;Conv bottleneck&quot;] --&gt; U3[&quot;Conv decoder&quot;]
+    end
+    subgraph DIT[&quot;DiT (2023)&quot;]
+        D1[&quot;Patch embed&quot;] --&gt; D2[&quot;Transformer blocks&quot;] --&gt; D3[&quot;Unpatchify&quot;]
+    end
+    subgraph MMDIT[&quot;MMDiT (SD3, 2024)&quot;]
+        M1[&quot;Text stream&quot;] --&gt; M3[&quot;Joint attention&lt;br/&gt;(separate weights per modality)&quot;]
+        M2[&quot;Image stream&quot;] --&gt; M3
+    end
+    subgraph FLUX[&quot;FLUX (2024)&quot;]
+        F1[&quot;Double-stream blocks&lt;br/&gt;(text + image separate)&quot;] --&gt; F2[&quot;Single-stream blocks&lt;br/&gt;(concat + shared weights)&quot;]
+    end
+
+    style UNET fill:#e5e7eb,stroke:#6b7280
+    style DIT fill:#dbeafe,stroke:#2563eb
+    style MMDIT fill:#fef3c7,stroke:#d97706
+    style FLUX fill:#dcfce7,stroke:#16a34a</pre></div><ul>
+<li><strong>DiT</strong> (Peebles &amp; Xie, 2023) — replace the U-Net with a ViT-like transformer on latent patches. Conditioning via adaptive layer norm (AdaLN).</li>
+<li><strong>MMDiT</strong> (SD3, Esser et al., 2024) — two streams with separate weights for text and image tokens that share a joint attention.</li>
+<li><strong>FLUX</strong> (Black Forest Labs, 2024) — first N blocks double-stream like SD3, later blocks concatenate and share weights (single-stream) for efficiency at higher depth.</li>
+<li><strong>Z-Image</strong> (2025) — an efficient single-stream DiT at 6B parameters that challenges &quot;scale at all costs&quot;.</li>
+</ul>
+<h3 id="rectified-flow-in-one-paragraph"><a class="anchor" href="#rectified-flow-in-one-paragraph">#</a> Rectified flow in one paragraph</h3>
+<p>DDPM defines the forward process as a noisy SDE where <code>x_t</code> is increasingly corrupted. The learned reverse is a second SDE, solved by 1000 small steps.</p>
+<p>Rectified flow defines a <strong>straight-line</strong> interpolation between clean data and pure noise:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">x_t = (1 - t) * x_0 + t * epsilon,     t in [0, 1]</code></pre>
+      </div>
+    <p>Train a network to predict the velocity <code>v_theta(x_t, t) = epsilon - x_0</code> — the forward direction along the straight-line path from clean data to noise (<code>dx_t/dt</code>). During sampling, you integrate this velocity backward to step from noise toward data. The resulting ODE is much closer to a straight line, so far fewer integration steps are needed to sample.</p>
+<p>SD3 calls this <strong>Rectified Flow Matching</strong>. FLUX, Z-Image, and most 2026 models use the same objective. Typical inference: 20-30 Euler steps (deterministic) vs 50+ DDIM steps in the old DDPM regime. Distilled / turbo / schnell / LCM variants take it down to 1-4 steps.</p>
+<h3 id="adaln-conditioning"><a class="anchor" href="#adaln-conditioning">#</a> AdaLN conditioning</h3>
+<p>DiTs condition on timestep and class/text via <strong>adaptive layer norm</strong>: predict <code>scale</code> and <code>shift</code> from the conditioning vector and apply them after LayerNorm. Much cleaner than FiLM-style modulation in U-Nets and the default in every modern DiT.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">cond -&gt; MLP -&gt; (scale, shift, gate)
+norm(x) * (1 + scale) + shift, then residual add * gate</code></pre>
+      </div>
+    <h3 id="text-encoders-in-sd3-and-flux"><a class="anchor" href="#text-encoders-in-sd3-and-flux">#</a> Text encoders in SD3 and FLUX</h3>
+<ul>
+<li><strong>SD3</strong> uses three text encoders: two CLIP models + T5-XXL. Embeddings concatenated and fed to the image stream as text conditioning.</li>
+<li><strong>FLUX</strong> uses one CLIP-L + T5-XXL.</li>
+<li><strong>Qwen-Image / Z-Image</strong> variants use their own in-house text encoders aligned with their base LLMs.</li>
+</ul>
+<p>The text encoder is a big part of why SD3/FLUX reason about prompts so much better than SD1.5. T5-XXL alone is 4.7B params.</p>
+<h3 id="classifier-free-guidance-still-holds"><a class="anchor" href="#classifier-free-guidance-still-holds">#</a> Classifier-free guidance still holds</h3>
+<p>Rectified flow changes the sampler, not the conditioning. Classifier-free guidance (drop text with 10% probability during training, mix conditional and unconditional predictions at inference) works identically with rectified flow. Most 2026 models use guidance scale 3.5-5 — lower than SD1.5&#39;s 7.5 because rectified-flow models follow prompts more tightly by default.</p>
+<h3 id="consistency-turbo-schnell-lcm"><a class="anchor" href="#consistency-turbo-schnell-lcm">#</a> Consistency, Turbo, Schnell, LCM</h3>
+<p>Four names for the same idea: distil a slow many-step model into a fast few-step model.</p>
+<ul>
+<li><strong>LCM (Latent Consistency Model)</strong> — train a student that predicts the final <code>x_0</code> from any intermediate <code>x_t</code> in one step.</li>
+<li><strong>SDXL Turbo / FLUX schnell</strong> — 1-4 step models trained with adversarial diffusion distillation.</li>
+<li><strong>SD Turbo</strong> — OpenAI-style Consistency Models adapted to latent diffusion.</li>
+</ul>
+<p>Production serving of any new model ships both a &quot;full quality&quot; checkpoint and a &quot;turbo / schnell&quot; variant. Schnell (&quot;fast&quot; in German, Black Forest Labs&#39; convention) runs in 1-4 steps and fits real-time pipelines.</p>
+<h3 id="model-landscape-in-2026"><a class="anchor" href="#model-landscape-in-2026">#</a> Model landscape in 2026</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Size</th>
+<th>Architecture</th>
+<th>License</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Stable Diffusion 3 Medium</td>
+<td>2B</td>
+<td>MMDiT</td>
+<td>SAI Community</td>
+</tr>
+<tr>
+<td>Stable Diffusion 3.5 Large</td>
+<td>8B</td>
+<td>MMDiT</td>
+<td>SAI Community</td>
+</tr>
+<tr>
+<td>FLUX.1-dev</td>
+<td>12B</td>
+<td>Double + Single Stream DiT</td>
+<td>non-commercial</td>
+</tr>
+<tr>
+<td>FLUX.1-schnell</td>
+<td>12B</td>
+<td>same, distilled</td>
+<td>Apache 2.0</td>
+</tr>
+<tr>
+<td>FLUX.2</td>
+<td>—</td>
+<td>iterated FLUX.1</td>
+<td>mixed</td>
+</tr>
+<tr>
+<td>Z-Image</td>
+<td>6B</td>
+<td>S3-DiT (Scalable Single-Stream)</td>
+<td>permissive</td>
+</tr>
+<tr>
+<td>Qwen-Image</td>
+<td>~20B</td>
+<td>DiT + Qwen text tower</td>
+<td>Apache 2.0</td>
+</tr>
+<tr>
+<td>Hunyuan-Image-3.0</td>
+<td>~80B</td>
+<td>DiT</td>
+<td>research</td>
+</tr>
+<tr>
+<td>SD4 Turbo</td>
+<td>3B</td>
+<td>DiT + distillation</td>
+<td>SAI Commercial</td>
+</tr>
+</tbody></table>
+<p>FLUX.1-schnell is the 2026 open-source default. Z-Image is the efficiency leader. FLUX.2 and SD4 are the current quality tips.</p>
+<h3 id="why-this-phase-shift-matters"><a class="anchor" href="#why-this-phase-shift-matters">#</a> Why this phase shift matters</h3>
+<p>DDPM + U-Net worked. DiT + rectified flow works <strong>better, faster, and scales more cleanly</strong>. The transition parallels the one from RNNs to transformers in NLP: both architectures solved the same problem, but transformers scaled and now dominate. Every 2026 paper on image, video, or 3D generation uses a DiT-shaped denoiser and usually a rectified flow objective. U-Net DDPM is now primarily pedagogical (Lesson 10).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-rectified-flow</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-a-dit-block-with-adaln"><a class="anchor" href="#step-1-a-dit-block-with-adaln">#</a> Step 1: A DiT block with AdaLN</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+
+class AdaLNZero(nn.Module):
+    &quot;&quot;&quot;
+    Adaptive LayerNorm with a gate. Predicts (scale, shift, gate) from the conditioning.
+    Init such that the whole block starts as identity (&quot;zero init&quot;).
+    &quot;&quot;&quot;
+
+    def __init__(self, dim, cond_dim):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False)
+        self.mlp = nn.Linear(cond_dim, dim * 3)
+        nn.init.zeros_(self.mlp.weight)
+        nn.init.zeros_(self.mlp.bias)
+
+    def forward(self, x, cond):
+        scale, shift, gate = self.mlp(cond).chunk(3, dim=-1)
+        h = self.norm(x) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        return h, gate.unsqueeze(1)
+
+
+class DiTBlock(nn.Module):
+    def __init__(self, dim=192, heads=3, mlp_ratio=4, cond_dim=192):
+        super().__init__()
+        self.adaln1 = AdaLNZero(dim, cond_dim)
+        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)
+        self.adaln2 = AdaLNZero(dim, cond_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(dim * mlp_ratio, dim),
+        )
+
+    def forward(self, x, cond):
+        h, gate1 = self.adaln1(x, cond)
+        a, _ = self.attn(h, h, h, need_weights=False)
+        x = x + gate1 * a
+        h, gate2 = self.adaln2(x, cond)
+        x = x + gate2 * self.mlp(h)
+        return x</code></pre>
+      </div>
+    <p><code>AdaLNZero</code> starts as an identity mapping because its MLP weights are initialised to zero. Training nudges the block away from identity; this stabilises deep transformer diffusion models dramatically.</p>
+<h3 id="step-2-a-tiny-dit"><a class="anchor" href="#step-2-a-tiny-dit">#</a> Step 2: A tiny DiT</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def timestep_embedding(t, dim):
+    import math
+    half = dim // 2
+    freqs = torch.exp(-math.log(10000) * torch.arange(half, device=t.device) / half)
+    args = t[:, None].float() * freqs[None]
+    return torch.cat([args.sin(), args.cos()], dim=-1)
+
+
+class TinyDiT(nn.Module):
+    def __init__(self, image_size=16, patch_size=2, in_channels=3, dim=96, depth=4, heads=3):
+        super().__init__()
+        self.patch_size = patch_size
+        self.num_patches = (image_size // patch_size) ** 2
+        self.patch = nn.Conv2d(in_channels, dim, kernel_size=patch_size, stride=patch_size)
+        self.pos = nn.Parameter(torch.zeros(1, self.num_patches, dim))
+        self.time_mlp = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.SiLU(),
+            nn.Linear(dim * 2, dim),
+        )
+        self.blocks = nn.ModuleList([DiTBlock(dim, heads, cond_dim=dim) for _ in range(depth)])
+        self.norm_out = nn.LayerNorm(dim, elementwise_affine=False)
+        self.head = nn.Linear(dim, patch_size * patch_size * in_channels)
+
+    def forward(self, x, t):
+        n = x.size(0)
+        x = self.patch(x)
+        x = x.flatten(2).transpose(1, 2) + self.pos
+        t_emb = self.time_mlp(timestep_embedding(t, self.pos.size(-1)))
+        for blk in self.blocks:
+            x = blk(x, t_emb)
+        x = self.norm_out(x)
+        x = self.head(x)
+        return self._unpatchify(x, n)
+
+    def _unpatchify(self, x, n):
+        p = self.patch_size
+        h = w = int(self.num_patches ** 0.5)
+        x = x.view(n, h, w, p, p, -1).permute(0, 5, 1, 3, 2, 4).reshape(n, -1, h * p, w * p)
+        return x</code></pre>
+      </div>
+    <h3 id="step-3-rectified-flow-training"><a class="anchor" href="#step-3-rectified-flow-training">#</a> Step 3: Rectified flow training</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn.functional as F
+
+def rectified_flow_train_step(model, x0, optimizer, device):
+    model.train()
+    x0 = x0.to(device)
+    n = x0.size(0)
+    t = torch.rand(n, device=device)
+    epsilon = torch.randn_like(x0)
+    x_t = (1 - t[:, None, None, None]) * x0 + t[:, None, None, None] * epsilon
+
+    target_velocity = epsilon - x0
+    pred_velocity = model(x_t, t)
+
+    loss = F.mse_loss(pred_velocity, target_velocity)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return loss.item()</code></pre>
+      </div>
+    <p>Compare with DDPM&#39;s noise-prediction loss (Lesson 10): same structure, different target. Instead of predicting the noise <code>epsilon</code>, we predict the <strong>velocity</strong> <code>epsilon - x_0</code>, which points from data to noise along the straight-line interpolation.</p>
+<h3 id="step-4-euler-sampler"><a class="anchor" href="#step-4-euler-sampler">#</a> Step 4: Euler sampler</h3>
+<p>Rectified flow is an ODE. Euler&#39;s method is the simplest and, for a well-trained rectified-flow model, nearly as accurate as higher-order solvers at 20+ steps.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@torch.no_grad()
+def rectified_flow_sample(model, shape, steps=20, device=&quot;cpu&quot;):
+    model.eval()
+    x = torch.randn(shape, device=device)
+    dt = 1.0 / steps
+    t = torch.ones(shape[0], device=device)
+    for _ in range(steps):
+        v = model(x, t)
+        x = x - dt * v
+        t = t - dt
+    return x</code></pre>
+      </div>
+    <p>20 steps. On a trained model this produces samples comparable to 1000-step DDPM.</p>
+<h3 id="step-5-end-to-end-smoke-test"><a class="anchor" href="#step-5-end-to-end-smoke-test">#</a> Step 5: End-to-end smoke test</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def synthetic_blobs(num=200, size=16, seed=0):
+    rng = np.random.default_rng(seed)
+    out = np.zeros((num, 3, size, size), dtype=np.float32)
+    yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+    for i in range(num):
+        cx, cy = rng.uniform(4, size - 4, size=2)
+        r = rng.uniform(2, 4)
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 &lt; r ** 2
+        colour = rng.uniform(-1, 1, size=3)
+        for c in range(3):
+            out[i, c][mask] = colour[c]
+    return torch.from_numpy(out)</code></pre>
+      </div>
+    <p>Train a <code>TinyDiT</code> on this with rectified flow. After 500 steps, sampled outputs should look like faint blobs of colour.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For real image generation with FLUX / SD3 / Z-Image, <code>diffusers</code> ships every one with a unified API:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from diffusers import FluxPipeline, StableDiffusion3Pipeline
+import torch
+
+pipe = FluxPipeline.from_pretrained(
+    &quot;black-forest-labs/FLUX.1-schnell&quot;,
+    torch_dtype=torch.bfloat16,
+).to(&quot;cuda&quot;)
+
+out = pipe(
+    prompt=&quot;a golden retriever surfing a tsunami, hyperrealistic, studio lighting&quot;,
+    guidance_scale=0.0,           # schnell was trained without CFG
+    num_inference_steps=4,
+    max_sequence_length=256,
+).images[0]
+out.save(&quot;surf.png&quot;)</code></pre>
+      </div>
+    <p>Three lines. <code>FLUX.1-schnell</code> in four steps. Swap the model id for <code>black-forest-labs/FLUX.1-dev</code> for higher quality at 20-30 steps with CFG.</p>
+<p>For SD3:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">pipe = StableDiffusion3Pipeline.from_pretrained(
+    &quot;stabilityai/stable-diffusion-3.5-large&quot;,
+    torch_dtype=torch.bfloat16,
+).to(&quot;cuda&quot;)
+out = pipe(prompt, guidance_scale=3.5, num_inference_steps=28).images[0]</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-dit-model-picker.md</code> — picks between SD3, FLUX.1-dev, FLUX.1-schnell, Z-Image, SD4 Turbo given quality, latency, and license constraints.</li>
+<li><code>outputs/skill-rectified-flow-trainer.md</code> — writes a complete training loop for rectified flow with AdaLN DiT and Euler sampling.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Train the TinyDiT above on the synthetic blob dataset for 500 steps. Compare samples produced with 10, 20, and 50 Euler steps.</li>
+<li><strong>(Medium)</strong> Add text conditioning by concatenating a learned class embedding to the time embedding (10 blob &quot;classes&quot; by colour). Sample with class 0, 5, and 9 and verify colours match.</li>
+<li><strong>(Hard)</strong> Compute the Fréchet distance (FID proxy) between generated samples from rectified-flow and DDPM versions of the same-size network trained on the same data for the same number of steps. Report which converges faster.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DiT</td>
+<td>&quot;Diffusion transformer&quot;</td>
+<td>Transformer that replaces the U-Net as the diffusion denoiser; operates on patchified latents</td>
+</tr>
+<tr>
+<td>AdaLN</td>
+<td>&quot;Adaptive layer norm&quot;</td>
+<td>Timestep/text conditioning via learned scale, shift, gate applied after LayerNorm; standard in every modern DiT</td>
+</tr>
+<tr>
+<td>MMDiT</td>
+<td>&quot;Multi-modal DiT (SD3)&quot;</td>
+<td>Separate weight streams for text and image tokens that share a joint self-attention</td>
+</tr>
+<tr>
+<td>Single-stream / double-stream</td>
+<td>&quot;FLUX trick&quot;</td>
+<td>First N blocks double-stream (separate weights per modality), later blocks single-stream (concat + shared weights) for efficiency</td>
+</tr>
+<tr>
+<td>Rectified flow</td>
+<td>&quot;Straight-line noise-to-data&quot;</td>
+<td>Linear interpolation between data and noise; network predicts velocity; fewer ODE steps needed at inference</td>
+</tr>
+<tr>
+<td>Velocity target</td>
+<td>&quot;epsilon - x_0&quot;</td>
+<td>The regression target in rectified flow; points from clean data to noise</td>
+</tr>
+<tr>
+<td>CFG guidance</td>
+<td>&quot;classifier-free guidance&quot;</td>
+<td>Mix conditional and unconditional predictions; still used in rectified-flow models</td>
+</tr>
+<tr>
+<td>Schnell / turbo / LCM</td>
+<td>&quot;1-4 step distillation&quot;</td>
+<td>Small-step variants distilled from full-quality models; production real-time</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.09748">Scalable Diffusion Models with Transformers (Peebles &amp; Xie, 2023)</a> — the DiT paper</li>
+<li><a href="https://arxiv.org/abs/2403.03206">Scaling Rectified Flow Transformers (Esser et al., SD3 paper)</a> — MMDiT and rectified-flow at scale</li>
+<li><a href="https://huggingface.co/black-forest-labs/FLUX.1-dev">FLUX.1 model card and technical report (Black Forest Labs)</a> — double + single-stream details</li>
+<li><a href="https://arxiv.org/html/2511.22699v1">Z-Image: Efficient Image Generation Foundation Model (2025)</a> — single-stream DiT at 6B</li>
+<li><a href="https://arxiv.org/abs/2206.00364">Elucidating the Design Space of Diffusion (Karras et al., 2022)</a> — the reference for every diffusion design trade-off</li>
+<li><a href="https://arxiv.org/abs/2310.04378">Latent Consistency Models (Luo et al., 2023)</a> — how LCM-LoRA gives you 4-step inference</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./22-3d-gaussian-splatting.html"><span>← Previous</span><b>3d gaussian splatting</b></a>
+      <a class="next" href="./24-sam3-open-vocab-segmentation.html"><span>Next →</span><b>sam3 open vocab segmentation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

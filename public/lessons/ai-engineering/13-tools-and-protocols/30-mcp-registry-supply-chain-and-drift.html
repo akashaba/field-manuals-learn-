@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP Registry Supply Chain: Admission, Drift, and Rollback — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/30-mcp-registry-supply-chain-and-drift/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-registry-is-an-index-not-your-approval-system">The Registry Is an Index, Not Your Approval System</a></li><li><a href="#seven-controls-in-one-admission-decision">Seven Controls in One Admission Decision</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#interactive-lab">Interactive Lab</a></li><li><a href="#practice-lab">Practice Lab</a></li><li><a href="#shipped-artifact">Shipped Artifact</a></li><li><a href="#verify-it">Verify It</a></li><li><a href="#production-failure-modes">Production Failure Modes</a></li><li><a href="#operational-rule">Operational Rule</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">MCP Registry Supply Chain: Admission, Drift, and Rollback</h1>
+    <p class="lesson-sub">A registry entry tells you what a publisher declared. Production admission proves what you fetched, what you observed, what you approved, and what you can safely restore.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 · 17 (gateways and registries), Phase 13 · 18 (production authentication)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 30">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M46.2,74.8 L63.5,48.8 L80.8,74.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.4" y="42.8" width="33.4" height="33.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(234 58.1 59.5)"/>
+        <rect x="36.6" y="38.5" width="32.1" height="32.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(217 52.6 54.6)"/>
+        <rect x="31.8" y="34.2" width="30.8" height="30.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(199 47.2 49.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">30</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">MCP Registry Supply</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Chain: Admission…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Separate Registry publication, package provenance, runtime discovery, and local approval.</li>
+<li>Verify an MCP server namespace without trusting the name inside its own record.</li>
+<li>Pin immutable publication, execution-source, provenance, and live descriptor evidence.</li>
+<li>Detect registry status changes and runtime drift after admission.</li>
+<li>Roll back routing to a previously admitted version without rewriting history.</li>
+<li>Maintain a tamper-evident admission ledger that explains every decision.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You find <code>com.example/inventory</code> in a registry. Its description looks right. Its package exists. The server answers <code>server/discover</code>.</p>
+<p>That is not one fact. It is a chain of facts from different authorities:</p>
+<ol>
+<li>A publisher authenticated for a namespace submitted a record.</li>
+<li>A package registry served an artifact with a specific identity and digest.</li>
+<li>A running endpoint reported a protocol version, capabilities, tools, and diagnostic server information.</li>
+<li>Your organization decided that this exact combination was allowed.</li>
+</ol>
+<p>Collapsing those facts into “it is in the registry, so trust it” creates a supply chain blind spot. A valid publication can still be deprecated. A package tag can point at an unexpected artifact if you do not pin its digest. A server can add a destructive tool after review. A rollback can silently choose a version that was never admitted.</p>
+<p>The fix is an admission controller with evidence at every boundary.</p>
+<h2 id="the-registry-is-an-index-not-your-approval-system"><a class="anchor" href="#the-registry-is-an-index-not-your-approval-system">#</a> The Registry Is an Index, Not Your Approval System</h2>
+<p>The official MCP Registry stores server metadata. Its <code>server.json</code> record names a server version and declares one or more packages or remote endpoints. Publication rules add namespace authentication, package ownership checks, restricted registry rules, and a narrow publisher metadata location.</p>
+<p>Those controls answer publication questions. Your production policy still answers deployment questions:</p>
+<table>
+<thead>
+<tr>
+<th>Boundary</th>
+<th>Question</th>
+<th>Evidence owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Namespace</td>
+<td>Was the publisher allowed to use this name?</td>
+<td>Registry authentication plus your verified namespace input</td>
+</tr>
+<tr>
+<td>Record</td>
+<td>What did the publisher declare for this version?</td>
+<td>Immutable <code>server.json</code> digest</td>
+</tr>
+<tr>
+<td>Execution source</td>
+<td>Which package or remote endpoint will execute?</td>
+<td>Declared source fields, verified ownership result, transport, and trusted digest</td>
+</tr>
+<tr>
+<td>Runtime</td>
+<td>What does the endpoint expose now?</td>
+<td><code>server/discover</code> and tool descriptors</td>
+</tr>
+<tr>
+<td>Admission</td>
+<td>Did your policy approve this exact set?</td>
+<td>Local pin and ledger entry</td>
+</tr>
+<tr>
+<td>Operations</td>
+<td>Is it still safe, and what can replace it?</td>
+<td>Drift checks, status sync, health, and rollback route</td>
+</tr>
+</tbody></table>
+<p>The Registry schema version and the MCP protocol version are independent. A record may use the published <code>2025-12-11</code> server schema while the live server supports MCP <code>2026-07-28</code>. Never infer one from the other.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mcp-registry-admission</code></pre>
+      </div>
+    <h2 id="seven-controls-in-one-admission-decision"><a class="anchor" href="#seven-controls-in-one-admission-decision">#</a> Seven Controls in One Admission Decision</h2>
+<h3 id="1-namespace-verification"><a class="anchor" href="#1-namespace-verification">#</a> 1. Namespace verification</h3>
+<p>Official Registry names use authenticated namespaces. A verified domain can map to a reversed domain prefix. For example, control of <code>example.com</code> can establish <code>com.example/*</code>.</p>
+<p>Do not accept a string prefix check:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">server_name.startswith(&quot;com.example&quot;)</code></pre>
+      </div>
+    <p>That also accepts <code>com.exampleevil/tool</code>. Split the name at <code>/</code>, require a non-empty slug, and compare the namespace segment exactly. More importantly, pass the verified namespace into admission from the authentication result. Do not derive trust from the untrusted record.</p>
+<p>GitHub-backed namespaces and domain-backed namespaces use different authentication paths. Normalize either path into one admission input: the exact verified namespace string.</p>
+<h3 id="2-provenance-join"><a class="anchor" href="#2-provenance-join">#</a> 2. Provenance join</h3>
+<p>For a package record, the declaration and fetched artifact must join on explicit fields:</p>
+<ul>
+<li>package registry type</li>
+<li>package identifier</li>
+<li>package version</li>
+<li>verified ownership result</li>
+<li>downloaded artifact digest</li>
+</ul>
+<p>Also validate the declared package transport. A record with only a remote endpoint is valid and must not be rejected for lacking a package. For a remote source, join the declared URL and transport type to independently verified endpoint ownership and a digest of the trusted connection or deployment evidence.</p>
+<p>The lesson code supports both source kinds and hashes the selected source together with the Registry source, server name, Registry version, record digest, and evidence digest. The resulting provenance digest is a compact pointer to the full evidence set. It is not a substitute for retaining the evidence.</p>
+<p>Never accept a digest supplied only by the artifact you are trying to verify. Calculate it at a trusted fetch boundary, or receive it from a package service whose verification result you validate.</p>
+<h3 id="3-pin-the-decision-not-only-the-version"><a class="anchor" href="#3-pin-the-decision-not-only-the-version">#</a> 3. Pin the decision, not only the version</h3>
+<p>Registry versions are unique publication identifiers. Published metadata is immutable. A changed record requires a new version. Semantic versioning is recommended, but the Registry does not require it and does not accept version ranges.</p>
+<p>This means <code>^1.4</code> is not an admission pin. Neither is “latest.” A useful pin contains:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;server&quot;: &quot;com.example/inventory&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;recordDigest&quot;: &quot;...&quot;,
+  &quot;source&quot;: {&quot;kind&quot;: &quot;package&quot;, &quot;registryType&quot;: &quot;pypi&quot;},
+  &quot;sourceDigest&quot;: &quot;...&quot;,
+  &quot;toolsetDigest&quot;: &quot;...&quot;,
+  &quot;provenanceDigest&quot;: &quot;...&quot;,
+  &quot;registryStatus&quot;: &quot;active&quot;
+}</code></pre>
+      </div>
+    <p>Pinning several layers lets you identify which boundary changed. A record digest change under the same Registry version is a Registry integrity failure. A source digest change under the same package coordinate or remote deployment is an execution-source integrity failure. A toolset digest change is runtime drift.</p>
+<h3 id="4-live-drift-detection"><a class="anchor" href="#4-live-drift-detection">#</a> 4. Live drift detection</h3>
+<p>Admission should observe the server that will actually receive traffic. Call <code>server/discover</code>, list or otherwise obtain the exposed tool descriptors through your trusted path, and verify:</p>
+<ul>
+<li><code>2026-07-28</code> is in <code>supportedVersions</code></li>
+<li>all locally required capabilities are present</li>
+<li>every tool descriptor has the required identity and schema surface</li>
+<li>the normalized descriptor digest matches the admitted pin on later checks</li>
+</ul>
+<p>The optional result <code>_meta[&quot;io.modelcontextprotocol/serverInfo&quot;]</code> value is self-reported display, log, and debugging context. Record it as diagnostic evidence, but never use it to establish namespace, package ownership, endpoint ownership, admission, or any other security decision. A direct <code>serverInfo</code> alias outside <code>_meta</code> is not the contract field and should not be promoted into diagnostic evidence.</p>
+<p>Normalize only fields whose order has no meaning. The sample sorts the tool list by stable name before hashing, so a harmless list-order change does not cause drift. It does not discard descriptor fields. A new tool, changed schema, changed description, or new annotations changes the pin.</p>
+<p>The sample treats malformed descriptors and any descriptor digest change as drift, quarantines the pin, removes its active route, and blocks that version as a rollback target. A production policy may allow an editorial change only through a new review, because descriptions influence model tool selection. “Cosmetic” metadata can alter agent behavior.</p>
+<h3 id="5-registry-status-is-live-state"><a class="anchor" href="#5-registry-status-is-live-state">#</a> 5. Registry status is live state</h3>
+<p>The Registry API attaches a response-level <code>_meta</code> object beside each server record. Registry-managed fields live under <code>_meta[&quot;io.modelcontextprotocol.registry/official&quot;]</code>. Pass the response <code>_meta</code> object to admission and read <code>_meta[&quot;io.modelcontextprotocol.registry/official&quot;].status</code>. A direct <code>_meta.status</code> value is not the official wire shape. Do not confuse response metadata with the publication record&#39;s own <code>_meta</code>. Status can be:</p>
+<ul>
+<li><code>active</code>: returned by default and eligible for local admission</li>
+<li><code>deprecated</code>: still discoverable with a warning, but no longer a safe automatic choice</li>
+<li><code>deleted</code>: hidden by default while its historical record remains available through deleted or incremental views</li>
+</ul>
+<p>Sync status after admission. If an active version becomes deprecated or deleted, quarantine its pin and stop routing new work to it. Keep the evidence. Deletion from the default listing is not permission to erase your audit trail.</p>
+<p>Publisher-provided custom metadata belongs only under <code>_meta.io.modelcontextprotocol.registry/publisher-provided</code> in a publication record. Registry-managed response metadata is separate. Do not let a publisher set its own official status.</p>
+<h3 id="6-rollback-means-route-restoration"><a class="anchor" href="#6-rollback-means-route-restoration">#</a> 6. Rollback means route restoration</h3>
+<p>An immutable publication is not edited during rollback. Rollback selects a previously admitted, currently eligible pin and changes the active route.</p>
+<p>A safe target must:</p>
+<ol>
+<li>Have a completed admission record.</li>
+<li>Still have an active Registry status under your policy.</li>
+<li>Not be quarantined by runtime or security evidence.</li>
+<li>Still resolve to the pinned package and live descriptor set.</li>
+<li>Pass current health checks.</li>
+</ol>
+<p>The sample focuses on the first three conditions. A real reconciler should re-fetch the package and re-check the live endpoint before activation.</p>
+<h3 id="7-append-an-admission-ledger"><a class="anchor" href="#7-append-an-admission-ledger">#</a> 7. Append an admission ledger</h3>
+<p>An admission database says what is active. A ledger explains why.</p>
+<p>Each sample entry contains a sequence, time, event, server, version, outcome, reasons, evidence, the previous entry hash, and its own hash. Changing an older outcome breaks verification of that entry and every later link.</p>
+<p>This is tamper-evident, not magically tamper-proof. Anchor periodic ledger heads in a separate trust domain, such as signed release metadata or write-once storage. Restrict who can append. Keep authorization tokens, package credentials, tool arguments, and private endpoint data out of evidence.</p>
+<h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The runnable controller is in <code>code/main.py</code>. It uses only the Python standard library.</p>
+<p>Start with the finite demonstration:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/30-mcp-registry-supply-chain-and-drift
+python3 code/main.py</code></pre>
+      </div>
+    <p>The demonstration performs five operations:</p>
+<ol>
+<li>Admit <code>1.0.0</code> with matching namespace, package provenance, protocol, capabilities, and tools.</li>
+<li>Admit <code>1.1.0</code> and make it active.</li>
+<li>Observe an unexpected delete tool at runtime.</li>
+<li>Observe the Registry status for <code>1.1.0</code> become <code>deprecated</code>.</li>
+<li>Restore routing to the still-admitted <code>1.0.0</code> pin.</li>
+</ol>
+<p>Expected shape:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;admitted&quot;: [true, true],
+  &quot;driftAllowed&quot;: false,
+  &quot;rollbackAllowed&quot;: true,
+  &quot;activeVersion&quot;: &quot;1.0.0&quot;,
+  &quot;ledgerValid&quot;: true
+}</code></pre>
+      </div>
+    <p>Read the implementation in this order:</p>
+<ol>
+<li><code>namespace_for_domain()</code> and <code>namespace_matches()</code> establish exact naming authority.</li>
+<li><code>digest()</code> and <code>normalized_tools()</code> produce deterministic evidence.</li>
+<li><code>RegistryAdmissionController.admit()</code> joins publication, provenance, runtime, and policy.</li>
+<li><code>check_live()</code> compares a new observation with the pin.</li>
+<li><code>observe_registry_status()</code> quarantines versions whose Registry state changes.</li>
+<li><code>rollback()</code> activates only a previously admitted eligible target.</li>
+<li><code>AdmissionLedger.verify()</code> detects changes to recorded history.</li>
+</ol>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Put the controller between discovery and routing:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">Registry sync -&gt; artifact verifier -&gt; live discovery -&gt; admission controller -&gt; route table
+                                               |                 |
+                                               v                 v
+                                          evidence store    admission ledger</code></pre>
+      </div>
+    <p>Use separate identities for these jobs. A Registry sync worker needs read access to metadata. An artifact verifier needs package fetch access. A route reconciler needs permission to activate an approved pin. None of them needs every credential.</p>
+<p>Make rollout state explicit. “Approved” means the evidence passed policy. “Active” means the route currently selects it. “Quarantined” means it cannot receive new work. “Superseded” means another admitted version is active. Do not encode all four meanings in one Boolean.</p>
+<p>Run admission before exposing a server in <code>tools/list</code>. Otherwise a client can discover a tool during the gap between publication and policy evaluation.</p>
+<h2 id="interactive-lab"><a class="anchor" href="#interactive-lab">#</a> Interactive Lab</h2>
+<p>You will watch one boundary fail at a time.</p>
+<h3 id="lab-a-namespace-collision"><a class="anchor" href="#lab-a-namespace-collision">#</a> Lab A: namespace collision</h3>
+<p>Open a Python shell from the code directory:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/30-mcp-registry-supply-chain-and-drift/code
+python3 -q</code></pre>
+      </div>
+    <p>Then run:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from main import namespace_matches
+namespace_matches(&quot;com.example/inventory&quot;, &quot;com.example&quot;)
+namespace_matches(&quot;com.exampleevil/inventory&quot;, &quot;com.example&quot;)</code></pre>
+      </div>
+    <p>The first result is <code>True</code>; the second is <code>False</code>. Replace the exact comparison with <code>startswith</code> locally and observe why the second name crosses the boundary. Restore the exact comparison before continuing.</p>
+<h3 id="lab-b-descriptor-drift"><a class="anchor" href="#lab-b-descriptor-drift">#</a> Lab B: descriptor drift</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from main import *
+times = iter(f&quot;2026-08-21T12:00:{n:02d}+00:00&quot; for n in range(10))
+c = RegistryAdmissionController(clock=lambda: next(times))
+meta = {OFFICIAL_META_KEY: {&quot;status&quot;: &quot;active&quot;}}
+c.admit(sample_record(&quot;1.0.0&quot;), meta, &quot;com.example&quot;, evidence_for(&quot;1.0.0&quot;), sample_live(&quot;1.0.0&quot;))
+c.check_live(&quot;com.example/inventory&quot;, &quot;1.0.0&quot;, sample_live(&quot;1.0.0&quot;, True))</code></pre>
+      </div>
+    <p>Inspect the reasons and route state. The package and Registry record did not change. The runtime tool surface did, so the controller quarantined and deactivated the pin. This is why supply chain control must continue after installation.</p>
+<h3 id="lab-c-status-and-rollback"><a class="anchor" href="#lab-c-status-and-rollback">#</a> Lab C: status and rollback</h3>
+<p>Admit <code>1.1.0</code>, mark it deprecated, and try both rollback targets:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">c.admit(sample_record(&quot;1.1.0&quot;), meta, &quot;com.example&quot;, evidence_for(&quot;1.1.0&quot;), sample_live(&quot;1.1.0&quot;))
+c.observe_registry_status(&quot;com.example/inventory&quot;, &quot;1.1.0&quot;, &quot;deprecated&quot;)
+c.rollback(&quot;com.example/inventory&quot;, &quot;1.1.0&quot;, &quot;unsafe retry&quot;)
+c.rollback(&quot;com.example/inventory&quot;, &quot;1.0.0&quot;, &quot;restore known release&quot;)
+c.ledger.verify()</code></pre>
+      </div>
+    <p>The quarantined target is rejected. The earlier active pin is accepted. The ledger remains valid.</p>
+<h2 id="practice-lab"><a class="anchor" href="#practice-lab">#</a> Practice Lab</h2>
+<p>Extend the controller with a two-person approval gate.</p>
+<p>Requirements:</p>
+<ul>
+<li>Store approvals as signed evidence references, not mutable names in the pin.</li>
+<li>Require two different reviewer identities for a toolset that contains a tool with <code>destructiveHint: true</code>.</li>
+<li>Reject duplicate reviewer identities.</li>
+<li>Preserve the original admission attempt in the ledger when approval is incomplete.</li>
+<li>Add tests for zero, one, duplicate, and two distinct approvals.</li>
+<li>Do not log signatures, credentials, or full private tool arguments.</li>
+</ul>
+<p>Success means a destructive tool cannot become active until both identities approved the exact record, package, and toolset digests.</p>
+<h2 id="shipped-artifact"><a class="anchor" href="#shipped-artifact">#</a> Shipped Artifact</h2>
+<p>This lesson ships <code>outputs/skill-mcp-registry-admission.md</code>. Use it as a flat, reusable runbook when reviewing a new Registry version or investigating drift. It defines the inputs, refusal rules, evidence bundle, status reconciliation, and rollback proof without depending on the sample class names.</p>
+<h2 id="verify-it"><a class="anchor" href="#verify-it">#</a> Verify It</h2>
+<p>Run the demonstration and the deterministic suite:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd phases/13-tools-and-protocols/30-mcp-registry-supply-chain-and-drift
+python3 code/main.py
+python3 -m unittest discover -s code/tests -v</code></pre>
+      </div>
+    <p>Verification should prove:</p>
+<ul>
+<li>exact namespace boundaries reject lookalike prefixes</li>
+<li>only the official namespaced Registry status can make a version eligible</li>
+<li>unverified or mismatched package and remote evidence is rejected</li>
+<li>publisher metadata cannot impersonate Registry-managed metadata</li>
+<li>tool ordering is normalized without hiding descriptor changes</li>
+<li>malformed package and tool structures refuse safely</li>
+<li><code>serverInfo</code> remains diagnostic and never supplies admission authority</li>
+<li>descriptor drift quarantines, deactivates, and blocks rollback to the pin</li>
+<li>status changes quarantine active pins</li>
+<li>rollback cannot select a quarantined or unknown version</li>
+<li>ledger tampering is detected</li>
+</ul>
+<h2 id="production-failure-modes"><a class="anchor" href="#production-failure-modes">#</a> Production Failure Modes</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Why it happens</th>
+<th>Required response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Name looks valid but namespace was never authenticated</td>
+<td>Policy trusted record text</td>
+<td>Reject until a trusted namespace verifier supplies the exact prefix</td>
+</tr>
+<tr>
+<td>Same package coordinate returns new bytes</td>
+<td>Mutable upstream or compromised distribution</td>
+<td>Stop activation, retain both digests, investigate the fetch boundary</td>
+</tr>
+<tr>
+<td>“Latest” changes without review</td>
+<td>Floating selection escaped the pin</td>
+<td>Resolve only exact admitted versions and digests</td>
+</tr>
+<tr>
+<td>New tool appears after approval</td>
+<td>Runtime drift or a different deployment</td>
+<td>Quarantine the route and capture a fresh descriptor observation</td>
+</tr>
+<tr>
+<td>Deprecated version remains active</td>
+<td>Status sync is missing or delayed</td>
+<td>Reconcile status on a schedule and before activation</td>
+</tr>
+<tr>
+<td>Deleted record disappears from default sync</td>
+<td>Client requested only active records</td>
+<td>Use incremental or deleted-aware reconciliation and preserve local history</td>
+</tr>
+<tr>
+<td>Rollback target was never admitted</td>
+<td>Route control and approval state are disconnected</td>
+<td>Refuse rollback and run a new admission for the target</td>
+</tr>
+<tr>
+<td>Ledger verifies locally after an attacker rewrites all entries</td>
+<td>Hash chain has no external anchor</td>
+<td>Publish signed ledger heads to a separate trust domain</td>
+</tr>
+<tr>
+<td>Evidence contains bearer tokens or tool arguments</td>
+<td>Logging copied whole requests</td>
+<td>Redact at collection time and store only the minimum proof</td>
+</tr>
+</tbody></table>
+<h2 id="operational-rule"><a class="anchor" href="#operational-rule">#</a> Operational Rule</h2>
+<p>Publication answers “can this identity publish this name?” Admission answers “will we execute this exact artifact and expose this exact behavior?” Keep those decisions separate, pin every join, and make rollback choose evidence rather than memory.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md">Official Registry server.json requirements</a></li>
+<li><a href="https://registry.modelcontextprotocol.io/openapi.yaml">Official Registry OpenAPI contract</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP 2026-07-28 server discovery</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./29-mcp-reliability-cancellation-and-flow-control.html"><span>← Previous</span><b>mcp reliability cancellation and flow control</b></a>
+      <a class="next" href="./31-mcp-conformance-versioning-and-operations.html"><span>Next →</span><b>mcp conformance versioning and operations</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

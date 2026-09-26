@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Runtime Feedback Loops — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/37-runtime-feedback-loops/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Runtime Feedback Loops</h1>
+    <p class="lesson-sub">Agents that do not see real command output guess. A feedback runner captures stdout, stderr, exit code, and timing into a structured record the next turn can read. Then the agent reacts to facts instead of to its own prediction of facts.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 32 (Minimal Workbench), Phase 14 · 35 (Init Script)</b></div><div><span>Time</span><b>~50 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 37">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M46.9,75.7 L64.4,49.6 L81.8,75.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.2" y="43.5" width="33.6" height="33.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(237 58.9 60.3)"/>
+        <rect x="37.4" y="39.2" width="32.3" height="32.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(219 53.5 55.4)"/>
+        <rect x="32.6" y="34.9" width="31.0" height="31.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(202 48.1 50.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">37</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Runtime Feedback</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Loops</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish runtime feedback from observability telemetry.</li>
+<li>Build a feedback runner that wraps shell commands and persists structured records.</li>
+<li>Truncate large outputs deterministically so the loop stays within token budget.</li>
+<li>Refuse to advance the loop when feedback is missing.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The agent says &quot;running tests now.&quot; The next message says &quot;all tests pass.&quot; The reality is that no test ran. The agent imagined the output, or it ran the command and never read the result, or it read the result and silently truncated the failure line.</p>
+<p>A feedback runner removes that gap. Every command goes through the runner. Every record carries the command, the captured stdout and stderr, the exit code, the wall-clock duration, and a one-line agent note. The agent reads the record at the next turn. The verification gate reads the records at the end of the task.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Agent[Agent Loop] --&gt; Runner[run_with_feedback.py]
+  Runner --&gt; Shell[subprocess]
+  Shell --&gt; Capture[stdout / stderr / exit / duration]
+  Capture --&gt; Record[feedback_record.jsonl]
+  Record --&gt; Agent
+  Record --&gt; Gate[Verification Gate]</pre></div><h3 id="what-goes-in-a-feedback-record"><a class="anchor" href="#what-goes-in-a-feedback-record">#</a> What goes in a feedback record</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>command</code></td>
+<td>Exact argv, no shell expansion surprises</td>
+</tr>
+<tr>
+<td><code>stdout_tail</code></td>
+<td>Last N lines, deterministic truncation</td>
+</tr>
+<tr>
+<td><code>stderr_tail</code></td>
+<td>Last N lines, separate from stdout</td>
+</tr>
+<tr>
+<td><code>exit_code</code></td>
+<td>The unambiguous success signal</td>
+</tr>
+<tr>
+<td><code>duration_ms</code></td>
+<td>Surfaces slow probes and runaway processes</td>
+</tr>
+<tr>
+<td><code>started_at</code></td>
+<td>Timestamp for replay</td>
+</tr>
+<tr>
+<td><code>agent_note</code></td>
+<td>One line the agent writes about what it expected</td>
+</tr>
+</tbody></table>
+<h3 id="truncation-is-deterministic"><a class="anchor" href="#truncation-is-deterministic">#</a> Truncation is deterministic</h3>
+<p>A 50 MB log destroys the loop. The runner truncates head and tail with a <code>...truncated N lines...</code> marker, deterministic so the same output always produces the same record. No sampling; the parts the agent needs to see (final error, final summary) live at the tail.</p>
+<h3 id="feedback-versus-telemetry"><a class="anchor" href="#feedback-versus-telemetry">#</a> Feedback versus telemetry</h3>
+<p>Telemetry (Phase 14 · 23, OTel GenAI conventions) is for human operators reviewing runs across time. Feedback is for the next turn of this run. They share fields but they live in different files with different retention.</p>
+<h3 id="refuse-to-advance-without-feedback"><a class="anchor" href="#refuse-to-advance-without-feedback">#</a> Refuse to advance without feedback</h3>
+<p>If the runner errors before capturing exit, the record carries <code>exit_code: null</code> and <code>error: &lt;reason&gt;</code>. The agent loop must refuse to claim success on a <code>null</code> exit. No exit, no progress.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">wb-feedback-loop</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>run_with_feedback(command, agent_note)</code> that wraps <code>subprocess.run</code>, captures stdout/stderr/exit/duration, truncates deterministically, appends to <code>feedback_record.jsonl</code>.</li>
+<li>A small loader that streams the JSONL into a Python list.</li>
+<li>A demo that runs three commands (success, failure, slow) and prints the last record per command.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: three feedback records appended to <code>feedback_record.jsonl</code>, the last one of each printed inline. Tail the file across re-runs to see the loop accumulate.</p>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Three patterns harden the runner enough to ship.</p>
+<p><strong>Redact at write, not at read.</strong> Any record that touches stdout or stderr can leak secrets. The runner ships a redaction pass before the JSONL append: strip lines matching <code>^Bearer </code>, <code>password=</code>, <code>api[_-]?key=</code>, <code>AKIA[0-9A-Z]{16}</code> (AWS), <code>xox[baprs]-</code> (Slack). Redaction at read time is a foot-gun; the file on disk is what an attacker reaches. Audit the redaction patterns quarterly against the production runtime&#39;s observed secret formats.</p>
+<p><strong>Rotation policy, not a single file.</strong> Cap <code>feedback_record.jsonl</code> at 1 MB per file; on overflow rotate to <code>.1</code>, <code>.2</code>, drop <code>.5</code>. The agent&#39;s loop only reads the current file, so the runtime cost is bounded. CI artifact storage gets the full rotated set. Without rotation the file becomes the bottleneck on every loader call.</p>
+<p><strong>Parent-command id for retry chains.</strong> Every record gets <code>command_id</code>; retries carry <code>parent_command_id</code> pointing at the previous attempt. The reviewer&#39;s &quot;failed attempts&quot; list (Phase 14 · 40) and the verification gate&#39;s audit both follow the chain. Without this link, retries look like independent successes and the audit hides the failure history.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Claude Code Bash tool.</strong> The tool already captures stdout, stderr, exit, and duration. The runner in this lesson is the framework-agnostic equivalent for any agent product.</li>
+<li><strong>LangGraph nodes.</strong> Wrap any shell node in the runner so the record persists outside graph state.</li>
+<li><strong>CI logs.</strong> Pipe the JSONL into your CI artifact store; reviewers can replay any command without rerunning the session.</li>
+</ul>
+<p>The runner is a thin wrapper that survives every framework migration because it owns the shape of the record.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-feedback-runner.md</code> generates a project-specific <code>run_with_feedback.py</code> with the right truncation budget, a JSONL writer wired to the workbench, and a loader the agent reads at every turn.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>cwd</code> field per record so the same command run from different directories is distinguishable.</li>
+<li>Add a <code>redaction</code> step that strips lines matching <code>^Bearer </code> or <code>password=</code>. Test on a fixture record.</li>
+<li>Cap total <code>feedback_record.jsonl</code> size at 1 MB by rotating to <code>.1</code>, <code>.2</code> files. Defend the rotation policy.</li>
+<li>Add a <code>parent_command_id</code> so retry chains are visible: which command produced the input that the next command consumed.</li>
+<li>Pipe the JSONL into a tiny TUI that highlights the latest non-zero exit. Eight key features the TUI must show to be useful in a review.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Feedback record</td>
+<td>&quot;Run log&quot;</td>
+<td>Structured JSONL entry with command, output, exit, duration</td>
+</tr>
+<tr>
+<td>Tail truncation</td>
+<td>&quot;Trim the log&quot;</td>
+<td>Deterministic head+tail capture so records fit in token budget</td>
+</tr>
+<tr>
+<td>Refuse-on-null</td>
+<td>&quot;Block on missing data&quot;</td>
+<td>The loop must not advance when <code>exit_code</code> is null</td>
+</tr>
+<tr>
+<td>Agent note</td>
+<td>&quot;Expectation tag&quot;</td>
+<td>The one-line prediction the agent writes before reading the result</td>
+</tr>
+<tr>
+<td>Telemetry split</td>
+<td>&quot;Two log files&quot;</td>
+<td>Feedback for the next turn, telemetry for the operator</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">OpenTelemetry GenAI semantic conventions</a></li>
+<li><a href="https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents">Anthropic, Effective harnesses for long-running agents</a></li>
+<li><a href="https://guardrailsai.com/blog/guardrails-mlflow">Guardrails AI x MLflow — deterministic safety, PII, quality validators</a> — redaction patterns as regression tests</li>
+<li><a href="https://aport.io/blog/best-ai-agent-guardrails-2026-pre-action-authorization-compared/">Aport.io, Best AI Agent Guardrails 2026: Pre-Action Authorization Compared</a> — pre/post-tool capture</li>
+<li><a href="https://andriifurmanets.com/blogs/ai-agents-2026-practical-architecture-tools-memory-evals-guardrails">Andrii Furmanets, AI Agents in 2026: Practical Architecture for Tools, Memory, Evals, Guardrails</a> — observability surfaces</li>
+<li>Phase 14 · 23 — OTel GenAI conventions for the telemetry side</li>
+<li>Phase 14 · 24 — agent observability platforms (Langfuse, Phoenix, Opik)</li>
+<li>Phase 14 · 33 — the rule that demands feedback before declaring done</li>
+<li>Phase 14 · 38 — the verification gate that reads the JSONL</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./36-scope-contracts.html"><span>← Previous</span><b>scope contracts</b></a>
+      <a class="next" href="./38-verification-gates.html"><span>Next →</span><b>verification gates</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

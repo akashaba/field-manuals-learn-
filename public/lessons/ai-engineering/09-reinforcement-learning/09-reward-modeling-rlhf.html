@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reward Modeling &amp; RLHF — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/09-reward-modeling-rlhf/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Reward Modeling &amp; RLHF</h1>
+    <p class="lesson-sub">Humans cannot write a reward function for &quot;good assistant response,&quot; but they can compare two responses and pick the better one. Fit a reward model to those comparisons, then RL the language model against it. Christiano 2017. InstructGPT 2022. The recipe that turned GPT-3 into ChatGPT. In 2026 it is mostly being replaced by DPO — but the mental model stays.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 5 · 05 (Sentiment), Phase 9 · 08 (PPO)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="30.4" y="32.9" width="30.4" height="30.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.6 48.1)"/>
+        <rect x="25.6" y="128.6" width="29.1" height="29.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(176 40.1 143.2)"/>
+        <rect x="20.8" y="124.4" width="27.8" height="27.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(158 34.7 138.3)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Reward Modeling &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">RLHF</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You trained a language model on the next-token-prediction objective. It writes grammatical English. It also lies, rambles, and refuses to refuse. You cannot fix this with more pretraining — web text is the problem, not the cure.</p>
+<p>You want a <em>scalar reward</em> that says &quot;response A is better than response B for instruction X.&quot; Writing that reward function by hand is impossible. &quot;Helpfulness&quot; is not a closed-form expression over tokens. But humans can compare two outputs and mark a preference. That is cheap to collect at scale.</p>
+<p>RLHF (Christiano et al. 2017; Ouyang et al. 2022) converts preferences into a reward model, then optimizes the LM via PPO against that reward. In three steps: SFT → RM → PPO. It is the recipe that shipped ChatGPT, Claude, Gemini, and every other aligned-LLM in 2023–2025.</p>
+<p>In 2026 the PPO step is mostly replaced by DPO (Phase 10 · 08) because it is cheaper and nearly as good for alignment tuning. But the <em>reward model</em> piece still underlies every Best-of-N sampler, every RL-from-verifiable-rewards pipeline, and every reasoning model using a process reward model. Understand RLHF and you understand the entire alignment stack.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/09-reward-modeling-rlhf/assets/rlhf.svg" alt="Three-stage RLHF: SFT, RM training on pairwise prefs, PPO with KL penalty" loading="lazy" /></figure></p>
+<p><strong>Stage 1: Supervised Fine-Tuning (SFT).</strong> Start from a pretrained base model. Fine-tune on human-written demonstrations of the target behavior (instruction-following responses, helpful replies, etc.). Result: a model <code>π_SFT</code> that is <em>biased toward good behavior</em> but still has an unbounded action space.</p>
+<p><strong>Stage 2: Reward Model training.</strong></p>
+<ul>
+<li><p>Collect pairs of responses <code>(y_+, y_-)</code> to prompts <code>x</code>, labeled by humans as &quot;y_+ is preferred over y_-.&quot;</p>
+</li>
+<li><p>Train a reward model <code>R_φ(x, y)</code> to assign higher scores to <code>y_+</code>.</p>
+</li>
+<li><p>Loss: the <strong>Bradley-Terry pairwise logistic</strong>:</p>
+<p><code>L(φ) = -E[ log σ(R_φ(x, y_+) - R_φ(x, y_-)) ]</code></p>
+<p>σ is the sigmoid. The difference in reward implies a log-odds of preference. BT has been the standard since 1952 (Bradley-Terry) and is the dominant choice in modern RLHF.</p>
+</li>
+<li><p><code>R_φ</code> is usually initialized from the SFT model with a scalar head on top. Same transformer backbone; a single linear layer outputs the reward.</p>
+</li>
+</ul>
+<p><strong>Stage 3: PPO against the RM with KL penalty.</strong></p>
+<ul>
+<li><p>Initialize the trainable policy <code>π_θ</code> from <code>π_SFT</code>. Keep a frozen <em>reference</em> <code>π_ref = π_SFT</code>.</p>
+</li>
+<li><p>Reward at the end of a response <code>y</code>:</p>
+<p><code>r_total(x, y) = R_φ(x, y) - β · KL(π_θ(·|x) || π_ref(·|x))</code></p>
+<p>The KL penalty prevents <code>π_θ</code> from drifting arbitrarily from <code>π_SFT</code> — it is a <em>regularizer</em>, not a hard trust region. <code>β</code> typically <code>0.01</code>-<code>0.05</code>.</p>
+</li>
+<li><p>Run PPO (Lesson 08) with this reward. Advantages are computed on the token-level trajectory, but the RM scores only the full response.</p>
+</li>
+</ul>
+<p><strong>Why the KL?</strong> Without it, PPO will happily find reward-hacking strategies — the RM was only trained on in-distribution completions. An out-of-distribution response might score higher than any human-written one. The KL keeps <code>π_θ</code> near the manifold where the RM was trained. It is the single most important knob in RLHF.</p>
+<p><strong>2026 status:</strong></p>
+<ul>
+<li><strong>DPO</strong> (Rafailov 2023): closed-form algebra collapses Stage 2+3 into a single supervised loss over preference data. No RM, no PPO. Same quality on alignment benchmarks for a fraction of the compute. Covered in Phase 10 · 08.</li>
+<li><strong>GRPO</strong> (DeepSeek 2024–2025): PPO with a group-relative baseline instead of a critic, reward from a <em>verifier</em> (code runs / math answer matches) instead of a human-trained RM. Dominant for reasoning models. Covered in Phase 9 · 12.</li>
+<li><strong>Process reward models (PRMs):</strong> score partial solutions (each reasoning step), used in both RLHF and GRPO variants for reasoning.</li>
+<li><strong>Constitutional AI / RLAIF:</strong> use an aligned LLM to generate preferences instead of humans. Scales the preference budget.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">reward-model</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>This lesson uses tiny synthetic &quot;prompts&quot; and &quot;responses&quot; represented as strings. The RM is a linear scorer over a bag-of-tokens representation. No real LLM — the <em>shape</em> of the pipeline matters, not the scale. See <code>code/main.py</code>.</p>
+<h3 id="step-1-synthetic-preference-data"><a class="anchor" href="#step-1-synthetic-preference-data">#</a> Step 1: synthetic preference data</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">PROMPTS = [&quot;help me&quot;, &quot;answer me&quot;, &quot;explain this&quot;]
+GOOD_WORDS = {&quot;clear&quot;, &quot;specific&quot;, &quot;kind&quot;, &quot;thorough&quot;}
+BAD_WORDS = {&quot;vague&quot;, &quot;rude&quot;, &quot;wrong&quot;, &quot;short&quot;}
+
+def make_pair(rng):
+    x = rng.choice(PROMPTS)
+    y_good = rng.choice(list(GOOD_WORDS)) + &quot; &quot; + rng.choice(list(GOOD_WORDS))
+    y_bad = rng.choice(list(BAD_WORDS)) + &quot; &quot; + rng.choice(list(BAD_WORDS))
+    return (x, y_good, y_bad)</code></pre>
+      </div>
+    <p>In real RLHF this is replaced by human labelers. The shape — <code>(prompt, preferred_response, rejected_response)</code> — is identical.</p>
+<h3 id="step-2-bradley-terry-reward-model"><a class="anchor" href="#step-2-bradley-terry-reward-model">#</a> Step 2: Bradley-Terry reward model</h3>
+<p>Linear score: <code>R(x, y) = w · bag(y)</code>. Train to minimize the BT pairwise log-loss:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rm_train_step(w, x, y_pos, y_neg, lr):
+    r_pos = dot(w, bag(y_pos))
+    r_neg = dot(w, bag(y_neg))
+    p = sigmoid(r_pos - r_neg)
+    for tok, cnt in bag(y_pos).items():
+        w[tok] += lr * (1 - p) * cnt
+    for tok, cnt in bag(y_neg).items():
+        w[tok] -= lr * (1 - p) * cnt</code></pre>
+      </div>
+    <p>After a few hundred updates, <code>w</code> assigns positive weights to good-word tokens and negative to bad.</p>
+<h3 id="step-3-ppo-like-policy-on-top-of-rm"><a class="anchor" href="#step-3-ppo-like-policy-on-top-of-rm">#</a> Step 3: PPO-like policy on top of RM</h3>
+<p>Our toy policy produces a single token from a vocabulary. We score the token under the RM, compute <code>log π_θ(token | prompt)</code>, add a KL-to-reference penalty, and apply the clipped PPO surrogate.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rlhf_step(theta, ref, w, prompt, rng, eps=0.2, beta=0.1, lr=0.05):
+    logits_theta = policy_logits(theta, prompt)
+    probs = softmax(logits_theta)
+    token = sample(probs, rng)
+    logits_ref = policy_logits(ref, prompt)
+    probs_ref = softmax(logits_ref)
+    reward = dot(w, bag([token])) - beta * kl(probs, probs_ref)
+    # ppo-style update on theta, treating reward as the return
+    ...</code></pre>
+      </div>
+    <h3 id="step-4-monitor-the-kl"><a class="anchor" href="#step-4-monitor-the-kl">#</a> Step 4: monitor the KL</h3>
+<p>Track mean <code>KL(π_θ || π_ref)</code> every update. If it creeps past <code>~5-10</code> the policy has drifted far from <code>π_SFT</code> — lower <code>β</code> is rising or reward hacking is starting. This is the top diagnostic in real RLHF.</p>
+<h3 id="step-5-the-production-recipe-with-trl"><a class="anchor" href="#step-5-the-production-recipe-with-trl">#</a> Step 5: the production recipe with TRL</h3>
+<p>Once you understand the toy pipeline, here is the same loop as a real library user writes it. Hugging Face&#39;s <a href="https://huggingface.co/docs/trl">TRL</a> is the reference implementation — <code>RewardTrainer</code> for Stage 2 and <code>PPOTrainer</code> (with a KL-to-reference built in) for Stage 3.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Stage 2: reward model from pairwise preferences
+from trl import RewardTrainer, RewardConfig
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained(&quot;meta-llama/Llama-3.1-8B-Instruct&quot;)
+rm = AutoModelForSequenceClassification.from_pretrained(
+    &quot;meta-llama/Llama-3.1-8B-Instruct&quot;, num_labels=1
+)
+
+# dataset rows: {&quot;prompt&quot;, &quot;chosen&quot;, &quot;rejected&quot;} — Bradley-Terry format
+trainer = RewardTrainer(
+    model=rm,
+    tokenizer=tok,
+    train_dataset=preference_data,
+    args=RewardConfig(output_dir=&quot;./rm&quot;, num_train_epochs=1, learning_rate=1e-5),
+)
+trainer.train()</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Stage 3: PPO against the RM with KL penalty to the SFT reference
+from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
+
+policy = AutoModelForCausalLMWithValueHead.from_pretrained(&quot;./sft-checkpoint&quot;)
+ref    = AutoModelForCausalLMWithValueHead.from_pretrained(&quot;./sft-checkpoint&quot;)  # frozen
+
+ppo = PPOTrainer(
+    config=PPOConfig(learning_rate=1.41e-5, batch_size=64, init_kl_coef=0.05,
+                     target_kl=6.0, adap_kl_ctrl=True),
+    model=policy, ref_model=ref, tokenizer=tok,
+)
+
+for batch in dataloader:
+    responses = ppo.generate(batch[&quot;query_ids&quot;], max_new_tokens=128)
+    rewards   = rm(torch.cat([batch[&quot;query_ids&quot;], responses], dim=-1)).logits[:, 0]
+    stats     = ppo.step(batch[&quot;query_ids&quot;], responses, rewards)
+    # stats includes: mean_kl, clip_frac, value_loss — the three PPO diagnostics</code></pre>
+      </div>
+    <p>Three things the library does for you. <code>adap_kl_ctrl=True</code> implements the adaptive-β schedule: if observed KL exceeds <code>target_kl</code>, β doubles; if below half, β halves. The reference model is frozen by convention — you must not accidentally share parameters with <code>policy</code>. And the value head lives on the same backbone as the policy (<code>AutoModelForCausalLMWithValueHead</code> attaches a scalar MLP head), which is why TRL reports <code>policy/kl</code> and <code>value/loss</code> separately.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Over-optimization / reward hacking.</strong> The RM is imperfect; <code>π_θ</code> finds adversarial completions that score high but are bad. Symptoms: reward climbs indefinitely while human eval score plateaus or drops. Fix: stop early, raise <code>β</code>, broaden RM training data.</li>
+<li><strong>Length hacking.</strong> RMs trained on helpful responses often implicitly reward length. The policy learns to pad responses. Remediation: length-normalized reward, or RLAIF with a length-aware RM.</li>
+<li><strong>Too-small RM.</strong> The RM needs to be at least as large as the policy. A tiny RM cannot faithfully score the policy&#39;s outputs.</li>
+<li><strong>KL tuning.</strong> Too low β → drift and reward hacking. Too high β → policy barely changes. The standard trick is an <em>adaptive</em> β that targets a fixed KL per step.</li>
+<li><strong>Preference-data noise.</strong> ~30% of human labels are noisy or ambiguous. Calibrate by training the RM on agreement-filtered data or use a temperature on BT.</li>
+<li><strong>Off-policy problems.</strong> PPO data is slightly off-policy after the first epoch. Monitor clip fraction as in Lesson 08.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>RLHF in 2026 is layered:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Target</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Instruction following, helpfulness, harmlessness</td>
+<td>Alignment</td>
+<td>DPO (Phase 10 · 08) preferred over RLHF-PPO.</td>
+</tr>
+<tr>
+<td>Reasoning correctness (math, code)</td>
+<td>Capability</td>
+<td>GRPO with verifier reward (Phase 9 · 12).</td>
+</tr>
+<tr>
+<td>Long-horizon multi-step tasks</td>
+<td>Agentic</td>
+<td>PPO / GRPO with process reward models over steps.</td>
+</tr>
+<tr>
+<td>Safety / refusal behavior</td>
+<td>Safety</td>
+<td>RLHF-PPO with separate safety RM, or Constitutional AI.</td>
+</tr>
+<tr>
+<td>Best-of-N at inference</td>
+<td>Fast alignment</td>
+<td>Use RM at decode time; no policy training needed.</td>
+</tr>
+<tr>
+<td>Reward distillation</td>
+<td>Inference compute</td>
+<td>Train a small &quot;reward head&quot; on top of a frozen LM.</td>
+</tr>
+</tbody></table>
+<p>RLHF was <em>the</em> method in 2022–2024. In 2026, production alignment pipelines are DPO-first, PPO-only for the RM-intensive or safety-critical steps.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-rlhf-architect.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: rlhf-architect
+description: Design an RLHF / DPO / GRPO alignment pipeline for a language model, including RM, KL, and data strategy.
+version: 1.0.0
+phase: 9
+lesson: 9
+tags: [rl, rlhf, alignment, llm]
+---
+
+Given a base LM, a target behavior (alignment / reasoning / refusal / agent), and a preference or verifier budget, output:
+
+1. Stage. SFT? RM? DPO? GRPO? With justification.
+2. Preference or verifier source. Humans, AI feedback, rule-based, unit-test-pass, or reward distillation.
+3. KL strategy. Fixed β, adaptive β, or DPO (implicit KL).
+4. Diagnostics. Mean KL, reward stability, over-optimization guard (holdout human eval).
+5. Safety gate. Red-team set, refusal rate, safety RM separate from helpfulness RM.
+
+Refuse to ship RLHF-PPO without a KL monitor. Refuse to use an RM smaller than the target policy. Refuse length-only rewards. Flag any pipeline that does not hold back a blind human-eval set as lacking over-optimization protection.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Train the Bradley-Terry reward model in <code>code/main.py</code> on 500 synthetic preference pairs. Measure pairwise accuracy on a held-out 100 pairs. Should exceed 90%.</li>
+<li><strong>Medium.</strong> Run the toy PPO-RLHF loop with <code>β ∈ {0.0, 0.1, 1.0}</code>. For each, plot RM score vs KL-to-reference over updates. Which runs reward-hack?</li>
+<li><strong>Hard.</strong> Implement DPO (closed-form preference-likelihood loss) on the same preference data and compare to the RLHF-PPO pipeline in compute used and final RM score achieved.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RLHF</td>
+<td>&quot;Alignment RL&quot;</td>
+<td>Three-stage SFT + RM + PPO pipeline (Christiano 2017, Ouyang 2022).</td>
+</tr>
+<tr>
+<td>Reward Model (RM)</td>
+<td>&quot;The scoring net&quot;</td>
+<td>Learned scalar function fit to pairwise preferences via Bradley-Terry.</td>
+</tr>
+<tr>
+<td>Bradley-Terry</td>
+<td>&quot;Pairwise logistic loss&quot;</td>
+<td><code>P(y_+ ≻ y_-) = σ(R(y_+) - R(y_-))</code>; the standard RM objective.</td>
+</tr>
+<tr>
+<td>KL penalty</td>
+<td>&quot;Stay near the reference&quot;</td>
+<td><code>β · KL(π_θ || π_ref)</code> in the reward; the anti-reward-hacking regularizer.</td>
+</tr>
+<tr>
+<td>Reward hacking</td>
+<td>&quot;Goodhart&#39;s law&quot;</td>
+<td>Policy exploits RM flaws; symptoms: reward up, human eval flat.</td>
+</tr>
+<tr>
+<td>RLAIF</td>
+<td>&quot;AI-labeled preferences&quot;</td>
+<td>RLHF where labels come from another LM instead of humans.</td>
+</tr>
+<tr>
+<td>PRM</td>
+<td>&quot;Process Reward Model&quot;</td>
+<td>Scores partial reasoning steps; used in reasoning pipelines.</td>
+</tr>
+<tr>
+<td>Constitutional AI</td>
+<td>&quot;Anthropic&#39;s method&quot;</td>
+<td>AI-generated preferences guided by explicit rules.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03741">Christiano et al. (2017). Deep Reinforcement Learning from Human Preferences</a> — the paper that started RLHF.</li>
+<li><a href="https://arxiv.org/abs/2203.02155">Ouyang et al. (2022). InstructGPT — Training language models to follow instructions with human feedback</a> — the recipe behind ChatGPT.</li>
+<li><a href="https://arxiv.org/abs/2009.01325">Stiennon et al. (2020). Learning to summarize with human feedback</a> — earlier RLHF for summarization.</li>
+<li><a href="https://arxiv.org/abs/2305.18290">Rafailov et al. (2023). Direct Preference Optimization</a> — DPO; the post-RLHF default in 2026.</li>
+<li><a href="https://arxiv.org/abs/2212.08073">Bai et al. (2022). Constitutional AI: Harmlessness from AI Feedback</a> — RLAIF and self-critique loop.</li>
+<li><a href="https://arxiv.org/abs/2204.05862">Anthropic RLHF paper (Bai et al. 2022). Training a Helpful and Harmless Assistant</a> — the HH paper.</li>
+<li><a href="https://huggingface.co/docs/trl">Hugging Face TRL library</a> — production <code>RewardTrainer</code> and <code>PPOTrainer</code>. Read the trainer source for the adaptive-KL and value-head details.</li>
+<li><a href="https://huggingface.co/blog/rlhf">Hugging Face — Illustrating Reinforcement Learning from Human Feedback</a> by Lambert, Castricato, von Werra, Havrilla — the canonical walk-through of the three-stage pipeline with diagrams.</li>
+<li><a href="https://github.com/huggingface/trl">von Werra et al. (2020). TRL: Transformer Reinforcement Learning</a> — the library; <code>examples/</code> has end-to-end RLHF scripts for Llama, Mistral, and Qwen.</li>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 17.4 — Designing Reward Signals</a> — the reward-hypothesis view; essential prerequisite for thinking about reward hacking.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-ppo.html"><span>← Previous</span><b>ppo</b></a>
+      <a class="next" href="./10-multi-agent-rl.html"><span>Next →</span><b>multi agent rl</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

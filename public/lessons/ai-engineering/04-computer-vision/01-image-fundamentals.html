@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image Fundamentals — Pixels, Channels, Color Spaces — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/01-image-fundamentals/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Image Fundamentals — Pixels, Channels, Color Spaces</h1>
+    <p class="lesson-sub">An image is a tensor of light samples. Every vision model you will ever use starts from this one fact.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 1 Lesson 12 (Tensor Operations), Phase 3 Lesson 11 (Intro to PyTorch)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 01">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M65.0,73.5 L70.1,65.8 L75.2,73.5 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.2,76.0 L64.7,49.8 L82.1,76.0 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.4" y="43.7" width="33.6" height="33.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(238 59.2 60.6)"/>
+        <rect x="37.6" y="39.5" width="32.4" height="32.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(220 53.8 55.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">01</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Image Fundamentals —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Pixels, Channels…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain how a continuous scene gets discretized into pixels and why sampling/quantization decisions set the ceiling on every downstream model</li>
+<li>Read, slice, and inspect images as NumPy arrays and switch fluently between HWC and CHW layouts</li>
+<li>Convert between RGB, grayscale, HSV, and YCbCr and justify why each color space exists</li>
+<li>Apply pixel-level preprocessing (normalize, standardize, resize, channel-first) exactly as pretrained PyTorch vision models expect it</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Every paper you will read, every pretrained weight you will download, every vision API you will call assumes a specific encoding of the input. Pass a <code>uint8</code> image where the model wants <code>float32</code> and it will still run — and silently produce garbage. Feed BGR to a network trained on RGB and accuracy collapses by ten points. Hand a model channels-last input when it expects channels-first and the first conv layer treats height as a feature channel. None of this throws an error. It just ruins your metrics and you spend a week hunting for a bug that lives in how you loaded the file.</p>
+<p>A convolution is not complicated once you know what it is sliding over. The hard part is that &quot;an image&quot; means different things to a camera, a JPEG decoder, PIL, OpenCV, torchvision, and a CUDA kernel. Each stack has its own axis order, byte range, and channel convention. A vision engineer who cannot keep these straight ships broken pipelines.</p>
+<p>This lesson fixes the foundation so the rest of the phase can build on it. By the end you will know what a pixel is, why there are three numbers per pixel instead of one, what &quot;normalize with ImageNet stats&quot; actually does, and how to move between the two or three layouts that every other lesson in this phase will assume.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-full-preprocessing-pipeline-at-a-glance"><a class="anchor" href="#the-full-preprocessing-pipeline-at-a-glance">#</a> The full preprocessing pipeline at a glance</h3>
+<p>Every production vision system is the same sequence of reversible transforms. Get one step wrong and the model sees a different input than it was trained on.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[&quot;Image file&lt;br/&gt;(JPEG/PNG)&quot;] --&gt; B[&quot;Decode&lt;br/&gt;uint8 HWC&quot;]
+    B --&gt; C[&quot;Convert&lt;br/&gt;colorspace&lt;br/&gt;(RGB/BGR/YCbCr)&quot;]
+    C --&gt; D[&quot;Resize&lt;br/&gt;shorter side&quot;]
+    D --&gt; E[&quot;Center crop&lt;br/&gt;model size&quot;]
+    E --&gt; F[&quot;Divide by 255&lt;br/&gt;float32 [0,1]&quot;]
+    F --&gt; G[&quot;Subtract mean&lt;br/&gt;Divide by std&quot;]
+    G --&gt; H[&quot;Transpose&lt;br/&gt;HWC → CHW&quot;]
+    H --&gt; I[&quot;Batch&lt;br/&gt;CHW → NCHW&quot;]
+    I --&gt; J[&quot;Model&quot;]
+
+    style A fill:#fef3c7,stroke:#d97706
+    style J fill:#ddd6fe,stroke:#7c3aed
+    style G fill:#fecaca,stroke:#dc2626
+    style H fill:#bfdbfe,stroke:#2563eb</pre></div><p>The two red and blue boxes are where 80% of silent failures live: missing standardization and wrong layout.</p>
+<h3 id="a-pixel-is-a-sample-not-a-square"><a class="anchor" href="#a-pixel-is-a-sample-not-a-square">#</a> A pixel is a sample, not a square</h3>
+<p>A camera sensor counts photons that land on a grid of tiny detectors. Each detector integrates light for a fraction of a second and emits a voltage proportional to how many photons hit it. The sensor then discretizes that voltage into an integer. One detector becomes one pixel.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Continuous scene                 Sensor grid                     Digital image
+(infinite detail)                (H x W detectors)               (H x W integers)
+
+    ~~~~~                        +--+--+--+--+--+                 210 198 180 155 120
+   ~   ~   ~                     |  |  |  |  |  |                 205 195 178 152 118
+  ~ light ~      ----&gt;           +--+--+--+--+--+     ----&gt;       200 190 175 150 115
+   ~~~~~                         |  |  |  |  |  |                 195 185 170 148 112
+                                 +--+--+--+--+--+                 188 180 165 145 108</code></pre>
+      </div>
+    <p>Two choices happen at this step and they fix the ceiling on everything downstream:</p>
+<ul>
+<li><strong>Spatial sampling</strong> decides how many detectors per degree of the scene. Too few, and edges become jagged (aliasing). Too many, and storage and compute explode.</li>
+<li><strong>Intensity quantization</strong> decides how finely the voltage is bucketed. 8 bits gives 256 levels and is standard for display. 10, 12, 16 bits give smoother gradients and matter for medical imaging, HDR, and raw sensor pipelines.</li>
+</ul>
+<p>A pixel is not a coloured square with area. It is a single measurement. When you resize or rotate, you are resampling that measurement grid.</p>
+<h3 id="why-three-channels"><a class="anchor" href="#why-three-channels">#</a> Why three channels</h3>
+<p>One detector counts photons across the whole visible spectrum — that is grayscale. To get colour, the sensor covers the grid with a mosaic of red, green, and blue filters. After demosaicing, every spatial location has three integers: the response of the red-filtered detector, green-filtered, and blue-filtered nearby. Those three integers are a pixel&#39;s RGB triplet.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">One pixel in memory:
+
+    (R, G, B) = (210, 140, 30)   &lt;- reddish-orange
+
+An H x W RGB image:
+
+    shape (H, W, 3)     stored as   H rows of W pixels of 3 values
+                                    each in [0, 255] for uint8</code></pre>
+      </div>
+    <p>Three is not magic. Depth cameras add a Z channel. Satellites add infrared and ultraviolet bands. Medical scans often have one channel (X-ray, CT) or many (hyperspectral). The number of channels is the last axis; conv layers learn to mix across it.</p>
+<h3 id="two-layout-conventions-hwc-and-chw"><a class="anchor" href="#two-layout-conventions-hwc-and-chw">#</a> Two layout conventions: HWC and CHW</h3>
+<p>Same tensor, two orderings. Every library picks one.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">HWC (height, width, channels)           CHW (channels, height, width)
+
+   W -&gt;                                    H -&gt;
+  +-----+-----+-----+                     +-----+-----+
+H |R G B|R G B|R G B|                   C |R R R R R R|
+| +-----+-----+-----+                   | +-----+-----+
+v |R G B|R G B|R G B|                   v |G G G G G G|
+  +-----+-----+-----+                     +-----+-----+
+                                          |B B B B B B|
+                                          +-----+-----+
+
+   PIL, OpenCV, matplotlib,              PyTorch, most deep learning
+   almost every image file on disk       frameworks, cuDNN kernels</code></pre>
+      </div>
+    <p>CHW exists because convolution kernels slide across H and W. Keeping the channel axis first means each kernel sees a contiguous 2D plane per channel, which vectorizes cleanly. Disk formats keep HWC because that matches how scanlines come out of a sensor.</p>
+<p>The one-line conversion you will type a thousand times:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">img_chw = img_hwc.transpose(2, 0, 1)      # NumPy
+img_chw = img_hwc.permute(2, 0, 1)        # PyTorch tensor</code></pre>
+      </div>
+    <p>Memory layout, visualised:</p>
+<div class="fig"><pre class="mermaid">flowchart TB
+    subgraph HWC[&quot;HWC — pixels stored interleaved (PIL, OpenCV, JPEG)&quot;]
+        H1[&quot;row 0: R G B | R G B | R G B ...&quot;]
+        H2[&quot;row 1: R G B | R G B | R G B ...&quot;]
+        H3[&quot;row 2: R G B | R G B | R G B ...&quot;]
+    end
+    subgraph CHW[&quot;CHW — channels stored as stacked planes (PyTorch, cuDNN)&quot;]
+        C1[&quot;plane R: entire H x W of red values&quot;]
+        C2[&quot;plane G: entire H x W of green values&quot;]
+        C3[&quot;plane B: entire H x W of blue values&quot;]
+    end
+    HWC --&gt;|&quot;transpose(2, 0, 1)&quot;| CHW
+    CHW --&gt;|&quot;transpose(1, 2, 0)&quot;| HWC</pre></div><h3 id="byte-ranges-and-dtype"><a class="anchor" href="#byte-ranges-and-dtype">#</a> Byte ranges and dtype</h3>
+<p>Three conventions dominate:</p>
+<table>
+<thead>
+<tr>
+<th>Convention</th>
+<th>dtype</th>
+<th>Range</th>
+<th>Where you see it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Raw</td>
+<td><code>uint8</code></td>
+<td>[0, 255]</td>
+<td>Files on disk, PIL, OpenCV output</td>
+</tr>
+<tr>
+<td>Normalized</td>
+<td><code>float32</code></td>
+<td>[0.0, 1.0]</td>
+<td>After <code>img.astype(&#39;float32&#39;) / 255</code></td>
+</tr>
+<tr>
+<td>Standardized</td>
+<td><code>float32</code></td>
+<td>roughly [-2, +2]</td>
+<td>After subtracting mean and dividing by std</td>
+</tr>
+</tbody></table>
+<p>Convolutional networks were trained on standardized inputs. ImageNet stats <code>mean=[0.485, 0.456, 0.406]</code>, <code>std=[0.229, 0.224, 0.225]</code> are the arithmetic mean and standard deviation of the three channels over the full ImageNet training set, computed on [0, 1] normalized pixels. Feeding raw <code>uint8</code> into a model that expects standardized float is the single most common silent failure in applied vision.</p>
+<h3 id="color-spaces-and-why-they-exist"><a class="anchor" href="#color-spaces-and-why-they-exist">#</a> Color spaces and why they exist</h3>
+<p>RGB is the capture format but it is not always the most useful representation for a model.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> RGB               HSV                       YCbCr / YUV
+
+ R red             H hue (angle 0-360)       Y luminance (brightness)
+ G green           S saturation (0-1)        Cb chroma blue-yellow
+ B blue            V value/brightness (0-1)  Cr chroma red-green
+
+ Linear to         Separates color from      Separates brightness from
+ sensor output     brightness. Useful for    color. JPEG and most video
+                   color thresholding, UI    codecs compress the chroma
+                   sliders, simple filters   channels harder because the
+                                             human eye is less sensitive
+                                             to chroma detail than to Y.</code></pre>
+      </div>
+    <p>For most modern CNNs you feed RGB. You meet other spaces when:</p>
+<ul>
+<li><strong>HSV</strong> — classical CV code, color-based segmentation, white-balancing.</li>
+<li><strong>YCbCr</strong> — reading JPEG internals, video pipelines, super-resolution models that operate on Y only.</li>
+<li><strong>Grayscale</strong> — OCR, document models, any case where color is nuisance variable rather than signal.</li>
+</ul>
+<p>Grayscale from RGB is a weighted sum, not an average, because the human eye is more sensitive to green than to red or blue:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Y = 0.299 R + 0.587 G + 0.114 B       (ITU-R BT.601, the classic weights)</code></pre>
+      </div>
+    <h3 id="aspect-ratio-resizing-and-interpolation"><a class="anchor" href="#aspect-ratio-resizing-and-interpolation">#</a> Aspect ratio, resizing, and interpolation</h3>
+<p>Every model has a fixed input size (224x224 for most ImageNet classifiers, 384x384 or 512x512 for modern detectors). Your images rarely match. The three resize choices that matter:</p>
+<ul>
+<li><strong>Resize shorter side, then center crop</strong> — the standard ImageNet recipe. Preserves aspect ratio, throws away a strip of edge pixels.</li>
+<li><strong>Resize and pad</strong> — preserves aspect ratio and every pixel, adds black bars. Standard for detection and OCR.</li>
+<li><strong>Resize directly to target</strong> — stretches the image. Cheap, distorts geometry, fine for many classification tasks.</li>
+</ul>
+<p>The interpolation method decides how intermediate pixels are computed when the new grid does not align with the old one:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Nearest neighbour     fastest, blocky, only choice for masks/labels
+Bilinear              fast, smooth, default for most image resizing
+Bicubic               slower, sharper on upscaling
+Lanczos               slowest, best quality, used for final display</code></pre>
+      </div>
+    <p>Rule of thumb: bilinear for training, bicubic or lanczos for assets you will look at, nearest for anything containing integer class IDs.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">conv-output-size</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-build-an-image-tensor-and-inspect-its-shape"><a class="anchor" href="#step-1-build-an-image-tensor-and-inspect-its-shape">#</a> Step 1: Build an image tensor and inspect its shape</h3>
+<p>Start with a deterministic synthetic image so the first lab runs offline with only NumPy. File decoding is a separate boundary: once a JPEG or PNG decoder returns RGB bytes, every tensor operation below is the same.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def synthetic_rgb(h=128, w=192, seed=0):
+    rng = np.random.default_rng(seed)
+    yy, xx = np.meshgrid(np.linspace(0, 1, h), np.linspace(0, 1, w), indexing=&quot;ij&quot;)
+    r = (np.sin(xx * 6) * 0.5 + 0.5) * 255
+    g = yy * 255
+    b = (1 - yy) * xx * 255
+    rgb = np.stack([r, g, b], axis=-1) + rng.normal(0, 6, (h, w, 3))
+    return np.clip(rgb, 0, 255).astype(np.uint8)
+
+arr = synthetic_rgb()
+
+print(f&quot;type:   {type(arr).__name__}&quot;)
+print(f&quot;dtype:  {arr.dtype}&quot;)
+print(f&quot;shape:  {arr.shape}     # (H, W, C)&quot;)
+print(f&quot;min:    {arr.min()}&quot;)
+print(f&quot;max:    {arr.max()}&quot;)
+print(f&quot;pixel at (0, 0): {arr[0, 0]}&quot;)</code></pre>
+      </div>
+    <p>Expected output: <code>shape: (H, W, 3)</code>, <code>dtype: uint8</code>, range <code>[0, 255]</code>. That is the canonical decoded representation whether the bytes came from a camera, an image decoder, or this synthetic generator.</p>
+<h3 id="step-2-split-channels-and-re-order-layout"><a class="anchor" href="#step-2-split-channels-and-re-order-layout">#</a> Step 2: Split channels and re-order layout</h3>
+<p>Pull out R, G, B separately, then convert from HWC to CHW for PyTorch.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">R = arr[:, :, 0]
+G = arr[:, :, 1]
+B = arr[:, :, 2]
+print(f&quot;R shape: {R.shape}, mean: {R.mean():.1f}&quot;)
+print(f&quot;G shape: {G.shape}, mean: {G.mean():.1f}&quot;)
+print(f&quot;B shape: {B.shape}, mean: {B.mean():.1f}&quot;)
+
+arr_chw = arr.transpose(2, 0, 1)
+print(f&quot;\nHWC shape: {arr.shape}&quot;)
+print(f&quot;CHW shape: {arr_chw.shape}&quot;)</code></pre>
+      </div>
+    <p>Three grayscale planes, one per channel. CHW just reorders the axes; no data copy is strictly required when the memory layout allows it.</p>
+<h3 id="step-3-grayscale-and-hsv-conversions"><a class="anchor" href="#step-3-grayscale-and-hsv-conversions">#</a> Step 3: Grayscale and HSV conversions</h3>
+<p>Weighted-sum grayscale, then a manual RGB-to-HSV.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rgb_to_grayscale(rgb):
+    weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    return (rgb.astype(np.float32) @ weights).astype(np.uint8)
+
+def rgb_to_hsv(rgb):
+    rgb_f = rgb.astype(np.float32) / 255.0
+    r, g, b = rgb_f[..., 0], rgb_f[..., 1], rgb_f[..., 2]
+    cmax = np.max(rgb_f, axis=-1)
+    cmin = np.min(rgb_f, axis=-1)
+    delta = cmax - cmin
+
+    h = np.zeros_like(cmax)
+    mask = delta &gt; 0
+    argmax = np.argmax(rgb_f, axis=-1)
+    rmax = mask &amp; (argmax == 0)
+    gmax = mask &amp; (argmax == 1)
+    bmax = mask &amp; (argmax == 2)
+    h[rmax] = ((g[rmax] - b[rmax]) / delta[rmax]) % 6
+    h[gmax] = ((b[gmax] - r[gmax]) / delta[gmax]) + 2
+    h[bmax] = ((r[bmax] - g[bmax]) / delta[bmax]) + 4
+    h = h * 60.0
+
+    s = np.divide(delta, cmax, out=np.zeros_like(delta), where=cmax &gt; 0)
+    v = cmax
+    return np.stack([h, s, v], axis=-1)
+
+gray = rgb_to_grayscale(arr)
+hsv = rgb_to_hsv(arr)
+print(f&quot;gray shape: {gray.shape}, range: [{gray.min()}, {gray.max()}]&quot;)
+print(f&quot;hsv   shape: {hsv.shape}&quot;)
+print(f&quot;hue range: [{hsv[..., 0].min():.1f}, {hsv[..., 0].max():.1f}] degrees&quot;)
+print(f&quot;sat range: [{hsv[..., 1].min():.2f}, {hsv[..., 1].max():.2f}]&quot;)
+print(f&quot;val range: [{hsv[..., 2].min():.2f}, {hsv[..., 2].max():.2f}]&quot;)</code></pre>
+      </div>
+    <p>Hue comes out in degrees, saturation and value in [0, 1]. That matches the OpenCV <code>hsv_full</code> convention.</p>
+<h3 id="step-4-normalize-standardize-and-reverse-it"><a class="anchor" href="#step-4-normalize-standardize-and-reverse-it">#</a> Step 4: Normalize, standardize, and reverse it</h3>
+<p>Go from raw bytes to the exact tensor a pretrained ImageNet model expects, then back.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+def preprocess_imagenet(rgb_uint8):
+    x = rgb_uint8.astype(np.float32) / 255.0
+    x = (x - mean) / std
+    x = x.transpose(2, 0, 1)
+    return x
+
+def deprocess_imagenet(chw_float32):
+    x = chw_float32.transpose(1, 2, 0)
+    x = x * std + mean
+    x = np.clip(x * 255.0, 0, 255).astype(np.uint8)
+    return x
+
+x = preprocess_imagenet(arr)
+print(f&quot;preprocessed shape: {x.shape}     # (C, H, W)&quot;)
+print(f&quot;preprocessed dtype: {x.dtype}&quot;)
+print(f&quot;preprocessed mean per channel:  {x.mean(axis=(1, 2)).round(3)}&quot;)
+print(f&quot;preprocessed std  per channel:  {x.std(axis=(1, 2)).round(3)}&quot;)
+
+roundtrip = deprocess_imagenet(x)
+max_diff = np.abs(roundtrip.astype(int) - arr.astype(int)).max()
+print(f&quot;roundtrip max pixel diff: {max_diff}    # should be 0 or 1&quot;)</code></pre>
+      </div>
+    <p>Per-channel mean should be close to zero, std close to one. The preprocess/deprocess pair is exactly what every torchvision <code>transforms.Normalize</code> call is doing under the hood.</p>
+<h3 id="step-5-resize-from-scratch"><a class="anchor" href="#step-5-resize-from-scratch">#</a> Step 5: Resize from scratch</h3>
+<p>Nearest neighbor rounds each output coordinate to one source pixel. Bilinear interpolation finds the four surrounding pixels and blends them by distance. Both implementations below use endpoint-aligned coordinates so the first and last source pixels stay fixed.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def resize_coordinates(source_length, target_length):
+    if target_length == 1:
+        return np.zeros(1, dtype=np.float32)
+    return np.linspace(0, source_length - 1, target_length, dtype=np.float32)
+
+def nearest_resize(image, target_height, target_width):
+    y = np.rint(resize_coordinates(image.shape[0], target_height)).astype(int)
+    x = np.rint(resize_coordinates(image.shape[1], target_width)).astype(int)
+    return image[y[:, None], x[None, :]]
+
+def bilinear_resize(image, target_height, target_width):
+    y = resize_coordinates(image.shape[0], target_height)
+    x = resize_coordinates(image.shape[1], target_width)
+    y0 = np.floor(y).astype(int)
+    x0 = np.floor(x).astype(int)
+    y1 = np.minimum(y0 + 1, image.shape[0] - 1)
+    x1 = np.minimum(x0 + 1, image.shape[1] - 1)
+    wy = (y - y0)[:, None, None]
+    wx = (x - x0)[None, :, None]
+
+    source = image.astype(np.float32)
+    top = source[y0[:, None], x0[None, :]] * (1 - wx)
+    top += source[y0[:, None], x1[None, :]] * wx
+    bottom = source[y1[:, None], x0[None, :]] * (1 - wx)
+    bottom += source[y1[:, None], x1[None, :]] * wx
+    result = top * (1 - wy) + bottom * wy
+    return np.clip(np.rint(result), 0, 255).astype(image.dtype)
+
+target_height = arr.shape[0] * 3
+target_width = arr.shape[1] * 3
+nearest = nearest_resize(arr, target_height, target_width)
+bilinear = bilinear_resize(arr, target_height, target_width)
+
+def local_roughness(x):
+    gy = np.diff(x.astype(float), axis=0)
+    gx = np.diff(x.astype(float), axis=1)
+    return float(np.abs(gy).mean() + np.abs(gx).mean())
+
+for name, out in [(&quot;nearest&quot;, nearest), (&quot;bilinear&quot;, bilinear)]:
+    print(f&quot;{name:&gt;8}  shape={out.shape}  roughness={local_roughness(out):6.2f}&quot;)</code></pre>
+      </div>
+    <p>Nearest scores highest on roughness because it keeps hard edges. Bilinear is smoother because every new pixel blends two positions on each axis. The runnable companion extends the same separable idea to four neighbors per axis with a Catmull-Rom cubic kernel, then prints all three results without an image library.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PyTorch performs the same operations on batched, device-aware tensors. The code below resizes the shorter side, takes a center crop, standardizes each channel, and produces the NCHW tensor a pretrained model expects.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn.functional as F
+
+image_hwc = torch.from_numpy(synthetic_rgb(256, 320))
+batch = image_hwc.permute(2, 0, 1).unsqueeze(0).float() / 255.0
+
+height, width = batch.shape[-2:]
+scale = 256 / min(height, width)
+resized_height = round(height * scale)
+resized_width = round(width * scale)
+batch = F.interpolate(
+    batch,
+    size=(resized_height, resized_width),
+    mode=&quot;bilinear&quot;,
+    align_corners=False,
+    antialias=True,
+)
+
+top = (resized_height - 224) // 2
+left = (resized_width - 224) // 2
+batch = batch[:, :, top:top + 224, left:left + 224]
+
+mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+batch = (batch - mean) / std
+
+print(f&quot;tensor dtype: {batch.dtype}&quot;)
+print(f&quot;batched shape: {tuple(batch.shape)}&quot;)
+print(f&quot;per-channel mean: {batch.mean(dim=(0, 2, 3)).tolist()}&quot;)
+print(f&quot;per-channel std:  {batch.std(dim=(0, 2, 3)).tolist()}&quot;)</code></pre>
+      </div>
+    <p>Four steps, in this exact order: convert bytes to float and swap HWC to NCHW, resize the shorter side to 256, take a 224x224 center crop, then subtract the ImageNet mean and divide by its standard deviation. Reversing that order silently changes what reaches the model.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-vision-preprocessing-audit.md</code> — a prompt that turns any model card or dataset card into a checklist of the exact preprocessing invariants a team must honour.</li>
+<li><code>outputs/skill-image-tensor-inspector.md</code> — a skill that, given any image-shaped tensor or array, reports dtype, layout, range, and whether it looks raw, normalized, or standardized.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Create a 2x2 RGB <code>uint8</code> array with four distinct colors. Convert HWC to CHW and back, print both shapes, and prove the round trip preserves every value.</li>
+<li><strong>(Medium)</strong> Write <code>standardize(img, mean, std)</code> and its inverse that together pass a <code>roundtrip_max_diff &lt;= 1</code> test on any uint8 image. Your functions must work on a single image in HWC and on a batch in NCHW with the same call.</li>
+<li><strong>(Hard)</strong> Take a 3-channel ImageNet-standardized tensor and run it through a 1x1 conv that learns a weighted mixture of RGB into a single grayscale channel. Initialize the weights to <code>[0.299, 0.587, 0.114]</code>, freeze them, and verify the output matches your manual <code>rgb_to_grayscale</code> to within floating-point error. What other classical color-space transforms can be written as 1x1 convolutions?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pixel</td>
+<td>&quot;A coloured square&quot;</td>
+<td>One sample of light intensity at one grid location — three numbers for colour, one for grayscale</td>
+</tr>
+<tr>
+<td>Channel</td>
+<td>&quot;The colour&quot;</td>
+<td>One of the parallel spatial grids stacked into an image tensor; last axis in HWC, first in CHW</td>
+</tr>
+<tr>
+<td>HWC / CHW</td>
+<td>&quot;The shape&quot;</td>
+<td>Axis orderings for an image tensor; disk and PIL use HWC, PyTorch and cuDNN use CHW</td>
+</tr>
+<tr>
+<td>Normalize</td>
+<td>&quot;Scale the image&quot;</td>
+<td>Divide by 255 so pixels live in [0, 1] — necessary but not sufficient</td>
+</tr>
+<tr>
+<td>Standardize</td>
+<td>&quot;Zero-center&quot;</td>
+<td>Subtract mean and divide by std per channel so the input distribution matches what the model was trained on</td>
+</tr>
+<tr>
+<td>Grayscale conversion</td>
+<td>&quot;Average the channels&quot;</td>
+<td>A weighted sum with coefficients 0.299/0.587/0.114 that matches human luminance perception</td>
+</tr>
+<tr>
+<td>Interpolation</td>
+<td>&quot;How resize picks pixels&quot;</td>
+<td>The rule that decides output values when the new grid does not align with the old one — nearest for labels, bilinear for training, bicubic for display</td>
+</tr>
+<tr>
+<td>Aspect ratio</td>
+<td>&quot;Width over height&quot;</td>
+<td>The ratio that distinguishes &quot;resize and pad&quot; from &quot;resize and stretch&quot;</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://poynton.ca/PDFs/Guided_tour.pdf">Charles Poynton — A Guided Tour of Color Space</a> — the clearest technical treatment of why there are so many color spaces and when each one matters</li>
+<li><a href="https://pytorch.org/vision/stable/transforms.html">PyTorch Vision Transforms Docs</a> — the full pipeline of transforms you will actually compose in production</li>
+<li><figure class="yt-embed">
+      <div class="yt-frame"><iframe src="https://www.youtube.com/embed/F1kYBnY6mwg"
+        title="YouTube video" frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen loading="lazy"></iframe></div>
+    </figure> — a sharp visual tour of chroma subsampling, DCT, and why JPEG encodes YCbCr rather than RGB</li>
+<li><a href="https://pytorch.org/vision/stable/models.html">ImageNet Preprocessing Conventions (torchvision models)</a> — the source of truth for <code>mean=[0.485, 0.456, 0.406]</code> and why every model in the zoo expects it</li>
+</ul>
+
+
+    <nav class="paginate">
+      <span></span>
+      <a class="next" href="./02-convolutions-from-scratch.html"><span>Next →</span><b>convolutions from scratch</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

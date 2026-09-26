@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Understanding — Temporal Modeling — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/12-video-understanding/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Video Understanding — Temporal Modeling</h1>
+    <p class="lesson-sub">A video is a sequence of images plus the physics that connects them. Every video model either treats time as an extra axis (3D conv), a sequence to attend over (transformer), or a feature to extract once and pool (2D+pool).</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 4 Lesson 04 (Image Classification)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="13.8" y="118.1" width="26.0" height="26.0" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(132 26.8 131.1)"/>
+        <circle cx="21.4" cy="126.2" r="12.4" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.0" cy="121.3" r="11.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.6" cy="116.3" r="11.1" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="115.2" cy="111.4" r="10.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Video Understanding</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Temporal Modeling</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish the three main video-modelling approaches (2D+pool, 3D conv, spatio-temporal transformer) and predict their cost and accuracy trade-offs</li>
+<li>Implement frame sampling, temporal pooling, and a 2D+pool baseline classifier in PyTorch</li>
+<li>Explain why I3D&#39;s &quot;inflated&quot; 3D kernels transfer well from ImageNet weights and what a factorised (2+1)D conv does differently</li>
+<li>Read the standard action-recognition datasets and metrics: Kinetics-400/600, UCF101, Something-Something V2; top-1 accuracy at the clip and video level</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A 30-second video at 30 fps is 900 images. Naively, video classification is image classification run 900 times followed by some kind of aggregation. That works when the action is visible in almost every frame (sports, cooking, exercise videos) and fails badly when the action is defined by motion itself: &quot;pushing something from left to right&quot; looks like two still objects in every single frame.</p>
+<p>The core question for every video architecture is: when does temporal structure get modelled, and how? The answer drives everything else — compute cost, pretraining strategy, whether you can reuse ImageNet weights, what datasets the model trains on.</p>
+<p>This lesson is deliberately shorter than the static-image lessons. The core image machinery is already in place, and video understanding is mostly about the temporal story: sampling, modelling, and aggregating.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-three-architectural-families"><a class="anchor" href="#the-three-architectural-families">#</a> The three architectural families</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    V[&quot;Video clip&lt;br/&gt;(T frames)&quot;] --&gt; A1[&quot;2D + pool&lt;br/&gt;run 2D CNN per frame,&lt;br/&gt;average over time&quot;]
+    V --&gt; A2[&quot;3D conv&lt;br/&gt;convolve over&lt;br/&gt;T x H x W&quot;]
+    V --&gt; A3[&quot;Spatio-temporal&lt;br/&gt;transformer&lt;br/&gt;attention over&lt;br/&gt;(t, h, w) tokens&quot;]
+
+    A1 --&gt; C[&quot;Logits&quot;]
+    A2 --&gt; C
+    A3 --&gt; C
+
+    style A1 fill:#dbeafe,stroke:#2563eb
+    style A2 fill:#fef3c7,stroke:#d97706
+    style A3 fill:#dcfce7,stroke:#16a34a</pre></div><h3 id="2d-pool"><a class="anchor" href="#2d-pool">#</a> 2D + pool</h3>
+<p>Take a 2D CNN (ResNet, EfficientNet, ViT). Run it independently on every sampled frame. Average (or max-pool, or attention-pool) the per-frame embeddings. Feed the pooled vector to a classifier.</p>
+<p>Pros:</p>
+<ul>
+<li>ImageNet pretraining transfers directly.</li>
+<li>Simplest to implement.</li>
+<li>Cheap: T frames * single-image inference cost.</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>Cannot model motion. Action = aggregate of appearances.</li>
+<li>Temporal pooling is order-invariant; &quot;open door&quot; and &quot;close door&quot; look the same.</li>
+</ul>
+<p>When to use: appearance-heavy tasks, transfer learning on small video datasets, initial baselines.</p>
+<h3 id="3d-convolutions"><a class="anchor" href="#3d-convolutions">#</a> 3D convolutions</h3>
+<p>Replace 2D (H, W) kernels with 3D (T, H, W) kernels. The network convolves over both space and time. Early family: C3D, I3D, SlowFast.</p>
+<p>I3D trick: take a pretrained 2D ImageNet model, &quot;inflate&quot; each 2D kernel by copying it along a new time axis. A 3x3 2D conv becomes a 3x3x3 3D conv. This gives the 3D model strong pretrained weights instead of training from scratch.</p>
+<p>Pros:</p>
+<ul>
+<li>Directly models motion.</li>
+<li>I3D inflation gives free transfer learning.</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>T/8 more FLOPs than the 2D counterpart (for temporal kernel of 3 stacked 3 times).</li>
+<li>Temporal kernels are small; long-range motion needs a pyramid or dual-stream approach.</li>
+</ul>
+<p>When to use: action recognition where motion is the signal (Something-Something V2, Kinetics with motion-heavy classes).</p>
+<h3 id="spatio-temporal-transformers"><a class="anchor" href="#spatio-temporal-transformers">#</a> Spatio-temporal transformers</h3>
+<p>Tokenise the video into a grid of space-time patches and attend across all of them. TimeSformer, ViViT, Video Swin, VideoMAE.</p>
+<p>Attention patterns that matter:</p>
+<ul>
+<li><strong>Joint</strong> — one big attention over (t, h, w). Quadratic in <code>T*H*W</code>; expensive.</li>
+<li><strong>Divided</strong> — two attentions per block: one over time, one over space. Linear-ish scaling.</li>
+<li><strong>Factorised</strong> — time attention alternates with space attention across blocks.</li>
+</ul>
+<p>Pros:</p>
+<ul>
+<li>SOTA accuracy on every major benchmark.</li>
+<li>Transfers from image transformers (ViT) via patch inflation.</li>
+<li>Supports long-context video via sparse attention.</li>
+</ul>
+<p>Cons:</p>
+<ul>
+<li>Compute-hungry.</li>
+<li>Requires careful attention pattern choice or runtime balloons.</li>
+</ul>
+<p>When to use: large datasets, high-fidelity video understanding, multi-modal video+text tasks.</p>
+<h3 id="frame-sampling"><a class="anchor" href="#frame-sampling">#</a> Frame sampling</h3>
+<p>A 10-second clip at 30 fps is 300 frames; feeding all 300 to any model is wasteful. Standard strategies:</p>
+<ul>
+<li><strong>Uniform sampling</strong> — pick T frames evenly across the clip. Default for 2D+pool.</li>
+<li><strong>Dense sampling</strong> — random contiguous T-frame window. Common for 3D convs because motion requires neighbouring frames.</li>
+<li><strong>Multi-clip</strong> — sample multiple T-frame windows from the same video, classify each, average predictions at test time.</li>
+</ul>
+<p>T is usually 8, 16, 32, or 64. Higher T = more temporal signal at more compute.</p>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<p>Two levels:</p>
+<ul>
+<li><strong>Clip-level accuracy</strong> — model sees one T-frame clip, reports top-k.</li>
+<li><strong>Video-level accuracy</strong> — average clip-level predictions across multiple clips per video; higher and more stable.</li>
+</ul>
+<p>Always report both. A model that scores 78% clip / 82% video is relying heavily on test-time averaging; one that scores 80% / 81% is more robust per-clip.</p>
+<h3 id="datasets-you-will-meet"><a class="anchor" href="#datasets-you-will-meet">#</a> Datasets you will meet</h3>
+<ul>
+<li><strong>Kinetics-400 / 600 / 700</strong> — the general-purpose action dataset. 400k clips; YouTube URLs (many now dead).</li>
+<li><strong>Something-Something V2</strong> — motion-defined actions (&quot;moving X from left to right&quot;). Cannot be solved by 2D+pool.</li>
+<li><strong>UCF-101</strong>, <strong>HMDB-51</strong> — older, smaller, still reported.</li>
+<li><strong>AVA</strong> — action <em>localisation</em> in space and time; harder than classification.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">v4-video-temporal</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-frame-sampler"><a class="anchor" href="#step-1-frame-sampler">#</a> Step 1: Frame sampler</h3>
+<p>Uniform and dense samplers that work on a list of frames (or a video tensor).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def sample_uniform(num_frames_total, T):
+    if num_frames_total &lt;= T:
+        return list(range(num_frames_total)) + [num_frames_total - 1] * (T - num_frames_total)
+    step = num_frames_total / T
+    return [int(i * step) for i in range(T)]
+
+
+def sample_dense(num_frames_total, T, rng=None):
+    rng = rng or np.random.default_rng()
+    if num_frames_total &lt;= T:
+        return list(range(num_frames_total)) + [num_frames_total - 1] * (T - num_frames_total)
+    start = int(rng.integers(0, num_frames_total - T + 1))
+    return list(range(start, start + T))</code></pre>
+      </div>
+    <p>Both return <code>T</code> indices that you use to slice the video tensor.</p>
+<h3 id="step-2-a-2dpool-baseline"><a class="anchor" href="#step-2-a-2dpool-baseline">#</a> Step 2: A 2D+pool baseline</h3>
+<p>Run a 2D ResNet-18 over every frame, average-pool features, classify.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+from torchvision.models import resnet18, ResNet18_Weights
+
+class FramePool(nn.Module):
+    def __init__(self, num_classes=400, pretrained=True):
+        super().__init__()
+        weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        backbone = resnet18(weights=weights)
+        self.features = nn.Sequential(*(list(backbone.children())[:-1]))  # global avg pool kept
+        self.head = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        # x: (N, T, 3, H, W)
+        N, T = x.shape[:2]
+        x = x.view(N * T, *x.shape[2:])
+        feats = self.features(x).view(N, T, -1)
+        pooled = feats.mean(dim=1)
+        return self.head(pooled)
+
+model = FramePool(num_classes=10)
+x = torch.randn(2, 8, 3, 224, 224)
+print(f&quot;output: {model(x).shape}&quot;)
+print(f&quot;params: {sum(p.numel() for p in model.parameters()):,}&quot;)</code></pre>
+      </div>
+    <p>Eleven million parameters, ImageNet pretrained, runs per-frame, averages, classifies. This baseline is often within 5-10 points of proper 3D models on appearance-heavy tasks — sometimes better, because it reuses a stronger ImageNet backbone.</p>
+<h3 id="step-3-an-i3d-style-inflated-3d-conv"><a class="anchor" href="#step-3-an-i3d-style-inflated-3d-conv">#</a> Step 3: An I3D-style inflated 3D conv</h3>
+<p>Turn a single 2D conv into a 3D conv by repeating weights along a new time axis.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def inflate_2d_to_3d(conv2d, time_kernel=3):
+    out_c, in_c, kh, kw = conv2d.weight.shape
+    weight_3d = conv2d.weight.data.unsqueeze(2)  # (out, in, 1, kh, kw)
+    weight_3d = weight_3d.repeat(1, 1, time_kernel, 1, 1) / time_kernel
+    conv3d = nn.Conv3d(in_c, out_c, kernel_size=(time_kernel, kh, kw),
+                        padding=(time_kernel // 2, conv2d.padding[0], conv2d.padding[1]),
+                        stride=(1, conv2d.stride[0], conv2d.stride[1]),
+                        bias=False)
+    conv3d.weight.data = weight_3d
+    return conv3d
+
+conv2d = nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False)
+conv3d = inflate_2d_to_3d(conv2d, time_kernel=3)
+print(f&quot;2D weight shape:  {tuple(conv2d.weight.shape)}&quot;)
+print(f&quot;3D weight shape:  {tuple(conv3d.weight.shape)}&quot;)
+x = torch.randn(1, 3, 8, 56, 56)
+print(f&quot;3D output shape:  {tuple(conv3d(x).shape)}&quot;)</code></pre>
+      </div>
+    <p>The division by <code>time_kernel</code> keeps the activation magnitudes roughly constant — important for not breaking batch-norm statistics on the first pass.</p>
+<h3 id="step-4-factorised-21d-conv"><a class="anchor" href="#step-4-factorised-21d-conv">#</a> Step 4: Factorised (2+1)D conv</h3>
+<p>Split a 3D conv into a 2D (spatial) and a 1D (temporal) conv. Same receptive field, fewer parameters, better accuracy on some benchmarks.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Conv2Plus1D(nn.Module):
+    def __init__(self, in_c, out_c, kernel_size=3):
+        super().__init__()
+        mid_c = (in_c * out_c * kernel_size * kernel_size * kernel_size) \
+                // (in_c * kernel_size * kernel_size + out_c * kernel_size)
+        self.spatial = nn.Conv3d(in_c, mid_c, kernel_size=(1, kernel_size, kernel_size),
+                                 padding=(0, kernel_size // 2, kernel_size // 2), bias=False)
+        self.bn = nn.BatchNorm3d(mid_c)
+        self.act = nn.ReLU(inplace=True)
+        self.temporal = nn.Conv3d(mid_c, out_c, kernel_size=(kernel_size, 1, 1),
+                                  padding=(kernel_size // 2, 0, 0), bias=False)
+
+    def forward(self, x):
+        return self.temporal(self.act(self.bn(self.spatial(x))))
+
+c = Conv2Plus1D(3, 64)
+x = torch.randn(1, 3, 8, 56, 56)
+print(f&quot;(2+1)D output: {tuple(c(x).shape)}&quot;)</code></pre>
+      </div>
+    <p>A full R(2+1)D network is the same as a ResNet-18 with every 3x3 conv replaced by <code>Conv2Plus1D</code>.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Two libraries cover production video work:</p>
+<ul>
+<li><code>torchvision.models.video</code> — R(2+1)D, MViT, Swin3D with pretrained Kinetics weights. Same API as image models.</li>
+<li><code>pytorchvideo</code> (Meta) — model zoo, data loaders for Kinetics / SSv2 / AVA, standard transforms.</li>
+</ul>
+<p>For Vision-Language video models (video captioning, video QA), use <code>transformers</code> (<code>VideoMAE</code>, <code>VideoLLaMA</code>, <code>InternVideo</code>).</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-video-architecture-picker.md</code> — a prompt that picks 2D+pool / I3D / (2+1)D / transformer based on appearance-vs-motion, dataset size, and compute budget.</li>
+<li><code>outputs/skill-frame-sampler-auditor.md</code> — a skill that inspects a video pipeline&#39;s sampler and flags common bugs: off-by-one index, uneven sampling when <code>num_frames &lt; T</code>, lack of aspect-preserving crop, etc.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Compute FLOPs (approximate) for FramePool with T=8 vs an I3D-style 3D ResNet with T=8. Justify why 2D+pool is 3-5x cheaper.</li>
+<li><strong>(Medium)</strong> Generate a synthetic video dataset: random balls moving in random directions, labelled by direction of motion (&quot;left-to-right&quot;, &quot;right-to-left&quot;, &quot;diagonal-up&quot;). Train FramePool on it. Show that it achieves near-chance accuracy, proving appearance alone is insufficient for motion tasks.</li>
+<li><strong>(Hard)</strong> Build an R(2+1)D-18 by replacing every Conv2d in a ResNet-18 with <code>Conv2Plus1D</code>. Inflate the first conv&#39;s weights from an ImageNet-pretrained ResNet-18. Train on the motion dataset from exercise 2 and beat FramePool.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2D + pool</td>
+<td>&quot;Per-frame classifier&quot;</td>
+<td>Run a 2D CNN on every sampled frame, average-pool features across time, classify</td>
+</tr>
+<tr>
+<td>3D convolution</td>
+<td>&quot;Spatio-temporal kernel&quot;</td>
+<td>Kernel that convolves over (T, H, W); can model motion natively</td>
+</tr>
+<tr>
+<td>Inflation</td>
+<td>&quot;Lift 2D weights to 3D&quot;</td>
+<td>Initialise 3D conv weights by repeating a 2D conv&#39;s weights along the new time axis, then divide by kernel_T to preserve activation scale</td>
+</tr>
+<tr>
+<td>(2+1)D</td>
+<td>&quot;Factorised conv&quot;</td>
+<td>Split 3D into 2D spatial + 1D temporal; fewer parameters, extra non-linearity between</td>
+</tr>
+<tr>
+<td>Divided attention</td>
+<td>&quot;Time then space&quot;</td>
+<td>Transformer block with two attentions per layer: one over tokens at the same frame, one over tokens at the same position</td>
+</tr>
+<tr>
+<td>Clip</td>
+<td>&quot;T-frame window&quot;</td>
+<td>A sampled subsequence of T frames; the unit a video model consumes</td>
+</tr>
+<tr>
+<td>Clip vs video accuracy</td>
+<td>&quot;Two eval settings&quot;</td>
+<td>Clip = one sample per video, video = average across multiple sampled clips</td>
+</tr>
+<tr>
+<td>Kinetics</td>
+<td>&quot;The ImageNet of video&quot;</td>
+<td>400-700 action classes, 300k+ YouTube clips, the standard video pretraining corpus</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1705.07750">I3D: Quo Vadis, Action Recognition (Carreira &amp; Zisserman, 2017)</a> — introduces inflation and the Kinetics dataset</li>
+<li><a href="https://arxiv.org/abs/1711.11248">R(2+1)D: A Closer Look at Spatiotemporal Convolutions (Tran et al., 2018)</a> — factorised conv, still a strong baseline</li>
+<li><a href="https://arxiv.org/abs/2102.05095">TimeSformer: Is Space-Time Attention All You Need? (Bertasius et al., 2021)</a> — the first strong video transformer</li>
+<li><a href="https://arxiv.org/abs/2203.12602">VideoMAE (Tong et al., 2022)</a> — masked autoencoder pretraining for video; current dominant pretraining recipe</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-stable-diffusion.html"><span>← Previous</span><b>stable diffusion</b></a>
+      <a class="next" href="./13-3d-vision-nerf.html"><span>Next →</span><b>3d vision nerf</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

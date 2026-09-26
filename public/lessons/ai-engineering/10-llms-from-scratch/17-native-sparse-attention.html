@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Native Sparse Attention (DeepSeek NSA) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/17-native-sparse-attention/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Native Sparse Attention (DeepSeek NSA)</h1>
+    <p class="lesson-sub">At 64k tokens, attention eats 70-80% of decode latency. Every open-model lab has a plan to fix it. DeepSeek&#39;s NSA (ACL 2025 best paper) is the one that stuck: three parallel attention branches — compressed coarse-grained tokens, selectively retained fine-grained tokens, and sliding windows for local context — combined through a learned gate. It is hardware-aligned (kernel-friendly), natively trainable (works in pre-training, not bolted on at inference), and on 64k decodes it runs faster than FlashAttention while matching or beating full attention quality. This lesson builds the three branches end-to-end and shows why the sparsity is end-to-end differentiable.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 7 · 12 (KV cache, flash-attention), Phase 7 · 15 (attention variants), Phase 10 · 16 (differential attention)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 17">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.7,73.2 L61.9,47.5 L79.0,73.2 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.9" y="41.5" width="33.0" height="33.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(229 56.4 58.0)"/>
+        <rect x="35.2" y="37.2" width="31.7" height="31.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(211 51.0 53.1)"/>
+        <rect x="30.4" y="33.0" width="30.4" height="30.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.6 48.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">17</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Native Sparse</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Attention (DeepSeek…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>State the three NSA attention branches and what each one captures.</li>
+<li>Explain why NSA is &quot;natively trainable&quot; where prior sparse-attention methods were inference-only.</li>
+<li>Compute the attention compute savings of NSA versus full attention at 64k context as a function of compression block size and selection top-k.</li>
+<li>Implement the three-branch combination in stdlib Python on a short synthetic sequence and verify the gating weights behave.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Full attention at sequence length N costs <code>O(N^2)</code> time and <code>O(N)</code> KV cache per layer. At 64k tokens, the compute and memory bandwidth numbers are catastrophic. Measured theoretical estimate from the NSA paper: attention accounts for 70-80% of total decode latency at 64k. Everything downstream — TTFT, tokens/sec, cost per million tokens — is dominated by attention cost.</p>
+<p>Sparse attention is the obvious answer. Prior attempts fall into two buckets. Fixed-pattern sparsity (sliding-window, strided, block-local) throws information away and fails on long-range recall tasks. Inference-time sparsity (KV cache pruning, H2O, StreamingLLM) is applied to a model pre-trained on dense attention and recovers only a fraction of the potential speedup because the model was never asked to route information through the sparse pattern.</p>
+<p>Native Sparse Attention (Yuan et al., DeepSeek + PKU + UW, ACL 2025 best paper, arXiv:2502.11089) does both: a sparsity pattern the model learns during pre-training, implemented as a kernel-aligned algorithm that actually delivers the compute savings at inference. Two years from now, NSA or a direct descendant is the default attention on every frontier long-context model.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="three-parallel-branches"><a class="anchor" href="#three-parallel-branches">#</a> Three parallel branches</h3>
+<p>For each query, NSA runs attention three times, against three different views of the KV cache:</p>
+<ol>
+<li><p><strong>Compressed branch.</strong> Tokens are grouped into blocks of size <code>l</code> (typically 32 or 64). Each block is compressed into a single summary token via a small learned MLP. The query attends over these compressed tokens, getting a coarse-grained view of the whole sequence.</p>
+</li>
+<li><p><strong>Selected branch.</strong> Using attention scores from the compressed branch, the top-k blocks most relevant to the current query are identified. Fine-grained (uncompressed) tokens from those blocks are read and the query attends over all of them. Think of compressed-branch attention as the routing signal for the selection.</p>
+</li>
+<li><p><strong>Sliding-window branch.</strong> The query attends to the most recent <code>W</code> tokens (typically 512) for local context. This branch captures the structure-heavy short-range patterns (syntax, local coreference) that the other two might miss.</p>
+</li>
+</ol>
+<p>The three branch outputs are combined via a learned per-position gate:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">out = g_cmp * out_cmp + g_sel * out_sel + g_win * out_win</code></pre>
+      </div>
+    <p><code>g_cmp, g_sel, g_win</code> are gate weights from a small MLP on the query. They do not have to sum to 1 — they can weight branches independently.</p>
+<h3 id="why-this-is-natively-trainable"><a class="anchor" href="#why-this-is-natively-trainable">#</a> Why this is &quot;natively trainable&quot;</h3>
+<p>The selection step (top-k blocks) is discrete. Discrete operations break gradient flow. Prior sparse-attention work either skipped backprop through selection (limiting training) or used continuous relaxations that did not give real sparsity at inference.</p>
+<p>NSA sidesteps this: the compressed-branch attention IS a differentiable coarse-grained attention on the whole sequence. The top-k operation just reuses the top attention scores from the compressed branch to pick which fine-grained blocks to load. Gradients flow through the compressed-branch scores (which influence both the compressed output AND the selection logic), and the selected blocks&#39; contribution to the final output is also differentiable. The non-differentiable <code>top_k</code> operation is a no-op on the forward computational graph — it only controls which blocks get loaded from memory.</p>
+<p>This is why NSA can be used in pre-training end to end. The model learns to route information through the three branches jointly, producing a sparse pattern that at inference actually delivers the promised speedup.</p>
+<h3 id="hardware-aligned-kernel"><a class="anchor" href="#hardware-aligned-kernel">#</a> Hardware-aligned kernel</h3>
+<p>NSA&#39;s kernel is designed for modern GPU memory hierarchies. The kernel loads queries by GQA groups (outer loop), fetches the corresponding sparse KV blocks per group (inner loop), and runs attention on SRAM. Because each query group sees the same selected blocks (selection is per-query-group, not per-query-head), the KV loads are amortized across the group. Arithmetic intensity stays high.</p>
+<p>The paper reports Triton kernels running 9x faster than FlashAttention on 64k decodes, with the speedup ratio growing with sequence length. Forward and backward kernels are both provided.</p>
+<h3 id="the-compute-budget"><a class="anchor" href="#the-compute-budget">#</a> The compute budget</h3>
+<p>Let <code>N</code> be sequence length, <code>l</code> the compression block size, <code>k</code> the top-k selection count, <code>w</code> the sliding window, <code>b</code> the selected block size (typically equals <code>l</code>).</p>
+<ul>
+<li>Compressed branch: <code>O(N/l)</code> keys per query, so <code>O(N * N / l)</code> total.</li>
+<li>Selected branch: <code>O(k * b)</code> keys per query, so <code>O(N * k * b)</code>.</li>
+<li>Sliding branch: <code>O(w)</code> keys per query, so <code>O(N * w)</code>.</li>
+</ul>
+<p>Total: <code>O(N * (N/l + k*b + w))</code>.</p>
+<p>With <code>N = 64k, l = 64, k = 16, b = 64, w = 512</code>: per-query cost is <code>1000 + 1024 + 512 = 2536 keys</code>. Full attention is <code>64000 keys</code>. 25x compute reduction.</p>
+<p>With <code>N = 128k, l = 64, k = 16, b = 64, w = 512</code>: per-query cost is <code>2000 + 1024 + 512 = 3536 keys</code>. Full attention is <code>128000 keys</code>. 36x reduction. The benefit grows with sequence length, which is the whole point.</p>
+<h3 id="how-does-it-compare"><a class="anchor" href="#how-does-it-compare">#</a> How does it compare</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Differentiable</th>
+<th>Real inference speedup</th>
+<th>Long-range recall</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sliding window only</td>
+<td>yes</td>
+<td>yes</td>
+<td>fails</td>
+</tr>
+<tr>
+<td>Strided / block-sparse</td>
+<td>yes</td>
+<td>yes</td>
+<td>partial</td>
+</tr>
+<tr>
+<td>KV pruning (H2O, StreamingLLM)</td>
+<td>N/A (inference-time)</td>
+<td>yes</td>
+<td>partial</td>
+</tr>
+<tr>
+<td>MoBA (Moonshot)</td>
+<td>partial</td>
+<td>yes</td>
+<td>good</td>
+</tr>
+<tr>
+<td>NSA</td>
+<td>yes (natively)</td>
+<td>yes (9x at 64k)</td>
+<td>matches full attention</td>
+</tr>
+</tbody></table>
+<p>MoBA (Moonshot, arXiv:2502.13189) was concurrently published and takes a similar three-is-better-than-one approach, applying the MoE principle to attention blocks. NSA and MoBA are the two architectures to know for 2026 long-context pre-training.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sliding-window-attention</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements the three branches on a short synthetic sequence and shows:</p>
+<ul>
+<li>The compression MLP (a simple mean-pool baseline is used for pedagogical clarity; the real NSA uses a learned MLP).</li>
+<li>The top-k block selection driven by compressed-branch scores.</li>
+<li>The sliding-window attention on the last <code>w</code> tokens.</li>
+<li>The gated combination.</li>
+<li>A compute-count printout comparing to full attention.</li>
+</ul>
+<h3 id="step-1-compress-tokens-into-blocks"><a class="anchor" href="#step-1-compress-tokens-into-blocks">#</a> Step 1: compress tokens into blocks</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def compress(K, l):
+    n = len(K)
+    n_blocks = (n + l - 1) // l
+    out = []
+    for b in range(n_blocks):
+        start, end = b * l, min((b + 1) * l, n)
+        block = K[start:end]
+        summary = [sum(row[d] for row in block) / len(block) for d in range(len(K[0]))]
+        out.append(summary)
+    return out</code></pre>
+      </div>
+    <h3 id="step-2-compressed-branch-attention"><a class="anchor" href="#step-2-compressed-branch-attention">#</a> Step 2: compressed-branch attention</h3>
+<p>Run softmax attention of the query against the compressed keys. The compressed-branch scores double as the signal for top-k selection.</p>
+<h3 id="step-3-top-k-block-selection"><a class="anchor" href="#step-3-top-k-block-selection">#</a> Step 3: top-k block selection</h3>
+<p>Pick the indices of the <code>k</code> highest-scoring compressed blocks. Load the original uncompressed tokens from those blocks and run attention on them.</p>
+<h3 id="step-4-sliding-window-attention"><a class="anchor" href="#step-4-sliding-window-attention">#</a> Step 4: sliding-window attention</h3>
+<p>Take the last <code>w</code> tokens and run standard attention against them.</p>
+<h3 id="step-5-gate-combine"><a class="anchor" href="#step-5-gate-combine">#</a> Step 5: gate + combine</h3>
+<p>A small MLP on the query produces three gate weights. The final output is a weighted sum of the three branch outputs.</p>
+<h3 id="step-6-compute-counting"><a class="anchor" href="#step-6-compute-counting">#</a> Step 6: compute counting</h3>
+<p>Print the number of keys attended per query for each branch and the total. Compare to <code>N</code> (full attention). On a 1024-token synthetic with <code>l = 32, k = 4, w = 128</code>, NSA sees <code>32 + 128 + 128 = 288</code> keys per query versus 1024 for full attention — 3.5x fewer.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>NSA is shipping in DeepSeek&#39;s own long-context pre-training pipeline. Integration status in public inference stacks as of April 2026:</p>
+<ul>
+<li><strong>DeepSeek internal</strong>: native, published weights use NSA or its successor DSA (Deepseek Sparse Attention).</li>
+<li><strong>vLLM</strong>: experimental NSA support in development for DeepSeek-V3.x weights.</li>
+<li><strong>SGLang</strong>: NSA benchmarks published; production path follows vLLM.</li>
+<li><strong>llama.cpp / CPU</strong>: not supported; overhead of the kernel decomposition is not worth it at CPU throughput.</li>
+</ul>
+<p>When to reach for NSA:</p>
+<ul>
+<li>Pre-training or continued-training run targeting 64k-plus context with a serious compute budget.</li>
+<li>Inference of DeepSeek&#39;s own long-context checkpoints. The weights are NSA-native.</li>
+</ul>
+<p>When not to:</p>
+<ul>
+<li>Serving an existing dense-attention pre-trained model. You cannot retrofit NSA without continued training.</li>
+<li>Context under 16k. The three-branch overhead dominates the savings.</li>
+<li>Batch-1 interactive chat. Latency-sensitive decode benefits, but only at long contexts.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-nsa-integrator.md</code>. Given a long-context pre-training run specification, it produces an NSA integration plan: compression block size, top-k, sliding window, gate MLP width, kernel choice, and the specific long-context evals that would justify the architecture change.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code> on a 1024-token synthetic. Sweep <code>(l, k, w)</code> across three presets and print compute counts. Identify the preset that achieves the lowest key-count per query while keeping 95% recall against full attention on a needle-in-haystack test.</p>
+</li>
+<li><p>Replace the mean-pool compressor with a tiny learned MLP (2-layer, hidden 32). Train it on a synthetic task where the signal is the average of a block. Measure the perplexity gap against the mean-pool baseline on held-out data.</p>
+</li>
+<li><p>Implement the gate MLP. It takes the query as input and outputs three scalars. Show that the gate behaves sensibly: near-uniform weighting on random queries, heavy weight on the selected branch when the query hits a far-back block.</p>
+</li>
+<li><p>Compute the KV cache memory budget for an NSA-enabled 70B model at 128k context. KV heads are 8, head dim 128, BF16. Compare to full attention and to MLA (Phase 10 · 14 showed MLA&#39;s numbers). Identify the sequence length where NSA&#39;s fine-grained branch KV cache equals full attention.</p>
+</li>
+<li><p>Read Section 4 of the NSA paper (arXiv:2502.11089) and explain in three sentences why the compressed branch&#39;s attention scores are reused for top-k selection rather than computing a separate routing score. Tie the answer to gradient flow.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Compressed branch</td>
+<td>&quot;Coarse view&quot;</td>
+<td>Attention over block-averaged keys that provides global context in O(N/l) keys per query</td>
+</tr>
+<tr>
+<td>Selected branch</td>
+<td>&quot;Top-k blocks&quot;</td>
+<td>Fine-grained attention over the <code>k</code> blocks with highest compressed-branch scores</td>
+</tr>
+<tr>
+<td>Sliding window</td>
+<td>&quot;Local context&quot;</td>
+<td>Attention over the last <code>W</code> tokens for short-range patterns</td>
+</tr>
+<tr>
+<td>Native trainability</td>
+<td>&quot;Pre-train with the sparsity on&quot;</td>
+<td>The sparsity pattern is learned during pre-training, not bolted on at inference</td>
+</tr>
+<tr>
+<td>Compression block size l</td>
+<td>&quot;Group size for coarse view&quot;</td>
+<td>How many tokens get merged into one summary; 32-64 typical</td>
+</tr>
+<tr>
+<td>Top-k</td>
+<td>&quot;Blocks to keep&quot;</td>
+<td>Number of compressed blocks whose uncompressed tokens get read; 16 typical</td>
+</tr>
+<tr>
+<td>Sliding window W</td>
+<td>&quot;Local attention radius&quot;</td>
+<td>Typically 512; shorter hurts local coherence, longer wastes compute</td>
+</tr>
+<tr>
+<td>Branch gate</td>
+<td>&quot;How to mix the three&quot;</td>
+<td>Per-position MLP output that weights the three branches&#39; contributions</td>
+</tr>
+<tr>
+<td>Hardware alignment</td>
+<td>&quot;Kernel-friendly sparsity&quot;</td>
+<td>Sparse pattern chosen so that the actual GPU kernel achieves the theoretical speedup</td>
+</tr>
+<tr>
+<td>DSA</td>
+<td>&quot;NSA&#39;s successor&quot;</td>
+<td>Deepseek Sparse Attention, the architecture that followed NSA in DeepSeek&#39;s lineage</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2502.11089">Yuan et al. — Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention (arXiv:2502.11089, ACL 2025 Best Paper)</a> — the paper</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3 Technical Report (arXiv:2412.19437)</a> — the architecture family NSA targets</li>
+<li><a href="https://arxiv.org/abs/2502.13189">Moonshot AI — MoBA: Mixture of Block Attention for Long-Context LLMs (arXiv:2502.13189)</a> — concurrent work, MoE-style attention over blocks</li>
+<li><a href="https://arxiv.org/abs/2004.05150">Beltagy et al. — Longformer: The Long-Document Transformer (arXiv:2004.05150)</a> — sliding-window origins</li>
+<li><a href="https://arxiv.org/abs/2309.17453">Xiao et al. — StreamingLLM: Efficient Streaming Language Models with Attention Sinks (arXiv:2309.17453)</a> — inference-time sparsity baseline NSA improves on</li>
+<li><a href="https://arxiv.org/abs/2307.08691">Dao et al. — FlashAttention-2 (arXiv:2307.08691)</a> — the full-attention baseline NSA kernels beat at 64k</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./16-differential-attention-v2.html"><span>← Previous</span><b>differential attention v2</b></a>
+      <a class="next" href="./18-multi-token-prediction.html"><span>Next →</span><b>multi token prediction</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

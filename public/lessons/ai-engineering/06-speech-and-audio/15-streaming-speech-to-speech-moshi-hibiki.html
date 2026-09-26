@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Streaming Speech-to-Speech — Moshi, Hibiki, and Full-Duplex Dialogue — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/15-streaming-speech-to-speech-moshi-hibiki/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Streaming Speech-to-Speech — Moshi, Hibiki, and Full-Duplex Dialogue</h1>
+    <p class="lesson-sub">2024-2026 redefined voice AI. Moshi ships a single model that listens and speaks simultaneously at 200 ms latency. Hibiki does speech-to-speech translation chunk-by-chunk. Both abandon the ASR → LLM → TTS pipeline for a unified full-duplex architecture over Mimi codec tokens. This is the new reference design.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 13 (Neural Audio Codecs), Phase 6 · 11 (Real-Time Audio), Phase 7 · 05 (Full Transformer)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.8" y="119.0" width="26.2" height="26.2" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(136 27.9 132.1)"/>
+        <circle cx="22.5" cy="127.2" r="12.5" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.1" cy="122.2" r="11.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="121.6" cy="117.3" r="11.2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.2" cy="112.4" r="10.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Streaming</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Speech-to-Speech —…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Every voice agent built from Lessons 11 + 12 has a fundamental latency floor around 300-500 ms: VAD fires, STT processes, LLM reasons, TTS generates. Each stage has its own minimum latency. You can tune and parallelize, but the pipeline shape caps you.</p>
+<p>Moshi (Kyutai, 2024-2026) asks a different question: what if there is no pipeline? What if one model takes audio in and emits audio out directly, continuously, with text as an intermediate &quot;inner monologue&quot; instead of a required stage?</p>
+<p>The answer is <strong>full-duplex speech-to-speech</strong>. Theoretical latency 160 ms (80 ms Mimi frame + 80 ms acoustic delay). Practical latency 200 ms on a single L4 GPU. That&#39;s half what a best-in-class pipelined voice agent achieves.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/15-streaming-speech-to-speech-moshi-hibiki/assets/moshi-hibiki.svg" alt="Moshi architecture: two parallel Mimi streams + inner-monologue text" loading="lazy" /></figure></p>
+<h3 id="the-moshi-architecture"><a class="anchor" href="#the-moshi-architecture">#</a> The Moshi architecture</h3>
+<p><strong>Inputs.</strong> Two Mimi codec streams, both at 12.5 Hz × 8 codebooks:</p>
+<ul>
+<li>Stream 1: user audio (Mimi-encoded, constantly arriving)</li>
+<li>Stream 2: Moshi&#39;s own audio (generated by Moshi)</li>
+</ul>
+<p><strong>The transformer.</strong> A 7B-parameter Temporal Transformer processes both streams and a text &quot;inner monologue&quot; stream. At each 80 ms step, it:</p>
+<ol>
+<li>Consumes the latest user Mimi tokens (8 codebooks).</li>
+<li>Consumes the most recent Moshi Mimi tokens (8 codebooks, as produced).</li>
+<li>Generates the next Moshi text token (inner monologue).</li>
+<li>Generates the next Moshi Mimi tokens (8 codebooks via a small Depth Transformer).</li>
+</ol>
+<p>All three streams — user audio, Moshi audio, Moshi text — run in parallel. Moshi can hear the user while speaking; can interrupt itself when the user interrupts; can back-channel (&quot;mhm&quot;) without breaking its main utterance.</p>
+<p><strong>The depth transformer.</strong> Within a frame, the 8 codebooks are not predicted in parallel — they have inter-codebook dependencies. A small 2-layer &quot;depth transformer&quot; predicts them sequentially within 80 ms. This is the standard factorization for AR codec LMs (also used by VALL-E, VibeVoice).</p>
+<h3 id="why-inner-monologue-text-helps"><a class="anchor" href="#why-inner-monologue-text-helps">#</a> Why inner-monologue text helps</h3>
+<p>Without explicit text, the model has to implicitly model language in its acoustic stream. Moshi&#39;s insight: force it to emit text tokens alongside audio. The text stream is essentially the transcript of what Moshi is saying. This improves semantic coherence, makes it easier to swap out a language model head, and gives you transcripts for free.</p>
+<h3 id="hibiki-streaming-speech-to-speech-translation"><a class="anchor" href="#hibiki-streaming-speech-to-speech-translation">#</a> Hibiki: streaming speech-to-speech translation</h3>
+<p>Same architecture, trained on translation pairs. Source audio in, target-language audio out, continuously. Hibiki-Zero (Feb 2026) eliminates the need for word-level aligned training data — uses sentence-level data + GRPO reinforcement learning for latency optimization.</p>
+<p>Four language pairs supported initially; can be adapted to a new language with ≈1000 hours.</p>
+<h3 id="the-broader-kyutai-stack-2026"><a class="anchor" href="#the-broader-kyutai-stack-2026">#</a> The broader Kyutai stack (2026)</h3>
+<ul>
+<li><strong>Moshi</strong> — full-duplex dialogue (French first, English well-supported)</li>
+<li><strong>Hibiki / Hibiki-Zero</strong> — simultaneous speech translation</li>
+<li><strong>Kyutai STT</strong> — streaming ASR (500 ms or 2.5 s look-ahead)</li>
+<li><strong>Kyutai Pocket TTS</strong> — 100M-param TTS runs on CPU (Jan 2026)</li>
+<li><strong>Unmute</strong> — full pipeline combining these on public servers</li>
+</ul>
+<p>Throughput on an L40S GPU: 64 concurrent sessions at 3× real-time.</p>
+<h3 id="sesame-csm-the-cousin"><a class="anchor" href="#sesame-csm-the-cousin">#</a> Sesame CSM — the cousin</h3>
+<p>Sesame CSM (2025) uses a similar idea — a Llama-3 backbone with a Mimi codec head. But CSM is single-directional (takes context + text, produces speech) rather than full-duplex. It&#39;s the best &quot;voice presence&quot; TTS on the market; not quite the same as Moshi&#39;s full-duplex capability.</p>
+<h3 id="2026-performance-numbers"><a class="anchor" href="#2026-performance-numbers">#</a> 2026 performance numbers</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Latency</th>
+<th>Use case</th>
+<th>License</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Moshi</td>
+<td>200 ms (L4)</td>
+<td>full-duplex English / French dialogue</td>
+<td>CC-BY 4.0</td>
+</tr>
+<tr>
+<td>Hibiki</td>
+<td>12.5 Hz framerate</td>
+<td>French ↔ English streaming translation</td>
+<td>CC-BY 4.0</td>
+</tr>
+<tr>
+<td>Hibiki-Zero</td>
+<td>same</td>
+<td>5 language-pairs, no aligned data</td>
+<td>CC-BY 4.0</td>
+</tr>
+<tr>
+<td>Sesame CSM-1B</td>
+<td>200 ms TTFA</td>
+<td>context-conditioned TTS</td>
+<td>Apache-2.0</td>
+</tr>
+<tr>
+<td>GPT-4o Realtime</td>
+<td>~300 ms</td>
+<td>closed, OpenAI API</td>
+<td>commercial</td>
+</tr>
+<tr>
+<td>Gemini 2.5 Live</td>
+<td>~350 ms</td>
+<td>closed, Google API</td>
+<td>commercial</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sp-fullduplex</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-the-interface"><a class="anchor" href="#step-1-the-interface">#</a> Step 1: the interface</h3>
+<p>Moshi exposes a WebSocket server that takes 80 ms chunks of Mimi-encoded audio and returns 80 ms chunks of Mimi-encoded audio. Both ways. Constantly.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import asyncio
+import websockets
+from moshi.client_utils import encode_audio_mimi, decode_audio_mimi
+
+async def moshi_chat():
+    async with websockets.connect(&quot;ws://localhost:8998/api/chat&quot;) as ws:
+        mic_task = asyncio.create_task(stream_mic_to(ws))
+        spk_task = asyncio.create_task(stream_from_to_speaker(ws))
+        await asyncio.gather(mic_task, spk_task)</code></pre>
+      </div>
+    <h3 id="step-2-the-full-duplex-loop"><a class="anchor" href="#step-2-the-full-duplex-loop">#</a> Step 2: the full-duplex loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">async def stream_mic_to(ws):
+    async for chunk_80ms in mic_stream_at_12_5_hz():
+        mimi_tokens = encode_audio_mimi(chunk_80ms)
+        await ws.send(serialize(mimi_tokens))
+
+async def stream_from_to_speaker(ws):
+    async for msg in ws:
+        mimi_tokens, text_token = deserialize(msg)
+        audio = decode_audio_mimi(mimi_tokens)
+        await play(audio)</code></pre>
+      </div>
+    <p>Both directions run simultaneously. Python asyncio or Rust futures are the standard transport.</p>
+<h3 id="step-3-the-training-objective-conceptual"><a class="anchor" href="#step-3-the-training-objective-conceptual">#</a> Step 3: the training objective (conceptual)</h3>
+<p>For every 80 ms frame <code>t</code>:</p>
+<ul>
+<li>Input: <code>user_mimi[0..t]</code>, <code>moshi_mimi[0..t-1]</code>, <code>moshi_text[0..t-1]</code></li>
+<li>Predict: <code>moshi_text[t]</code>, then <code>moshi_mimi[t, codebook_0..7]</code></li>
+</ul>
+<p>Text is predicted before audio (inner monologue); audio is predicted codebook-sequential within the depth transformer.</p>
+<h3 id="step-4-where-moshi-wins-and-where-it-doesnt"><a class="anchor" href="#step-4-where-moshi-wins-and-where-it-doesnt">#</a> Step 4: where Moshi wins and where it doesn&#39;t</h3>
+<p>Moshi wins:</p>
+<ul>
+<li>Sub-250 ms end-to-end on cheap hardware.</li>
+<li>Natural back-channels and interruptions.</li>
+<li>No pipeline glue code.</li>
+</ul>
+<p>Moshi does not win:</p>
+<ul>
+<li>Tool calling (not trained for it; you need a separate LLM path).</li>
+<li>Long reasoning (Moshi is an 8B-ish dialogue model, not Claude/GPT-4).</li>
+<li>Factual accuracy on niche topics.</li>
+<li>Most production enterprise use cases (still use pipelines in 2026).</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Lowest-latency voice companion</td>
+<td>Moshi</td>
+</tr>
+<tr>
+<td>Live translation call</td>
+<td>Hibiki</td>
+</tr>
+<tr>
+<td>Voice demo / research</td>
+<td>Moshi, CSM</td>
+</tr>
+<tr>
+<td>Enterprise agent with tools</td>
+<td>Pipeline (Lesson 12), not Moshi</td>
+</tr>
+<tr>
+<td>Custom-voice TTS in context</td>
+<td>Sesame CSM</td>
+</tr>
+<tr>
+<td>Speech-to-speech, any languages</td>
+<td>GPT-4o Realtime or Gemini 2.5 Live (commercial)</td>
+</tr>
+</tbody></table>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Limited tool calling.</strong> Moshi is a dialogue model, not an agent framework. Combine with pipeline for tools.</li>
+<li><strong>Specific-voice conditioning.</strong> Moshi uses a single trained persona; cloning is a separate training run.</li>
+<li><strong>Language coverage.</strong> French + English is excellent; others limited. Hibiki-Zero helps, but you still need training data.</li>
+<li><strong>Resource cost.</strong> A full Moshi session holds a GPU slot; not a cheap shared-tenant deploy pattern.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-duplex-pipeline.md</code>. Pick pipeline vs full-duplex architecture for a voice-agent workload, with reason.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. It simulates the two-stream + inner-monologue architecture symbolically.</li>
+<li><strong>Medium.</strong> Pull Moshi from HuggingFace, run the server, test one conversation. Measure wall-clock latency from end-of-user-speech to start-of-Moshi-response.</li>
+<li><strong>Hard.</strong> Take your Lesson 12 pipeline agent and compare P50 latency vs Moshi on 20 matched test utterances. Write up when a pipeline architecturally wins anyway.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Full-duplex</td>
+<td>Hear-and-speak at once</td>
+<td>Two audio streams active simultaneously on the same model.</td>
+</tr>
+<tr>
+<td>Inner monologue</td>
+<td>Model&#39;s text stream</td>
+<td>Moshi emits text tokens alongside its audio output.</td>
+</tr>
+<tr>
+<td>Depth transformer</td>
+<td>Inter-codebook predictor</td>
+<td>Small transformer that predicts 8 codebooks within one 80 ms frame.</td>
+</tr>
+<tr>
+<td>Mimi</td>
+<td>Kyutai&#39;s codec</td>
+<td>12.5 Hz × 8 codebooks; semantic+acoustic; powers Moshi.</td>
+</tr>
+<tr>
+<td>Streaming S2S</td>
+<td>Audio → audio live</td>
+<td>Chunk-by-chunk translation/dialogue, no pipeline stages.</td>
+</tr>
+<tr>
+<td>Back-channeling</td>
+<td>&quot;Mhm&quot; reactions</td>
+<td>Moshi can emit small acknowledgments without breaking its turn.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/html/2410.00037v2">Défossez et al. (2024). Moshi — speech-text foundation model</a> — the paper.</li>
+<li><a href="https://arxiv.org/abs/2602.12345">Kyutai Labs (2026). Hibiki-Zero</a> — streaming translation without aligned data.</li>
+<li><a href="https://www.sesame.com/research/crossing_the_uncanny_valley_of_voice">Sesame (2025). Crossing the uncanny valley of voice</a> — CSM spec.</li>
+<li><a href="https://github.com/kyutai-labs/moshi">Kyutai — Moshi repo</a> — install + server.</li>
+<li><a href="https://platform.openai.com/docs/guides/realtime">OpenAI — Realtime API</a> — closed commercial peer.</li>
+<li><a href="https://github.com/kyutai-labs/delayed-streams-modeling">Kyutai — Delayed Streams Modeling</a> — the STT/TTS framework under the hood.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-voice-activity-detection-turn-taking.html"><span>← Previous</span><b>voice activity detection turn taking</b></a>
+      <a class="next" href="./16-anti-spoofing-audio-watermarking.html"><span>Next →</span><b>anti spoofing audio watermarking</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

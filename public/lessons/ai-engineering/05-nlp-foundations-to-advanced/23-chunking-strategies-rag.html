@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chunking Strategies for RAG — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/05-nlp-foundations-to-advanced/23-chunking-strategies-rag/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">NLP Foundations to Advanced</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · NLP Foundations to Advanced</div>
+    <h1 class="lesson-title">Chunking Strategies for RAG</h1>
+    <p class="lesson-sub">Chunking configuration influences retrieval quality as much as the choice of embedding model (Vectara NAACL 2025). Get chunking wrong and no amount of reranking saves you.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 5 · 14 (Information Retrieval), Phase 5 · 22 (Embedding Models)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — NLP Foundations to Advanced 23">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="34.6" y="36.8" width="31.6" height="31.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.4 52.5)"/>
+        <rect x="29.8" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(191 45.0 47.6)"/>
+        <rect x="25.1" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.6 142.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">23</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">NLP FOUNDATIONS TO ADVANCED</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chunking Strategies</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">for RAG</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You put a 50-page contract into a RAG system. User asks: &quot;What is the termination clause?&quot; The retriever returns the cover page. Why? Because the model was trained on 512-token chunks and the termination clause sits 20 pages in, split across a page break, with no local keywords tying it to the query.</p>
+<p>The fix is not &quot;buy a better embedding model.&quot; The fix is chunking. How big? Overlap? Where to split? With surrounding context?</p>
+<p>Feb 2026 benchmarks show surprising results:</p>
+<ul>
+<li>Vectara&#39;s 2026 study: recursive 512-token chunking beat semantic chunking 69% → 54% accuracy.</li>
+<li>SPLADE + Mistral-8B on Natural Questions: overlap provided zero measurable benefit.</li>
+<li>Context cliff: response quality drops sharply around 2,500 tokens of context.</li>
+</ul>
+<p>The &quot;obvious&quot; answer (semantic chunking, 20% overlap, 1000 tokens) is often wrong. This lesson builds intuition for six strategies and tells you when to reach for which.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/05-nlp-foundations-to-advanced/23-chunking-strategies-rag/assets/chunking.svg" alt="Six chunking strategies visualized on one passage" loading="lazy" /></figure></p>
+<p><strong>Fixed chunking.</strong> Split every N characters or tokens. Simplest baseline. Breaks mid-sentence. Good compression, bad coherence.</p>
+<p><strong>Recursive.</strong> LangChain&#39;s <code>RecursiveCharacterTextSplitter</code>. Try splitting on <code>\n\n</code> first, then <code>\n</code>, then <code>.</code>, then space. Falls back cleanly. The 2026 default.</p>
+<p><strong>Semantic.</strong> Embed each sentence. Compute cosine similarity between adjacent sentences. Split where similarity drops below a threshold. Preserves topic coherence. Slower; sometimes produces tiny 40-token fragments that hurt retrieval.</p>
+<p><strong>Sentence.</strong> Split on sentence boundaries. One sentence per chunk or a window of N sentences. Matches semantic chunking up to ~5k tokens at a fraction of the cost.</p>
+<p><strong>Parent-document.</strong> Store small child chunks for retrieval <em>and</em> the larger parent chunk for context. Retrieve by child; return parent. Degrades gracefully: bad child chunks still return reasonable parents.</p>
+<p><strong>Late chunking (2024).</strong> Embed the whole document at the token level first, then pool token embeddings into chunk embeddings. Preserves cross-chunk context. Works with long-context embedders (BGE-M3, Jina v3). Higher compute.</p>
+<p><strong>Contextual retrieval (Anthropic, 2024).</strong> Prepend each chunk with an LLM-generated summary of its position in the document (&quot;This chunk is section 3.2 of the termination clauses...&quot;). 35-50% retrieval improvement in Anthropic&#39;s own benchmark. Expensive to index.</p>
+<h3 id="the-rule-that-beats-every-default"><a class="anchor" href="#the-rule-that-beats-every-default">#</a> The rule that beats every default</h3>
+<p>Match the chunk size to the query type:</p>
+<table>
+<thead>
+<tr>
+<th>Query type</th>
+<th>Chunk size</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Factoid (&quot;what is the CEO&#39;s name?&quot;)</td>
+<td>256-512 tokens</td>
+</tr>
+<tr>
+<td>Analytical / multi-hop</td>
+<td>512-1024 tokens</td>
+</tr>
+<tr>
+<td>Whole-section comprehension</td>
+<td>1024-2048 tokens</td>
+</tr>
+</tbody></table>
+<p>NVIDIA&#39;s 2026 benchmark. The chunk should be big enough to contain the answer plus local context, small enough that the retriever&#39;s top-K returns focus on the answer rather than context noise.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">n5-chunk-cuts</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-fixed-and-recursive-chunking"><a class="anchor" href="#step-1-fixed-and-recursive-chunking">#</a> Step 1: fixed and recursive chunking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def chunk_fixed(text, size=512, overlap=0):
+    step = size - overlap
+    return [text[i:i + size] for i in range(0, len(text), step)]
+
+
+def chunk_recursive(text, size=512, seps=(&quot;\n\n&quot;, &quot;\n&quot;, &quot;. &quot;, &quot; &quot;)):
+    if len(text) &lt;= size:
+        return [text]
+    for sep in seps:
+        if sep not in text:
+            continue
+        parts = text.split(sep)
+        chunks = []
+        buf = &quot;&quot;
+        for p in parts:
+            if len(p) &gt; size:
+                if buf:
+                    chunks.append(buf)
+                    buf = &quot;&quot;
+                chunks.extend(chunk_recursive(p, size=size, seps=seps[1:] or (&quot; &quot;,)))
+                continue
+            candidate = buf + sep + p if buf else p
+            if len(candidate) &lt;= size:
+                buf = candidate
+            else:
+                if buf:
+                    chunks.append(buf)
+                buf = p
+        if buf:
+            chunks.append(buf)
+        return [c for c in chunks if c.strip()]
+    return chunk_fixed(text, size)</code></pre>
+      </div>
+    <h3 id="step-2-semantic-chunking"><a class="anchor" href="#step-2-semantic-chunking">#</a> Step 2: semantic chunking</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def chunk_semantic(text, encoder, threshold=0.6, min_chars=200, max_chars=2048):
+    sentences = split_sentences(text)
+    if not sentences:
+        return []
+    embs = encoder.encode(sentences, normalize_embeddings=True)
+    chunks = [[sentences[0]]]
+    for i in range(1, len(sentences)):
+        sim = float(embs[i] @ embs[i - 1])
+        current_len = sum(len(s) for s in chunks[-1])
+        if sim &lt; threshold and current_len &gt;= min_chars:
+            chunks.append([sentences[i]])
+        else:
+            chunks[-1].append(sentences[i])
+
+    result = []
+    for group in chunks:
+        text_group = &quot; &quot;.join(group)
+        if len(text_group) &gt; max_chars:
+            result.extend(chunk_recursive(text_group, size=max_chars))
+        else:
+            result.append(text_group)
+    return result</code></pre>
+      </div>
+    <p>Tune <code>threshold</code> on your domain. Too high → fragments. Too low → one giant chunk.</p>
+<h3 id="step-3-parent-document"><a class="anchor" href="#step-3-parent-document">#</a> Step 3: parent-document</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def chunk_parent_child(text, parent_size=2048, child_size=256):
+    parents = chunk_recursive(text, size=parent_size)
+    mapping = []
+    for p_idx, parent in enumerate(parents):
+        children = chunk_recursive(parent, size=child_size)
+        for child in children:
+            mapping.append({&quot;child&quot;: child, &quot;parent_idx&quot;: p_idx, &quot;parent&quot;: parent})
+    return mapping
+
+
+def retrieve_parent(child_query, mapping, encoder, top_k=3):
+    child_embs = encoder.encode([m[&quot;child&quot;] for m in mapping], normalize_embeddings=True)
+    q_emb = encoder.encode([child_query], normalize_embeddings=True)[0]
+    scores = child_embs @ q_emb
+    top = np.argsort(-scores)[:top_k]
+    seen, parents = set(), []
+    for i in top:
+        if mapping[i][&quot;parent_idx&quot;] not in seen:
+            parents.append(mapping[i][&quot;parent&quot;])
+            seen.add(mapping[i][&quot;parent_idx&quot;])
+    return parents</code></pre>
+      </div>
+    <p>Key insight: dedupe parents. Multiple children can map to the same parent; returning all would waste context.</p>
+<h3 id="step-4-contextual-retrieval-anthropic-pattern"><a class="anchor" href="#step-4-contextual-retrieval-anthropic-pattern">#</a> Step 4: contextual retrieval (Anthropic pattern)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def contextualize_chunks(document, chunks, llm):
+    context_prompts = [
+        f&quot;&quot;&quot;&lt;document&gt;{document}&lt;/document&gt;
+Here is the chunk to situate: &lt;chunk&gt;{c}&lt;/chunk&gt;
+Write 50-100 words placing this chunk in the document&#39;s context.&quot;&quot;&quot;
+        for c in chunks
+    ]
+    contexts = llm.batch(context_prompts)
+    return [f&quot;{ctx}\n\n{c}&quot; for ctx, c in zip(contexts, chunks)]</code></pre>
+      </div>
+    <p>Index the contextualized chunks. At query time, retrieval benefits from the extra surrounding signal.</p>
+<h3 id="step-5-evaluate"><a class="anchor" href="#step-5-evaluate">#</a> Step 5: evaluate</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def recall_at_k(queries, corpus_chunks, encoder, k=5):
+    chunk_embs = encoder.encode(corpus_chunks, normalize_embeddings=True)
+    hits = 0
+    for q_text, gold_idxs in queries:
+        q_emb = encoder.encode([q_text], normalize_embeddings=True)[0]
+        top = np.argsort(-(chunk_embs @ q_emb))[:k]
+        if any(i in gold_idxs for i in top):
+            hits += 1
+    return hits / len(queries)</code></pre>
+      </div>
+    <p>Always benchmark. The &quot;best&quot; strategy for your corpus may not match any blog post.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Chunking evaluated only on factoid queries.</strong> Multi-hop queries reveal very different winners. Use a query-type-stratified eval set.</li>
+<li><strong>Semantic chunking without a minimum size.</strong> Produces 40-token fragments that hurt retrieval. Always enforce <code>min_tokens</code>.</li>
+<li><strong>Overlap as cargo cult.</strong> 2026 studies find overlap often provides zero benefit and doubles index cost. Measure, do not assume.</li>
+<li><strong>No min/max enforcement.</strong> Chunks of 5 tokens or 5000 tokens both break retrieval. Clamp.</li>
+<li><strong>Cross-doc chunking.</strong> Never let a chunk span two documents. Always chunk per-doc, then merge.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Strategy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>First build, unknown corpus</td>
+<td>Recursive, 512 tokens, no overlap</td>
+</tr>
+<tr>
+<td>Factoid QA</td>
+<td>Recursive, 256-512 tokens</td>
+</tr>
+<tr>
+<td>Analytical / multi-hop</td>
+<td>Recursive, 512-1024 tokens + parent-document</td>
+</tr>
+<tr>
+<td>Heavy cross-reference (contracts, papers)</td>
+<td>Late chunking or contextual retrieval</td>
+</tr>
+<tr>
+<td>Conversational / dialog corpus</td>
+<td>Turn-level chunks + speaker metadata</td>
+</tr>
+<tr>
+<td>Short utterances (tweets, reviews)</td>
+<td>One document = one chunk</td>
+</tr>
+</tbody></table>
+<p>Start with recursive 512. Measure recall@5 on a 50-query eval set. Tune from there.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-chunker.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: chunker
+description: Pick a chunking strategy, size, and overlap for a given corpus and query distribution.
+version: 1.0.0
+phase: 5
+lesson: 23
+tags: [nlp, rag, chunking]
+---
+
+Given a corpus (document types, avg length, domain) and query distribution (factoid / analytical / multi-hop), output:
+
+1. Strategy. Recursive / sentence / semantic / parent-document / late / contextual. Reason.
+2. Chunk size. Token count. Reason tied to query type.
+3. Overlap. Default 0; justify if &gt;0.
+4. Min/max enforcement. `min_tokens`, `max_tokens` guards.
+5. Evaluation plan. Recall@5 on 50-query stratified eval set (factoid, analytical, multi-hop).
+
+Refuse any chunking strategy without min/max chunk size enforcement. Refuse overlap above 20% without an ablation showing it helps. Flag semantic chunking recommendations without a min-token floor.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Chunk one 20-page document with fixed(512, 0), recursive(512, 0), and recursive(512, 100). Compare chunk counts and boundary quality.</li>
+<li><strong>Medium.</strong> Build a 30-query eval set over 5 documents. Measure recall@5 for recursive, semantic, and parent-document. Which wins? Does it match the blog posts?</li>
+<li><strong>Hard.</strong> Implement contextual retrieval. Measure MRR improvement over baseline recursive. Report index cost (LLM calls) vs accuracy gain.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Chunk</td>
+<td>A piece of a doc</td>
+<td>Sub-document unit that gets embedded, indexed, and retrieved.</td>
+</tr>
+<tr>
+<td>Overlap</td>
+<td>Safety margin</td>
+<td>N tokens shared between adjacent chunks; often useless in 2026 benchmarks.</td>
+</tr>
+<tr>
+<td>Semantic chunking</td>
+<td>Smart chunking</td>
+<td>Split where adjacent-sentence embedding similarity drops.</td>
+</tr>
+<tr>
+<td>Parent-document</td>
+<td>Two-level retrieval</td>
+<td>Retrieve small children, return larger parents.</td>
+</tr>
+<tr>
+<td>Late chunking</td>
+<td>Chunk after embedding</td>
+<td>Embed full doc at token level, pool into chunk vectors.</td>
+</tr>
+<tr>
+<td>Contextual retrieval</td>
+<td>Anthropic&#39;s trick</td>
+<td>LLM-generated summary prepended to each chunk before indexing.</td>
+</tr>
+<tr>
+<td>Context cliff</td>
+<td>2500-token wall</td>
+<td>Quality drop observed around 2.5k context tokens in RAG (Jan 2026).</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://python.langchain.com/docs/how_to/recursive_text_splitter/">Yepes et al. / LangChain — Recursive Character Splitting docs</a> — the default in production.</li>
+<li><a href="https://arxiv.org/abs/2410.13070">Vectara (2024, NAACL 2025). Chunking configurations analysis</a> — chunking matters as much as embedding choice.</li>
+<li><a href="https://jina.ai/news/late-chunking-in-long-context-embedding-models/">Jina AI — Late Chunking in Long-Context Embedding Models (2024)</a> — the late chunking paper.</li>
+<li><a href="https://www.anthropic.com/news/contextual-retrieval">Anthropic — Contextual Retrieval</a> — 35-50% retrieval improvement with LLM-generated context prefixes.</li>
+<li><a href="https://blog.premai.io/rag-chunking-strategies-the-2026-benchmark-guide/">NVIDIA 2026 chunk-size benchmark — Premai summary</a> — chunk size by query type.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./22-embedding-models-deep-dive.html"><span>← Previous</span><b>embedding models deep dive</b></a>
+      <a class="next" href="./24-coreference-resolution.html"><span>Next →</span><b>coreference resolution</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

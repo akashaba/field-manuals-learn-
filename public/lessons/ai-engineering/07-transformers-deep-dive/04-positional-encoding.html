@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Positional Encoding — Sinusoidal, RoPE, ALiBi — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/04-positional-encoding/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">Positional Encoding — Sinusoidal, RoPE, ALiBi</h1>
+    <p class="lesson-sub">Attention is permutation-invariant. &quot;The cat sat on the mat&quot; and &quot;mat the on sat cat the&quot; produce the same output without positional signal. Three algorithms fix it — each with a different bet on what &quot;position&quot; means.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 02 (Self-Attention), Phase 7 · 03 (Multi-Head Attention)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="103.8" cy="101.0" r="9.1" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.3" cy="96.1" r="8.4" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M85.1,95.9 L92.9,84.2 L100.7,95.9 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.3,90.6 L87.5,79.8 L94.7,90.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.6,85.2 L82.1,75.5 L88.6,85.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Positional Encoding</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Sinusoidal, RoPE…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Scaled dot-product attention is order-blind. The attention matrix <code>softmax(Q K^T / √d) V</code> is computed from pairwise similarities. Shuffle the rows of <code>X</code>, get the rows of the output shuffled the same way. Nothing inside attention cares about position.</p>
+<p>That is not a bug in a bag-of-words model. For language, code, audio, video — anything where order carries meaning — it is fatal.</p>
+<p>The fix is to inject position into the embeddings somehow. Three eras of answers:</p>
+<ol>
+<li><strong>Absolute sinusoidal</strong> (Vaswani 2017). Add <code>sin/cos</code> of position to the embedding. Simple, learnable-free, extrapolates poorly beyond trained lengths.</li>
+<li><strong>RoPE — Rotary Position Embeddings</strong> (Su 2021). Rotate Q and K vectors by an angle proportional to position. Encodes <em>relative</em> position directly in the dot product. Dominant in 2026.</li>
+<li><strong>ALiBi — Attention with Linear Biases</strong> (Press 2022). Skip embeddings entirely; add a per-head linear penalty to attention scores based on distance. Excellent length extrapolation.</li>
+</ol>
+<p>As of 2026, essentially every frontier open model uses RoPE: Llama 2/3/4, Qwen 2/3, Mistral, Mixtral, DeepSeek-V3, Kimi. A handful of long-context models use ALiBi or its modern variants. Absolute sinusoidal is historical.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/07-transformers-deep-dive/04-positional-encoding/assets/positional-encoding.svg" alt="Sinusoidal absolute vs RoPE rotations vs ALiBi distance bias" loading="lazy" /></figure></p>
+<h3 id="absolute-sinusoidal"><a class="anchor" href="#absolute-sinusoidal">#</a> Absolute sinusoidal</h3>
+<p>Pre-compute a fixed matrix <code>PE</code> of shape <code>(max_len, d_model)</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">PE[pos, 2i]   = sin(pos / 10000^(2i / d_model))
+PE[pos, 2i+1] = cos(pos / 10000^(2i / d_model))</code></pre>
+      </div>
+    <p>Then <code>X&#39; = X + PE[:N]</code> before attention. Each dimension is a sinusoid at a different frequency. The model learns to read position from the phase pattern. Fails beyond <code>max_len</code>: nothing told the model what happens at position 2048 when it only saw positions 0–2047.</p>
+<h3 id="rope"><a class="anchor" href="#rope">#</a> RoPE</h3>
+<p>Rotate the Q and K vectors (not embeddings). For a pair of dimensions <code>(2i, 2i+1)</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">[q&#39;_2i    ]   [ cos(pos·θ_i)  -sin(pos·θ_i) ] [q_2i   ]
+[q&#39;_2i+1  ] = [ sin(pos·θ_i)   cos(pos·θ_i) ] [q_2i+1 ]
+
+θ_i = base^(-2i / d_head),  base = 10000 by default</code></pre>
+      </div>
+    <p>Apply the same rotation to keys with position <code>pos_k</code>. The dot product <code>q&#39;_m · k&#39;_n</code> becomes a function of <code>(m - n)</code> alone. That is: <strong>the attention score depends only on the relative distance</strong>, even though the rotation was keyed off absolute positions. Beautiful trick.</p>
+<p>Extending RoPE: <code>base</code> can be scaled (NTK-aware, YaRN, LongRoPE) to extrapolate to longer contexts without retraining. Llama 3 extended from 8K to 128K context this way.</p>
+<h3 id="alibi"><a class="anchor" href="#alibi">#</a> ALiBi</h3>
+<p>Skip the embedding trick. Bias the attention scores directly:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">attn_score[i, j] = (q_i · k_j) / √d  -  m_h · |i - j|</code></pre>
+      </div>
+    <p>Where <code>m_h</code> is a head-specific slope (e.g. <code>1 / 2^(8·h/H)</code>). Closer tokens get boosted; far tokens get penalized. No training-time cost. The paper shows length extrapolation beats sinusoidal and matches RoPE on its original trained length.</p>
+<h3 id="what-to-pick-in-2026"><a class="anchor" href="#what-to-pick-in-2026">#</a> What to pick in 2026</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Extrapolation</th>
+<th>Training cost</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Absolute sinusoidal</td>
+<td>poor</td>
+<td>free</td>
+<td>original transformer, early BERT</td>
+</tr>
+<tr>
+<td>Learned absolute</td>
+<td>none</td>
+<td>tiny</td>
+<td>GPT-2, GPT-3</td>
+</tr>
+<tr>
+<td>RoPE</td>
+<td>good with scaling</td>
+<td>free</td>
+<td>Llama 2/3/4, Qwen 2/3, Mistral, DeepSeek-V3, Kimi</td>
+</tr>
+<tr>
+<td>RoPE + YaRN</td>
+<td>excellent</td>
+<td>fine-tune stage</td>
+<td>Qwen2-1M, Llama 3.1 128K</td>
+</tr>
+<tr>
+<td>ALiBi</td>
+<td>excellent</td>
+<td>free</td>
+<td>BLOOM, MPT, Baichuan</td>
+</tr>
+</tbody></table>
+<p>RoPE won because it slots into attention without changing the architecture, encodes relative position, and its <code>base</code> hyperparameter gives a clean knob for long-context fine-tuning.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">rope-explorer</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-sinusoidal-encoding"><a class="anchor" href="#step-1-sinusoidal-encoding">#</a> Step 1: sinusoidal encoding</h3>
+<p>See <code>code/main.py</code>. A 4-line computation:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def sinusoidal(N, d):
+    pe = [[0.0] * d for _ in range(N)]
+    for pos in range(N):
+        for i in range(d // 2):
+            theta = pos / (10000 ** (2 * i / d))
+            pe[pos][2 * i]     = math.sin(theta)
+            pe[pos][2 * i + 1] = math.cos(theta)
+    return pe</code></pre>
+      </div>
+    <p>Add this to the embedding matrix before the first attention layer.</p>
+<h3 id="step-2-rope-applied-to-q-k"><a class="anchor" href="#step-2-rope-applied-to-q-k">#</a> Step 2: RoPE applied to Q, K</h3>
+<p>RoPE operates in-place on Q and K. For each pair of dims:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def apply_rope(x, pos, base=10000):
+    d = len(x)
+    out = list(x)
+    for i in range(d // 2):
+        theta = pos / (base ** (2 * i / d))
+        c, s = math.cos(theta), math.sin(theta)
+        a, b = x[2 * i], x[2 * i + 1]
+        out[2 * i]     = a * c - b * s
+        out[2 * i + 1] = a * s + b * c
+    return out</code></pre>
+      </div>
+    <p>Crucial: apply the same function to Q at position <code>m</code> and K at position <code>n</code>. Their dot product picks up a <code>cos((m-n)·θ_i)</code> factor on every coordinate pair. Attention learns relative position for free.</p>
+<h3 id="step-3-alibi-slopes-and-bias"><a class="anchor" href="#step-3-alibi-slopes-and-bias">#</a> Step 3: ALiBi slopes and bias</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def alibi_bias(n_heads, seq_len):
+    # slope_h = 2 ** (-8 * h / n_heads) for h = 1..n_heads
+    slopes = [2 ** (-8 * (h + 1) / n_heads) for h in range(n_heads)]
+    bias = []
+    for m in slopes:
+        row = [[-m * abs(i - j) for j in range(seq_len)] for i in range(seq_len)]
+        bias.append(row)
+    return bias  # add to attention scores before softmax</code></pre>
+      </div>
+    <p>Add <code>bias[h]</code> to the <code>(seq_len, seq_len)</code> attention score matrix of head <code>h</code>, then softmax.</p>
+<h3 id="step-4-verify-relative-distance-property-of-rope"><a class="anchor" href="#step-4-verify-relative-distance-property-of-rope">#</a> Step 4: verify relative-distance property of RoPE</h3>
+<p>Pick two random vectors <code>a, b</code>. Rotate by <code>(pos_a, pos_b)</code>. Then by <code>(pos_a + k, pos_b + k)</code>. Both dot products must match within floating-point error. That property is the whole point of RoPE — it is invariant to the absolute offset, only the relative gap matters.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PyTorch 2.5+ ships RoPE utilities in <code>torch.nn.functional</code>. Most production code uses <code>flash_attn</code> or <code>xformers</code> where RoPE is applied inside the attention kernel.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoModel
+model = AutoModel.from_pretrained(&quot;meta-llama/Llama-3.2-3B&quot;)
+# model.config.rope_scaling → {&quot;type&quot;: &quot;yarn&quot;, &quot;factor&quot;: 32.0, &quot;original_max_position_embeddings&quot;: 8192}</code></pre>
+      </div>
+    <p><strong>Long-context tricks in 2026:</strong></p>
+<ul>
+<li><strong>NTK-aware interpolation.</strong> Rescale <code>base</code> to <code>base * (scale_factor)^(d/(d-2))</code> when extending from 4K to 16K+.</li>
+<li><strong>YaRN.</strong> Smarter interpolation that preserves attention entropy on long contexts. Llama 3.1 128K uses it.</li>
+<li><strong>LongRoPE.</strong> Microsoft&#39;s 2024 method that uses evolutionary search to pick per-dimension scale factors. Phi-3-Long uses it.</li>
+<li><strong>Position interpolation + fine-tuning.</strong> Just shrink positions by the extension factor and fine-tune for 1–5B tokens. Surprisingly effective.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-positional-encoding-picker.md</code>. The skill picks an encoding strategy for a new model given target context length, extrapolation needs, and training budget.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Plot the sinusoidal <code>PE</code> matrix as a heatmap for <code>max_len=512, d=128</code>. Confirm the &quot;stripes get wider as dimension index grows&quot; pattern.</li>
+<li><strong>Medium.</strong> Implement NTK-aware RoPE scaling. Train a tiny LM on sequences of length 256, then test on length 1024 with and without scaling. Measure perplexity.</li>
+<li><strong>Hard.</strong> Implement ALiBi and RoPE in the same attention module. Train a 4-layer transformer on a copy task with sequences of length 512. Extrapolate to 2048 at test time. Compare degradation.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Positional encoding</td>
+<td>&quot;Tells attention about order&quot;</td>
+<td>Any signal added to embeddings or attention that encodes position.</td>
+</tr>
+<tr>
+<td>Sinusoidal</td>
+<td>&quot;The original one&quot;</td>
+<td><code>sin/cos</code> at geometric frequencies added to embeddings; doesn&#39;t extrapolate.</td>
+</tr>
+<tr>
+<td>RoPE</td>
+<td>&quot;Rotary embeddings&quot;</td>
+<td>Rotate Q, K by position-dependent angle; dot product encodes relative distance.</td>
+</tr>
+<tr>
+<td>ALiBi</td>
+<td>&quot;Linear bias trick&quot;</td>
+<td>Add <code>-m·|i-j|</code> to attention scores; no embedding needed, great extrapolation.</td>
+</tr>
+<tr>
+<td>base</td>
+<td>&quot;RoPE&#39;s knob&quot;</td>
+<td>The frequency scaler in RoPE; increase to extend context at inference.</td>
+</tr>
+<tr>
+<td>NTK-aware</td>
+<td>&quot;A RoPE scaling trick&quot;</td>
+<td>Rescale <code>base</code> so high-frequency dims aren&#39;t squeezed when context expands.</td>
+</tr>
+<tr>
+<td>YaRN</td>
+<td>&quot;The fancy one&quot;</td>
+<td>Per-dimension interpolation+extrapolation that preserves attention entropy.</td>
+</tr>
+<tr>
+<td>Extrapolation</td>
+<td>&quot;Works beyond trained length&quot;</td>
+<td>Can the position scheme serve correct output past <code>max_len</code> seen in training?</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al. (2017). Attention Is All You Need §3.5</a> — original sinusoidal.</li>
+<li><a href="https://arxiv.org/abs/2104.09864">Su et al. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding</a> — RoPE paper.</li>
+<li><a href="https://arxiv.org/abs/2108.12409">Press, Smith, Lewis (2021). Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation</a> — ALiBi.</li>
+<li><a href="https://arxiv.org/abs/2309.00071">Peng et al. (2023). YaRN: Efficient Context Window Extension of Large Language Models</a> — state of the art RoPE scaling.</li>
+<li><a href="https://arxiv.org/abs/2306.15595">Chen et al. (2023). Extending Context Window of Large Language Models via Positional Interpolation</a> — Meta&#39;s Llama 2 long-context paper.</li>
+<li><a href="https://arxiv.org/abs/2402.13753">Ding et al. (2024). LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens</a> — the Microsoft method used by Phi-3-Long and cited in the Use It section.</li>
+<li><a href="https://github.com/huggingface/transformers/blob/main/src/transformers/modeling_rope_utils.py">HuggingFace Transformers — <code>modeling_rope_utils.py</code></a> — production-grade implementations of every RoPE scaling scheme (default, linear, dynamic, YaRN, LongRoPE, Llama-3).</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-multi-head-attention.html"><span>← Previous</span><b>multi head attention</b></a>
+      <a class="next" href="./05-full-transformer.html"><span>Next →</span><b>full transformer</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tool Registry with Schema Validation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/21-tool-registry-schema-validation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-the-registry-comes-before-the-tool">Why the registry comes before the tool</a></li><li><a href="#what-a-tool-record-looks-like">What a tool record looks like</a></li><li><a href="#the-json-schema-2020-12-subset">The JSON Schema 2020-12 subset</a></li><li><a href="#json-pointer-error-paths">Json pointer error paths</a></li><li><a href="#registration-and-override">Registration and override</a></li><li><a href="#what-the-validator-is-and-is-not">What the validator is and is not</a></li><li><a href="#shape">Shape</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Tool Registry with Schema Validation</h1>
+    <p class="lesson-sub">A tool the agent cannot validate is a tool the agent cannot call. Build the registry and the schema checker before you build the tools.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 lessons 01-07, Phase 14 lesson 01</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 21">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.6,73.1 L61.7,47.4 L78.8,73.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.8" y="41.4" width="32.9" height="32.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.3 57.9)"/>
+        <rect x="35.0" y="37.1" width="31.7" height="31.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(211 50.8 52.9)"/>
+        <rect x="30.2" y="32.8" width="30.4" height="30.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.4 48.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">21</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Tool Registry with</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Schema Validation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Hold a typed registry of tool name → schema → handler that the dispatcher can ask once and trust afterwards.</li>
+<li>Implement a JSON Schema 2020-12 subset that covers the keywords ninety percent of tool calls actually use.</li>
+<li>Return precise, json-pointer-shaped error paths so the model can self-correct in one round trip.</li>
+<li>Reject re-registration without explicit override, since silent overwrites are how production tool catalogs drift.</li>
+<li>Keep the validator pure (no I/O, no time, no globals) so it can be re-run on a replay log.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-registry-validate</code></pre>
+      </div>
+    <h2 id="why-the-registry-comes-before-the-tool"><a class="anchor" href="#why-the-registry-comes-before-the-tool">#</a> Why the registry comes before the tool</h2>
+<p>A coding agent in 2026 has more registered tools than the model can fit in a single context window. A non-trivial harness will register two hundred tools and surface ten to forty at any given turn. The registry is the source of truth for &quot;what tools exist,&quot; &quot;what shape do their arguments take,&quot; and &quot;what handler do I call.&quot; Once those three answers are pinned, the rest of the harness can stop guessing.</p>
+<p>The mistake we are avoiding is shipping handlers without schemas, or shipping schemas without validation. Both are common. Both turn the next layer (the dispatcher in lesson twenty-three) into a guessing game where the only failure mode is a stack trace from the handler.</p>
+<h2 id="what-a-tool-record-looks-like"><a class="anchor" href="#what-a-tool-record-looks-like">#</a> What a tool record looks like</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">ToolRecord
+  name        : str          (unique, lowercase alphanumeric and underscore segments separated by dots, e.g., snake_case.segment.case)
+  description : str          (one line, shown to the model)
+  schema      : dict         (JSON Schema 2020-12 subset)
+  handler     : Callable     (async or sync, returns Any)
+  idempotent  : bool         (dispatcher uses this for retry decisions)
+  timeout_ms  : int          (override per-tool dispatcher default)</code></pre>
+      </div>
+    <p>The schema is the only field the validator touches. The handler is opaque to it. We separate them on purpose. The schema is data. The handler is code. Mixing them tempts you to put validation logic inside the handler, which is the bug we are stopping.</p>
+<h2 id="the-json-schema-2020-12-subset"><a class="anchor" href="#the-json-schema-2020-12-subset">#</a> The JSON Schema 2020-12 subset</h2>
+<p>The full 2020-12 spec is a paper. We need eight keywords.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">type           string / number / integer / boolean / object / array / null
+properties     map of property name -&gt; schema
+required       list of property names
+enum           list of allowed primitive values
+minLength      integer, applies to strings
+maxLength      integer, applies to strings
+pattern        ECMA-262-compatible regex, applies to strings
+items          schema applied to every array element</code></pre>
+      </div>
+    <p>That is enough to cover what a tool API actually needs. The keywords we are not adding (oneOf, anyOf, allOf, $ref, conditionals) are valid in production schemas but turn the validator into a tree walker with cycles. We are building a registry, not a JSON Schema engine.</p>
+<h2 id="json-pointer-error-paths"><a class="anchor" href="#json-pointer-error-paths">#</a> Json pointer error paths</h2>
+<p>When validation fails, the validator returns a list of errors. Each error carries a json-pointer path into the input. A pointer is a slash-prefixed sequence of property names and array indices.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">{&quot;a&quot;: {&quot;b&quot;: [1, 2, &quot;x&quot;]}}
+                    ^
+                    /a/b/2</code></pre>
+      </div>
+    <p>The model reads error paths better than it reads sentences. If a schema requires <code>args.user.email</code> and the model passed an integer, the error should be <code>/user/email</code> with <code>expected_type: string</code>. The model fixes that in the next call without a round of natural language.</p>
+<h2 id="registration-and-override"><a class="anchor" href="#registration-and-override">#</a> Registration and override</h2>
+<p><code>register(name, schema, handler, **opts)</code> rejects re-registration by default. The caller has to pass <code>override=True</code> to replace. This is operational hygiene. Two parts of the codebase silently registering the same tool name is the kind of bug that takes a week to find in production.</p>
+<p>The registry exposes three read methods. <code>get(name)</code> returns the record or raises. <code>validate(name, args)</code> returns an <code>Ok</code> or a list of errors. <code>names()</code> returns the tool names in registration order.</p>
+<h2 id="what-the-validator-is-and-is-not"><a class="anchor" href="#what-the-validator-is-and-is-not">#</a> What the validator is and is not</h2>
+<p>It is a single pass over the schema tree, recursive. It is pure. It does not call handlers. It does not coerce types (a string <code>&quot;42&quot;</code> does not pass a number schema). It does not silently truncate.</p>
+<p>It is not a security boundary. A malicious handler can still misbehave after validation passes. The dispatcher in lesson twenty-three adds timeout and sandbox layers. The registry adds shape.</p>
+<h2 id="shape"><a class="anchor" href="#shape">#</a> Shape</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    code[your code]
+    reg[ToolRegistry&lt;br/&gt;name&lt;br/&gt;schema&lt;br/&gt;handler&lt;br/&gt;timeout]
+    out[Ok or list of errors]
+    code --&gt;|register name, schema, handler| reg
+    reg --&gt;|validate args| out</pre></div><h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>ToolRegistry</code>, <code>ToolRecord</code>, <code>ValidationError</code>, and the eight validator functions. The validator dispatches on <code>schema[&quot;type&quot;]</code> (or treats a schema with <code>enum</code> as untyped enum check). Each type validator returns either an empty list or a list of <code>ValidationError</code>. The top-level walker concatenates errors and prepends path segments as it descends.</p>
+<p><code>code/tests/test_registry.py</code> covers registration, override, validation success, validation failure with paths, and every keyword in the subset.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>The two extensions you will want once this lesson lands are <code>$ref</code> resolution against a local definitions block, and <code>additionalProperties: false</code> for strict shape. Both are small. Both are common to add as the tool catalog grows past fifty tools. We left them out of the lesson to keep the file under one read.</p>
+<p>The next lesson (twenty-two) builds the JSON-RPC stdio transport that surfaces this registry to a model client. The lesson after (twenty-three) wraps both behind a dispatcher with timeouts and retries.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./20-agent-harness-loop-contract.html"><span>← Previous</span><b>agent harness loop contract</b></a>
+      <a class="next" href="./22-jsonrpc-stdio-transport.html"><span>Next →</span><b>jsonrpc stdio transport</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chunking Strategies, Compared — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/64-chunking-strategies-advanced/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#failure-modes-the-table-will-not-hide">Failure modes the table will not hide</a></li><li><a href="#choosing-a-default-without-running-the-benchmark">Choosing a default without running the benchmark</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Chunking Strategies, Compared</h1>
+    <p class="lesson-sub">Chunking decides what your retriever can ever surface. Get the boundaries wrong and no embedding model, no reranker, no LLM can repair the damage downstream.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 lessons 04 (embeddings), 06 (RAG), 07 (advanced RAG); Phase 19 Track B foundations (lessons 20-29)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 64">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="32.5" y="34.8" width="31.0" height="31.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(201 48.0 50.3)"/>
+        <rect x="27.7" y="30.5" width="29.7" height="29.7" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(183 42.5 45.4)"/>
+        <rect x="22.9" y="126.3" width="28.4" height="28.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(166 37.1 140.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">64</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chunking Strategies,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Compared</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement five chunking strategies from scratch: fixed-window, sentence, recursive-split, semantic clustering, and structural markdown headers.</li>
+<li>Measure recall@k on a fixture corpus with gold-labeled answer spans and explain why one strategy wins on prose and a different strategy wins on technical documents.</li>
+<li>Read a chunk-length distribution and recognize the failure modes each strategy injects: orphan sentences, mid-symbol cuts, header-only chunks, semantic drift.</li>
+<li>Pick a default for a new corpus without running the benchmark by inspecting three properties: document type, average paragraph length, and whether the format carries explicit structure.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Every RAG pipeline starts by cutting source documents into pieces small enough that an embedding model fits them and large enough that each piece carries a self-contained idea. The choice of where to cut is not a hyperparameter. It is the upper bound on what the retriever can ever return.</p>
+<p>A query that asks &quot;what does the budget abort threshold look like&quot; can only succeed if the chunk that holds the abort threshold is reachable. If the fixed-window splitter cut the threshold value from the surrounding context, the embedding moves to a different cluster, the BM25 score drops, the rerankers see noise, and the answer the LLM generates is wrong. The 2024 paper &quot;LongRAG: Enhancing Retrieval-Augmented Generation with Long-context LLMs&quot; measured a 35 percent absolute swing in retrieval recall purely from the chunking choice. The follow-up work in 2025 on contextual chunk headers narrowed the gap but did not close it.</p>
+<p>This lesson builds five strategies side by side, runs them against a fixture corpus with gold-labeled answer spans, and lets you read the recall numbers yourself.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Doc[Source Document] --&gt; S1[Fixed Window]
+  Doc --&gt; S2[Sentence]
+  Doc --&gt; S3[Recursive Split]
+  Doc --&gt; S4[Semantic Cluster]
+  Doc --&gt; S5[Structural Markdown]
+  S1 --&gt; Chunks1[Chunks]
+  S2 --&gt; Chunks2[Chunks]
+  S3 --&gt; Chunks3[Chunks]
+  S4 --&gt; Chunks4[Chunks]
+  S5 --&gt; Chunks5[Chunks]
+  Chunks1 --&gt; Index[Embedding Index]
+  Chunks2 --&gt; Index
+  Chunks3 --&gt; Index
+  Chunks4 --&gt; Index
+  Chunks5 --&gt; Index
+  Index --&gt; Eval[Recall@k vs Gold Spans]</pre></div><h3 id="fixed-window"><a class="anchor" href="#fixed-window">#</a> Fixed-window</h3>
+<p>The brute-force baseline. Cut every N characters. Optionally overlap so a sentence cut at position N appears whole inside the chunk that starts at position N - overlap. Fast, deterministic, terrible at boundaries. Use it as a control, not a default.</p>
+<h3 id="sentence"><a class="anchor" href="#sentence">#</a> Sentence</h3>
+<p>Split on sentence boundaries with a regex or a simple state machine. Pack one or more sentences into a chunk up to a target character budget. Stops cutting mid-word. Still cuts mid-paragraph and mid-section. The default in many early RAG pipelines and a reasonable choice for prose with no other structure.</p>
+<h3 id="recursive-split"><a class="anchor" href="#recursive-split">#</a> Recursive split</h3>
+<p>The hierarchy strategy popularized by 2023-era libraries. Try to split on the strongest separator first (double newline, paragraph), fall back to the next (single newline), then to sentences, then to characters. The recursion terminates when the chunk fits the budget. Strong on documents that have inconsistent structure because it adapts per region.</p>
+<h3 id="semantic-clustering"><a class="anchor" href="#semantic-clustering">#</a> Semantic clustering</h3>
+<p>Embed every sentence. Cluster contiguous sentences that share a topic centroid. Cut whenever the running similarity to the centroid drops below a threshold. The boundaries reflect meaning, not characters. Slower to build and dependent on the embedding model, but resilient against documents that switch topics inside a paragraph.</p>
+<h3 id="structural-markdown-headers"><a class="anchor" href="#structural-markdown-headers">#</a> Structural markdown headers</h3>
+<p>For documents that carry explicit structure (markdown, reStructuredText, RFC-style numbered sections), cut at heading boundaries. Each chunk becomes the heading plus everything underneath it down to the next heading at the same or higher level. Smallest chunks per topic, but only available when the corpus is well-formed.</p>
+<h3 id="how-recallk-measures-the-boundary-choice"><a class="anchor" href="#how-recallk-measures-the-boundary-choice">#</a> How recall@k measures the boundary choice</h3>
+<p>A gold-labeled query carries the exact character offsets of the answer span inside the source document. After chunking, you ask: does any of the top-k chunks the retriever returned overlap the gold span? If yes, recall@k for that query is 1. If no, it is 0. Average across the query set. Run the same evaluation for each strategy and the spread shows you which boundary policy survives the corpus you have.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ci-chunk-boundaries</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>fixed_window(text, size, overlap)</code> - the baseline.</li>
+<li><code>sentence_chunks(text, target)</code> - simple sentence packer.</li>
+<li><code>recursive_split(text, separators, target)</code> - hierarchical recursion.</li>
+<li><code>semantic_chunks(text, similarity_threshold)</code> - centroid-based clustering on top of a deterministic mock embedding.</li>
+<li><code>structural_markdown(text)</code> - header-aware splitter.</li>
+<li><code>mock_embed(text, dim)</code> - a hash-based embedding so the loop runs offline.</li>
+<li><code>DenseIndex</code> - the same shape used in Phase 19 Track B&#39;s hybrid retrieval lesson.</li>
+<li><code>eval_recall(strategy, corpus, queries, k)</code> - the comparison loop.</li>
+<li>A <code>main()</code> that runs every strategy on the fixture corpus and prints a recall@k table.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The output is a small table with one row per strategy and one column per k. Sentence loses on the structured fixture. Structural-markdown wins on the markdown fixture. Recursive holds its own on the mixed fixture because the recursion adapts. Semantic clustering wins on the prose fixture where there are no useful structural cues.</p>
+<h2 id="failure-modes-the-table-will-not-hide"><a class="anchor" href="#failure-modes-the-table-will-not-hide">#</a> Failure modes the table will not hide</h2>
+<p><strong>Orphan sentences.</strong> Sentence packing produces chunks that miss the topic sentence. The embedding then points at the wrong cluster.</p>
+<p><strong>Mid-symbol cuts.</strong> Fixed-window inside code or YAML will split an identifier in half. The two halves embed to noise.</p>
+<p><strong>Header-only chunks.</strong> Structural markdown emits a chunk containing nothing but <code>## Title</code>. Filter those out or attach the next chunk&#39;s first paragraph.</p>
+<p><strong>Semantic drift.</strong> Semantic clustering under-cuts when the corpus is uniformly on topic. A 5000-character chunk packs many specific answers into one diffuse embedding. Combine semantic with a hard character cap.</p>
+<p><strong>Stale embeddings.</strong> Semantic clustering uses an embedding model. If you change the model, you also change the chunks. Pin the chunk model separately from the retrieval model or rebuild the index together.</p>
+<h2 id="choosing-a-default-without-running-the-benchmark"><a class="anchor" href="#choosing-a-default-without-running-the-benchmark">#</a> Choosing a default without running the benchmark</h2>
+<p>Three properties decide the default chunker for a new corpus.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Document type</td>
+<td>Prose with no structure</td>
+<td>Recursive split, target 800</td>
+</tr>
+<tr>
+<td>Document type</td>
+<td>Markdown / RFC / API docs</td>
+<td>Structural markdown</td>
+</tr>
+<tr>
+<td>Document type</td>
+<td>Code</td>
+<td>AST-aware (out of scope; see Phase 19 lesson 02)</td>
+</tr>
+<tr>
+<td>Paragraph length</td>
+<td>Long, single topic</td>
+<td>Sentence, target 500</td>
+</tr>
+<tr>
+<td>Paragraph length</td>
+<td>Short, mixed topics</td>
+<td>Semantic, threshold 0.6</td>
+</tr>
+</tbody></table>
+<p>When in doubt, pick recursive split. It is the strongest single-strategy baseline.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li>Run the eval before you ship a new pipeline; do not trust the strategy your library defaults to.</li>
+<li>Re-run the eval whenever you change the embedding model or the corpus mix; the winner is corpus-dependent.</li>
+<li>Persist the strategy name in each chunk&#39;s metadata so you can attribute regressions later.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>The Track F end-to-end RAG system in lesson 69 uses the chunker selected here as its first stage. The eval harness in lesson 68 reads recall@k from the same shape that <code>eval_recall</code> returns in this lesson. Pick the strategy that wins on your corpus and feed it forward.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a sixth strategy: token-window using <code>tiktoken</code> instead of character counts. Compare against fixed-window on the same fixture.</li>
+<li>Inject a 30 percent fraction of code blocks into the prose fixture. Re-run the table. Explain why every strategy except structural markdown loses recall.</li>
+<li>Replace the deterministic embedding with the one from your project&#39;s real provider. Measure the semantic-clustering recall delta. Report whether the spread between strategies widens or narrows.</li>
+<li>Add a <code>summary</code> field per chunk: a one-sentence centroid description. Re-run the eval with the summary appended to the chunk body. Measure the recall lift.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Recall@k</td>
+<td>&quot;Did we get the right chunk?&quot;</td>
+<td>Fraction of queries where any of the top-k chunks overlaps the gold answer span</td>
+</tr>
+<tr>
+<td>Chunk overlap</td>
+<td>&quot;Sliding window&quot;</td>
+<td>Re-include the last N characters of the previous chunk in the next chunk</td>
+</tr>
+<tr>
+<td>Structural splitter</td>
+<td>&quot;Header-aware chunks&quot;</td>
+<td>Cut at H1/H2/H3 boundaries; the heading text is part of the chunk</td>
+</tr>
+<tr>
+<td>Semantic chunker</td>
+<td>&quot;Topic-aware chunks&quot;</td>
+<td>Embed sentences, cluster by centroid similarity, cut on drift</td>
+</tr>
+<tr>
+<td>Centroid drift</td>
+<td>&quot;Topic shift&quot;</td>
+<td>Cosine similarity between the running mean and the next sentence drops past a threshold</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2406.15319">LongRAG: Enhancing Retrieval-Augmented Generation with Long-context LLMs (arXiv 2406.15319)</a></li>
+<li><a href="https://www.anthropic.com/news/contextual-retrieval">Anthropic, Contextual Retrieval</a></li>
+<li><a href="https://docs.llamaindex.ai/en/stable/optimizing/production_rag/">LlamaIndex, Chunking strategies for production RAG</a></li>
+<li>Phase 11 lesson 06 - RAG fundamentals</li>
+<li>Phase 11 lesson 07 - advanced RAG</li>
+<li>Phase 19 lesson 65 - hybrid retrieval that ranks the chunks produced here</li>
+<li>Phase 19 lesson 68 - the eval harness that scores the strategy choice in production</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./63-multimodal-eval.html"><span>← Previous</span><b>multimodal eval</b></a>
+      <a class="next" href="./65-hybrid-retrieval-bm25-dense.html"><span>Next →</span><b>hybrid retrieval bm25 dense</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

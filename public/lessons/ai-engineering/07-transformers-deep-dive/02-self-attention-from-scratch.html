@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Self-Attention from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/02-self-attention-from-scratch/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">Self-Attention from Scratch</h1>
+    <p class="lesson-sub">Attention is a lookup table where every word asks &quot;who matters to me?&quot; - and learns the answer.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 3 (Deep Learning Core), Phase 5 Lesson 10 (Sequence-to-Sequence)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="103.2" cy="100.6" r="9.0" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.4,100.6 L97.8,88.1 L106.2,100.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.6,95.3 L92.4,83.7 L100.1,95.3 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.9,90.0 L86.9,79.4 L94.0,90.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.1,84.7 L81.5,75.0 L88.0,84.7 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Self-Attention from</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement scaled dot-product self-attention from scratch using only NumPy, including query/key/value projections and the softmax-weighted sum</li>
+<li>Build a multi-head attention layer that splits heads, computes parallel attention, and concatenates results</li>
+<li>Trace how the attention matrix captures token relationships and explain why scaling by sqrt(d_k) prevents softmax saturation</li>
+<li>Apply causal masking to convert bidirectional attention into autoregressive (decoder-style) attention</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>RNNs process sequences one token at a time. By the time you reach token 50, the information from token 1 has been squeezed through 50 compression steps. Long-range dependencies get crushed into a fixed-size hidden state - a bottleneck that no amount of LSTM gating fully solves.</p>
+<p>The 2014 Bahdanau attention paper showed the fix: let the decoder look back at every encoder position and decide which ones matter for the current step. But it was still bolted onto an RNN. The 2017 &quot;Attention Is All You Need&quot; paper asked a sharper question: what if attention is the <em>only</em> mechanism? No recurrence. No convolution. Just attention.</p>
+<p>Self-attention lets every position in a sequence attend to every other position in a single parallel step. That is what makes transformers fast, scalable, and dominant.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-database-lookup-analogy"><a class="anchor" href="#the-database-lookup-analogy">#</a> The Database Lookup Analogy</h3>
+<p>Think of attention as a soft database lookup:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Traditional database:
+  Query: &quot;capital of France&quot;  --&gt;  exact match  --&gt;  &quot;Paris&quot;
+
+Attention:
+  Query: &quot;capital of France&quot;  --&gt;  similarity to ALL keys  --&gt;  weighted blend of ALL values</code></pre>
+      </div>
+    <p>Every token generates three vectors:</p>
+<ul>
+<li><strong>Query (Q)</strong>: &quot;What am I looking for?&quot;</li>
+<li><strong>Key (K)</strong>: &quot;What do I contain?&quot;</li>
+<li><strong>Value (V)</strong>: &quot;What information do I provide if selected?&quot;</li>
+</ul>
+<p>The dot product between a query and all keys produces attention scores. High score means &quot;this key matches my query.&quot; Those scores weight the values. The output is a weighted sum of values.</p>
+<h3 id="q-k-v-computation"><a class="anchor" href="#q-k-v-computation">#</a> Q, K, V Computation</h3>
+<p>Each token embedding gets projected through three learned weight matrices:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input embeddings (sequence of n tokens, each d-dimensional):
+
+  X = [x1, x2, x3, ..., xn]       shape: (n, d)
+
+Three weight matrices:
+
+  Wq  shape: (d, dk)
+  Wk  shape: (d, dk)
+  Wv  shape: (d, dv)
+
+Projections:
+
+  Q = X @ Wq    shape: (n, dk)      each token&#39;s query
+  K = X @ Wk    shape: (n, dk)      each token&#39;s key
+  V = X @ Wv    shape: (n, dv)      each token&#39;s value</code></pre>
+      </div>
+    <p>Visually, for one token:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">             Wq
+  x_i ------[*]------&gt; q_i    &quot;What am I looking for?&quot;
+       |
+       |     Wk
+       +----[*]------&gt; k_i    &quot;What do I contain?&quot;
+       |
+       |     Wv
+       +----[*]------&gt; v_i    &quot;What do I offer?&quot;</code></pre>
+      </div>
+    <h3 id="the-attention-matrix"><a class="anchor" href="#the-attention-matrix">#</a> The Attention Matrix</h3>
+<p>Once you have Q, K, V for all tokens, attention scores form a matrix:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Scores = Q @ K^T    shape: (n, n)
+
+              k1    k2    k3    k4    k5
+        +-----+-----+-----+-----+-----+
+   q1   | 2.1 | 0.3 | 0.1 | 0.8 | 0.2 |   &lt;- how much q1 attends to each key
+        +-----+-----+-----+-----+-----+
+   q2   | 0.4 | 1.9 | 0.7 | 0.1 | 0.3 |
+        +-----+-----+-----+-----+-----+
+   q3   | 0.2 | 0.6 | 2.3 | 0.5 | 0.1 |
+        +-----+-----+-----+-----+-----+
+   q4   | 0.9 | 0.1 | 0.4 | 1.7 | 0.6 |
+        +-----+-----+-----+-----+-----+
+   q5   | 0.1 | 0.3 | 0.2 | 0.5 | 2.0 |
+        +-----+-----+-----+-----+-----+
+
+Each row: one token&#39;s attention over the entire sequence</code></pre>
+      </div>
+    <p>Watch one query at a time sweep the keys: each row scores every token, softmax turns the scores into weights, and the context vector is the weighted blend of values.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">attention-matrix</code></pre>
+      </div>
+    <h3 id="why-scale"><a class="anchor" href="#why-scale">#</a> Why Scale?</h3>
+<p>The dot products grow with dimension dk. If dk = 64, dot products can be in the range of tens, pushing softmax into regions where gradients vanish. The fix: divide by sqrt(dk).</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Scaled scores = (Q @ K^T) / sqrt(dk)</code></pre>
+      </div>
+    <p>This keeps values in a range where softmax produces useful gradients.</p>
+<h3 id="softmax-turns-scores-into-weights"><a class="anchor" href="#softmax-turns-scores-into-weights">#</a> Softmax Turns Scores into Weights</h3>
+<p>Softmax converts raw scores into a probability distribution across each row:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Raw scores for q1:   [2.1, 0.3, 0.1, 0.8, 0.2]
+                            |
+                         softmax
+                            |
+Attention weights:   [0.52, 0.09, 0.07, 0.14, 0.08]   (sums to ~1.0)</code></pre>
+      </div>
+    <p>Now each token has a set of weights saying how much to attend to every other token.</p>
+<h3 id="weighted-sum-of-values"><a class="anchor" href="#weighted-sum-of-values">#</a> Weighted Sum of Values</h3>
+<p>The final output for each token is a weighted sum of all value vectors:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">output_i = sum( attention_weight[i][j] * v_j  for all j )
+
+For token 1:
+  output_1 = 0.52 * v1 + 0.09 * v2 + 0.07 * v3 + 0.14 * v4 + 0.08 * v5</code></pre>
+      </div>
+    <h3 id="full-pipeline"><a class="anchor" href="#full-pipeline">#</a> Full Pipeline</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+  X[&quot;X (input)&quot;] --&gt; Q[&quot;Q = X · Wq&quot;]
+  X --&gt; K[&quot;K = X · Wk&quot;]
+  X --&gt; V[&quot;V = X · Wv&quot;]
+  Q --&gt; S[&quot;Q · Kᵀ / √dk&quot;]
+  K --&gt; S
+  S --&gt; SM[&quot;softmax&quot;]
+  SM --&gt; WS[&quot;weighted sum&quot;]
+  V --&gt; WS
+  WS --&gt; O[&quot;output&quot;]</pre></div><p>Formula in one line:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Attention(Q, K, V) = softmax( Q @ K^T / sqrt(dk) ) @ V</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">softmax-attention-scaling</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-softmax-from-scratch"><a class="anchor" href="#step-1-softmax-from-scratch">#</a> Step 1: Softmax from scratch</h3>
+<p>Softmax converts raw logits into probabilities. Subtract the max for numerical stability.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def softmax(x):
+    shifted = x - np.max(x, axis=-1, keepdims=True)
+    exp_x = np.exp(shifted)
+    return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
+
+logits = np.array([2.0, 1.0, 0.1])
+print(f&quot;logits:  {logits}&quot;)
+print(f&quot;softmax: {softmax(logits)}&quot;)
+print(f&quot;sum:     {softmax(logits).sum():.4f}&quot;)</code></pre>
+      </div>
+    <h3 id="step-2-scaled-dot-product-attention"><a class="anchor" href="#step-2-scaled-dot-product-attention">#</a> Step 2: Scaled dot-product attention</h3>
+<p>The core function. Takes Q, K, V matrices and returns the attention output plus the weight matrix.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def scaled_dot_product_attention(Q, K, V):
+    dk = Q.shape[-1]
+    scores = Q @ K.T / np.sqrt(dk)
+    weights = softmax(scores)
+    output = weights @ V
+    return output, weights</code></pre>
+      </div>
+    <h3 id="step-3-self-attention-class-with-learned-projections"><a class="anchor" href="#step-3-self-attention-class-with-learned-projections">#</a> Step 3: Self-attention class with learned projections</h3>
+<p>A full self-attention module with Wq, Wk, Wv weight matrices initialized with Xavier-like scaling.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SelfAttention:
+    def __init__(self, d_model, dk, dv, seed=42):
+        rng = np.random.default_rng(seed)
+        scale = np.sqrt(2.0 / (d_model + dk))
+        self.Wq = rng.normal(0, scale, (d_model, dk))
+        self.Wk = rng.normal(0, scale, (d_model, dk))
+        scale_v = np.sqrt(2.0 / (d_model + dv))
+        self.Wv = rng.normal(0, scale_v, (d_model, dv))
+        self.dk = dk
+
+    def forward(self, X):
+        Q = X @ self.Wq
+        K = X @ self.Wk
+        V = X @ self.Wv
+        output, weights = scaled_dot_product_attention(Q, K, V)
+        return output, weights</code></pre>
+      </div>
+    <h3 id="step-4-run-it-on-a-sentence"><a class="anchor" href="#step-4-run-it-on-a-sentence">#</a> Step 4: Run it on a sentence</h3>
+<p>Create fake embeddings for a sentence and watch the attention weights.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">sentence = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;the&quot;, &quot;mat&quot;]
+n_tokens = len(sentence)
+d_model = 8
+dk = 4
+dv = 4
+
+rng = np.random.default_rng(42)
+X = rng.normal(0, 1, (n_tokens, d_model))
+
+attn = SelfAttention(d_model, dk, dv, seed=42)
+output, weights = attn.forward(X)
+
+print(&quot;Attention weights (each row: where that token looks):\n&quot;)
+print(f&quot;{&#39;&#39;:&gt;6}&quot;, end=&quot;&quot;)
+for token in sentence:
+    print(f&quot;{token:&gt;6}&quot;, end=&quot;&quot;)
+print()
+
+for i, token in enumerate(sentence):
+    print(f&quot;{token:&gt;6}&quot;, end=&quot;&quot;)
+    for j in range(n_tokens):
+        w = weights[i][j]
+        print(f&quot;{w:6.3f}&quot;, end=&quot;&quot;)
+    print()</code></pre>
+      </div>
+    <h3 id="step-5-visualize-attention-with-ascii-heatmap"><a class="anchor" href="#step-5-visualize-attention-with-ascii-heatmap">#</a> Step 5: Visualize attention with ASCII heatmap</h3>
+<p>Map attention weights to characters for a quick visual.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def ascii_heatmap(weights, tokens, chars=&quot; ░▒▓█&quot;):
+    n = len(tokens)
+    print(f&quot;\n{&#39;&#39;:&gt;6}&quot;, end=&quot;&quot;)
+    for t in tokens:
+        print(f&quot;{t:&gt;6}&quot;, end=&quot;&quot;)
+    print()
+
+    for i in range(n):
+        print(f&quot;{tokens[i]:&gt;6}&quot;, end=&quot;&quot;)
+        for j in range(n):
+            level = int(weights[i][j] * (len(chars) - 1) / weights.max())
+            level = min(level, len(chars) - 1)
+            print(f&quot;{&#39;  &#39; + chars[level] + &#39;   &#39;}&quot;, end=&quot;&quot;)
+        print()
+
+ascii_heatmap(weights, sentence)</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PyTorch&#39;s <code>nn.MultiheadAttention</code> does exactly what we built, plus multi-head splitting and output projection:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+d_model = 8
+n_heads = 2
+seq_len = 6
+
+mha = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
+
+X_torch = torch.randn(1, seq_len, d_model)
+
+output, attn_weights = mha(X_torch, X_torch, X_torch)
+
+print(f&quot;Input shape:            {X_torch.shape}&quot;)
+print(f&quot;Output shape:           {output.shape}&quot;)
+print(f&quot;Attention weight shape: {attn_weights.shape}&quot;)
+print(f&quot;\nAttn weights (averaged over heads):&quot;)
+print(attn_weights[0].detach().numpy().round(3))</code></pre>
+      </div>
+    <p>The key difference: multi-head attention runs multiple attention functions in parallel, each with its own Q, K, V projections of size dk = d_model / n_heads, then concatenates results. This lets the model attend to different relationship types simultaneously.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-attention-explainer.md</code> - a prompt for explaining attention through the database lookup analogy</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Modify <code>scaled_dot_product_attention</code> to accept an optional mask matrix that sets certain positions to negative infinity before softmax (this is how causal/decoder masking works)</li>
+<li>Implement multi-head attention from scratch: split Q, K, V into <code>n_heads</code> chunks, run attention on each, concatenate, and project through a final weight matrix Wo</li>
+<li>Take two different sentences of the same length, feed them through the same SelfAttention instance, and compare their attention patterns. What changes? What stays the same?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Query (Q)</td>
+<td>&quot;The question vector&quot;</td>
+<td>A learned projection of the input that represents what information this token is looking for</td>
+</tr>
+<tr>
+<td>Key (K)</td>
+<td>&quot;The label vector&quot;</td>
+<td>A learned projection that represents what information this token contains, matched against queries</td>
+</tr>
+<tr>
+<td>Value (V)</td>
+<td>&quot;The content vector&quot;</td>
+<td>A learned projection carrying the actual information that gets aggregated based on attention scores</td>
+</tr>
+<tr>
+<td>Scaled dot-product attention</td>
+<td>&quot;The attention formula&quot;</td>
+<td>softmax(QK^T / sqrt(dk)) @ V - scaling prevents softmax saturation in high dimensions</td>
+</tr>
+<tr>
+<td>Self-attention</td>
+<td>&quot;The token looks at itself and others&quot;</td>
+<td>Attention where Q, K, V all come from the same sequence, letting every position attend to every other position</td>
+</tr>
+<tr>
+<td>Attention weights</td>
+<td>&quot;How much focus&quot;</td>
+<td>A probability distribution over positions, produced by softmax over scaled dot products</td>
+</tr>
+<tr>
+<td>Multi-head attention</td>
+<td>&quot;Parallel attention&quot;</td>
+<td>Running multiple attention functions with different projections, then concatenating results for richer representations</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need (Vaswani et al., 2017)</a> - the original transformer paper</li>
+<li><a href="https://jalammar.github.io/illustrated-transformer/">The Illustrated Transformer (Jay Alammar)</a> - best visual walkthrough of the full architecture</li>
+<li><a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer (Harvard NLP)</a> - line-by-line PyTorch implementation with explanations</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-why-transformers.html"><span>← Previous</span><b>why transformers</b></a>
+      <a class="next" href="./03-multi-head-attention.html"><span>Next →</span><b>multi head attention</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

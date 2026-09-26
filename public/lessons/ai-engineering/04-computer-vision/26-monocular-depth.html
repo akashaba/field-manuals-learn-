@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monocular Depth &amp; Geometry Estimation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/26-monocular-depth/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Monocular Depth &amp; Geometry Estimation</h1>
+    <p class="lesson-sub">A depth map is a single-channel image where each pixel is a distance from the camera. Predicting it from one RGB frame used to be impossible without stereo or LiDAR. In 2026 a frozen ViT encoder plus a lightweight head gets within a few percent of ground truth.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build + Use</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 14 (ViT), Phase 4 Lesson 17 (Self-Supervised Vision), Phase 4 Lesson 07 (U-Net)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 26">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M65.3,73.8 L70.4,66.1 L75.6,73.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.5,76.3 L65.0,50.1 L82.5,76.3 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.7" y="44.0" width="33.7" height="33.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(239 59.6 60.9)"/>
+        <rect x="38.0" y="39.7" width="32.4" height="32.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(222 54.2 56.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">26</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Monocular Depth &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Geometry Estimation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish relative and metric depth and state which one each production model (MiDaS, Marigold, Depth Anything V3, ZoeDepth) solves</li>
+<li>Use Depth Anything V3 (DINOv2 backbone) to predict depth for arbitrary single images with no calibration</li>
+<li>Explain why monocular depth works at all from a single image (perspective cues, texture gradients, learned priors) and what it cannot recover (absolute scale, occluded geometry)</li>
+<li>Lift 2D detections to 3D points using a depth map and pinhole camera intrinsics</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Depth is the missing axis in 2D computer vision. Given RGB, you know where things appear in the image plane; you do not know how far they are. Depth sensors (stereo rigs, LiDAR, time-of-flight) solve this directly but are expensive, fragile, and limited in range.</p>
+<p>Monocular depth estimation — predicting depth from a single RGB frame — used to produce blurry, unreliable output. By 2026 large pretrained encoders changed that: Depth Anything V3 uses a frozen DINOv2 backbone and produces depth maps that generalise across indoor, outdoor, medical, and satellite domains. Marigold reframes depth as a conditional diffusion problem. ZoeDepth regresses true metric distances.</p>
+<p>Depth is also the bridge between 2D detection and 3D understanding: multiply a detected box&#39;s pixels by depth and you lift the 2D object into a 3D point cloud. That is the core of every AR occlusion system, every obstacle-avoidance pipeline, and every &quot;pick up the cup&quot; robot.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="relative-vs-metric-depth"><a class="anchor" href="#relative-vs-metric-depth">#</a> Relative vs metric depth</h3>
+<ul>
+<li><strong>Relative depth</strong> — ordered <code>z</code> values without a real-world unit. &quot;Pixel A is closer than pixel B, but the ratio of distances is not anchored to metres.&quot;</li>
+<li><strong>Metric depth</strong> — absolute distance in metres from the camera. Requires the model to have learnt the statistical relationship between image cues and real distance.</li>
+</ul>
+<p>MiDaS and Depth Anything V3 produce relative depth. Marigold produces relative depth. ZoeDepth, UniDepth, and Metric3D produce metric depth. Metric models are sensitive to camera intrinsics; relative models are not.</p>
+<h3 id="the-encoder-decoder-pattern"><a class="anchor" href="#the-encoder-decoder-pattern">#</a> The encoder-decoder pattern</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    IMG[&quot;Image (H x W x 3)&quot;] --&gt; ENC[&quot;Frozen ViT encoder&lt;br/&gt;(DINOv2 / DINOv3)&quot;]
+    ENC --&gt; FEATS[&quot;Dense features&lt;br/&gt;(H/14, W/14, d)&quot;]
+    FEATS --&gt; DEC[&quot;Depth decoder&lt;br/&gt;(conv upsampler,&lt;br/&gt;DPT-style)&quot;]
+    DEC --&gt; DEPTH[&quot;Depth map&lt;br/&gt;(H, W, 1)&quot;]
+
+    style ENC fill:#dbeafe,stroke:#2563eb
+    style DEC fill:#fef3c7,stroke:#d97706
+    style DEPTH fill:#dcfce7,stroke:#16a34a</pre></div><p>Depth Anything V3 freezes the encoder and trains only the DPT-style decoder. The encoder provides rich features; the decoder interpolates them back to image resolution and regresses depth.</p>
+<h3 id="why-a-single-image-produces-depth-at-all"><a class="anchor" href="#why-a-single-image-produces-depth-at-all">#</a> Why a single image produces depth at all</h3>
+<p>A 2D image contains many monocular cues that correlate with depth:</p>
+<ul>
+<li><strong>Perspective</strong> — parallel lines in 3D converge in 2D.</li>
+<li><strong>Texture gradient</strong> — surfaces far away have smaller, denser texture.</li>
+<li><strong>Occlusion order</strong> — nearer objects occlude farther ones.</li>
+<li><strong>Size constancy</strong> — known objects (cars, humans) give approximate scale.</li>
+<li><strong>Atmospheric perspective</strong> — distant objects appear hazier and bluer in outdoor scenes.</li>
+</ul>
+<p>A ViT trained on billions of images internalises these cues. With enough data and a strong backbone, monocular depth hits reasonable accuracy without any explicit 3D supervision.</p>
+<h3 id="what-monocular-depth-cannot-do"><a class="anchor" href="#what-monocular-depth-cannot-do">#</a> What monocular depth cannot do</h3>
+<ul>
+<li><strong>Absolute metric scale</strong> without intrinsics or a known object in the scene. The network can predict &quot;the cup is twice as far as the spoon&quot; without knowing whether the cup is 1 m or 10 m away.</li>
+<li><strong>Occluded geometry</strong> — the back of a chair is unseen and cannot be inferred reliably.</li>
+<li><strong>Truly untextured / reflective surfaces</strong> — mirrors, glass, uniform walls. The network reports plausible but wrong depth.</li>
+</ul>
+<h3 id="depth-anything-v3-in-2026"><a class="anchor" href="#depth-anything-v3-in-2026">#</a> Depth Anything V3 in 2026</h3>
+<ul>
+<li>Vanilla DINOv2 ViT-L/14 as encoder (frozen).</li>
+<li>DPT decoder.</li>
+<li>Trained on posed image pairs from diverse sources (no explicit depth supervision needed beyond photometric consistency).</li>
+<li>Predicts spatially consistent geometry from <strong>an arbitrary number of visual inputs, with or without known camera poses</strong>.</li>
+<li>SOTA across monocular depth, any-view geometry, visual rendering, camera pose estimation.</li>
+</ul>
+<p>This is the drop-in model to call when you need depth in 2026.</p>
+<h3 id="marigold-diffusion-for-depth"><a class="anchor" href="#marigold-diffusion-for-depth">#</a> Marigold — diffusion for depth</h3>
+<p>Marigold (Ke et al., CVPR 2024) reframes depth estimation as conditional image-to-image diffusion. Conditioning: RGB. Target: depth map. Uses a pretrained Stable Diffusion 2 U-Net as backbone. Output depth maps are exceptionally sharp at object boundaries. Trade-off: slower inference than feed-forward models (10-50 denoising steps).</p>
+<h3 id="intrinsics-and-the-pinhole-camera"><a class="anchor" href="#intrinsics-and-the-pinhole-camera">#</a> Intrinsics and the pinhole camera</h3>
+<p>To lift a pixel <code>(u, v)</code> with depth <code>d</code> to a 3D point <code>(X, Y, Z)</code> in camera coordinates:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">fx, fy, cx, cy = camera intrinsics
+X = (u - cx) * d / fx
+Y = (v - cy) * d / fy
+Z = d</code></pre>
+      </div>
+    <p>Intrinsics come from EXIF metadata, a calibration pattern, or a monocular intrinsics estimator (Perspective Fields, UniDepth). Without intrinsics, you can still render a point cloud by assuming a 60-70° FOV and moderate-resolution principals — usable for visualisation, not for measurement.</p>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<p>Two standard metrics:</p>
+<ul>
+<li><strong>AbsRel</strong> (absolute relative error): <code>mean(|d_pred - d_gt| / d_gt)</code>. Lower is better. 0.05-0.1 for production models.</li>
+<li><strong>delta &lt; 1.25</strong> (threshold accuracy): fraction of pixels where <code>max(d_pred/d_gt, d_gt/d_pred) &lt; 1.25</code>. Higher is better. 0.9+ for SOTA.</li>
+</ul>
+<p>For relative depth (Depth Anything V3, MiDaS), evaluation uses scale-and-shift invariant versions of both metrics.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">depth-sweep</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-depth-metrics"><a class="anchor" href="#step-1-depth-metrics">#</a> Step 1: Depth metrics</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+
+def abs_rel_error(pred, target, mask=None):
+    if mask is not None:
+        pred = pred[mask]
+        target = target[mask]
+    return (torch.abs(pred - target) / target.clamp(min=1e-6)).mean().item()
+
+
+def delta_accuracy(pred, target, threshold=1.25, mask=None):
+    if mask is not None:
+        pred = pred[mask]
+        target = target[mask]
+    ratio = torch.maximum(pred / target.clamp(min=1e-6), target / pred.clamp(min=1e-6))
+    return (ratio &lt; threshold).float().mean().item()</code></pre>
+      </div>
+    <p>Always mask invalid depth pixels (zero, NaN, saturated) before evaluation.</p>
+<h3 id="step-2-scale-and-shift-alignment"><a class="anchor" href="#step-2-scale-and-shift-alignment">#</a> Step 2: Scale-and-shift alignment</h3>
+<p>For relative-depth models, align prediction to ground truth before computing metrics. Least-squares fit of <code>a * pred + b = target</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def align_scale_shift(pred, target, mask=None):
+    if mask is not None:
+        p = pred[mask]
+        t = target[mask]
+    else:
+        p = pred.flatten()
+        t = target.flatten()
+    A = torch.stack([p, torch.ones_like(p)], dim=1)
+    coeffs, *_ = torch.linalg.lstsq(A, t.unsqueeze(-1))
+    a, b = coeffs[:2, 0]
+    return a * pred + b</code></pre>
+      </div>
+    <p>Run <code>align_scale_shift</code> before <code>abs_rel_error</code> when evaluating MiDaS / Depth Anything.</p>
+<h3 id="step-3-lift-depth-to-a-point-cloud"><a class="anchor" href="#step-3-lift-depth-to-a-point-cloud">#</a> Step 3: Lift depth to a point cloud</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def depth_to_point_cloud(depth, intrinsics):
+    H, W = depth.shape
+    fx, fy, cx, cy = intrinsics
+    v, u = np.meshgrid(np.arange(H), np.arange(W), indexing=&quot;ij&quot;)
+    z = depth
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+    return np.stack([x, y, z], axis=-1)
+
+
+depth = np.random.uniform(0.5, 4.0, (240, 320))
+intr = (320.0, 320.0, 160.0, 120.0)
+pc = depth_to_point_cloud(depth, intr)
+print(f&quot;point cloud shape: {pc.shape}  (H, W, 3)&quot;)</code></pre>
+      </div>
+    <p>One function, every 3D-lifted application. Export the point cloud to <code>.ply</code> and open in MeshLab or CloudCompare.</p>
+<h3 id="step-4-smoke-test-with-a-synthetic-depth-scene"><a class="anchor" href="#step-4-smoke-test-with-a-synthetic-depth-scene">#</a> Step 4: Smoke test with a synthetic depth scene</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def synthetic_depth(size=96):
+    yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+    # Floor: linear gradient from near (top) to far (bottom)
+    depth = 1.0 + (yy / size) * 4.0
+    # Box in the middle: closer
+    mask = (np.abs(xx - size / 2) &lt; size / 6) &amp; (np.abs(yy - size * 0.6) &lt; size / 6)
+    depth[mask] = 2.0
+    return depth.astype(np.float32)
+
+
+gt = torch.from_numpy(synthetic_depth(96))
+pred = gt + 0.3 * torch.randn_like(gt)  # simulated prediction
+aligned = align_scale_shift(pred, gt)
+print(f&quot;before align  absRel = {abs_rel_error(pred, gt):.3f}&quot;)
+print(f&quot;after align   absRel = {abs_rel_error(aligned, gt):.3f}&quot;)</code></pre>
+      </div>
+    <h3 id="step-5-depth-anything-v3-usage-reference"><a class="anchor" href="#step-5-depth-anything-v3-usage-reference">#</a> Step 5: Depth Anything V3 usage (reference)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+from transformers import pipeline
+from PIL import Image
+
+pipe = pipeline(task=&quot;depth-estimation&quot;, model=&quot;LiheYoung/depth-anything-v2-large&quot;)
+
+image = Image.open(&quot;street.jpg&quot;).convert(&quot;RGB&quot;)
+out = pipe(image)
+depth_np = np.array(out[&quot;depth&quot;])</code></pre>
+      </div>
+    <p>Three lines. <code>out[&quot;depth&quot;]</code> is a PIL grayscale; convert to numpy for math. For Depth Anything V3 specifically, swap the model id once released; the API is unchanged.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li><strong>Depth Anything V3</strong> (Meta AI / ByteDance, 2024-2026) — the default for relative depth. Fastest ViT-large-backbone model in production.</li>
+<li><strong>Marigold</strong> (ETH, 2024) — highest visual quality, slow inference.</li>
+<li><strong>UniDepth</strong> (ETH, 2024) — metric depth with camera intrinsics estimation.</li>
+<li><strong>ZoeDepth</strong> (Intel, 2023) — metric depth; older, still reliable.</li>
+<li><strong>MiDaS v3.1</strong> — legacy but stable; good baseline for comparison.</li>
+</ul>
+<p>Typical integration pattern:</p>
+<ol>
+<li>RGB frame arrives.</li>
+<li>Depth model produces depth map.</li>
+<li>Detector produces boxes.</li>
+<li>Lift box centroids through depth to 3D; merge with point cloud if available.</li>
+<li>Downstream: AR occlusion, path planning, object-size estimation, stereo replacement.</li>
+</ol>
+<p>For real-time use, Depth Anything V2 Small (INT8 quantised) hits ~30 fps on a consumer GPU at 518x518.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-depth-model-picker.md</code> — picks between Depth Anything V3, Marigold, UniDepth, MiDaS given latency, metric-vs-relative need, and scene type.</li>
+<li><code>outputs/skill-depth-to-pointcloud.md</code> — a skill that builds point clouds from depth maps with correct intrinsics handling and export to <code>.ply</code>.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run Depth Anything V2 on any 10 images of your desk. Save depth as grayscale PNGs and inspect. Identify one object whose predicted depth looks wrong and explain why the monocular cues failed.</li>
+<li><strong>(Medium)</strong> Given RGB + depth from Depth Anything V2, lift to a point cloud and render with <code>open3d</code>. Compare two scenes (indoor / outdoor) and note which looks more believable.</li>
+<li><strong>(Hard)</strong> Take five pairs of images that differ only by a known object&#39;s position (e.g. bottle moved 30 cm closer). Use UniDepth to predict metric depth on both. Report the predicted distance delta vs the true 30 cm.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Monocular depth</td>
+<td>&quot;Single-image depth&quot;</td>
+<td>Depth estimation from one RGB frame, no stereo or LiDAR</td>
+</tr>
+<tr>
+<td>Relative depth</td>
+<td>&quot;Ordered depth&quot;</td>
+<td>Ordered z-values without real-world units</td>
+</tr>
+<tr>
+<td>Metric depth</td>
+<td>&quot;Absolute distance&quot;</td>
+<td>Depth in metres; requires calibration or a model trained with metric supervision</td>
+</tr>
+<tr>
+<td>AbsRel</td>
+<td>&quot;Absolute relative error&quot;</td>
+<td>Mean of</td>
+</tr>
+<tr>
+<td>Delta accuracy</td>
+<td>&quot;delta &lt; 1.25&quot;</td>
+<td>Fraction of pixels with prediction within 25% of ground truth</td>
+</tr>
+<tr>
+<td>Pinhole camera</td>
+<td>&quot;fx, fy, cx, cy&quot;</td>
+<td>The camera model used to lift (u, v, d) to (X, Y, Z)</td>
+</tr>
+<tr>
+<td>DPT</td>
+<td>&quot;Dense Prediction Transformer&quot;</td>
+<td>The conv-based decoder used on top of frozen ViT encoders for depth</td>
+</tr>
+<tr>
+<td>DINOv2 backbone</td>
+<td>&quot;The reason it works&quot;</td>
+<td>Self-supervised features that generalise across domains without depth labels</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://depth-anything.github.io/">Depth Anything V3 paper page</a> — SOTA monocular depth with DINOv2 encoder</li>
+<li><a href="https://marigoldmonodepth.github.io/">Marigold (Ke et al., CVPR 2024)</a> — diffusion-based depth estimation</li>
+<li><a href="https://arxiv.org/abs/2403.18913">UniDepth (Piccinelli et al., 2024)</a> — metric depth with intrinsics</li>
+<li><a href="https://github.com/isl-org/MiDaS">MiDaS v3.1 (Intel ISL)</a> — the canonical relative-depth baseline</li>
+<li><a href="https://ai.meta.com/blog/dinov3-self-supervised-vision-model/">DINOv3 blog post (Meta)</a> — the encoder family that lifts depth accuracy</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./25-vision-language-models.html"><span>← Previous</span><b>vision language models</b></a>
+      <a class="next" href="./27-multi-object-tracking.html"><span>Next →</span><b>multi object tracking</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

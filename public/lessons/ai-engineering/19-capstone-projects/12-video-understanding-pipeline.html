@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone 12 — Video Understanding Pipeline (Scene, QA, Search) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/12-video-understanding-pipeline/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#stack">Stack</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Capstone 12 — Video Understanding Pipeline (Scene, QA, Search)</h1>
+    <p class="lesson-sub">Twelve Labs productized Marengo + Pegasus. VideoDB shipped the CRUD-for-video API. AI2&#39;s Molmo 2 published open VLM checkpoints. Gemini long-context handles hours of video natively. TimeLens-100K defined temporal grounding at scale. The 2026 pipeline is settled: scene segmentation, per-scene caption + embedding, transcript alignment, multi-vector index, and a query that answers with (start, end) timestamps plus frame previews. The capstone is ingesting 100 hours, hitting public benchmarks, and measuring hallucination on counting and action questions.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Capstone</b></div><div><span>Languages</span><b>Python (pipeline), TypeScript (UI)</b></div><div><span>Prerequisites</span><b>Phase 4 (CV), Phase 6 (speech), Phase 7 (transformers), Phase 11 (LLM engineering), Phase 12 (multimodal), Phase 17 (infrastructure)</b></div><div><span>Phases exercised</span><b>P4 · P6 · P7 · P11 · P12 · P17</b></div><div><span>Time</span><b>30 hours</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.3,72.8 L61.4,47.2 L78.5,72.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.5" y="41.2" width="32.9" height="32.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(227 56.0 57.6)"/>
+        <rect x="34.8" y="36.9" width="31.6" height="31.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(210 50.6 52.7)"/>
+        <rect x="30.0" y="32.6" width="30.3" height="30.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.1 47.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone 12 — Video</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Understanding…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Long-form video QA is the most bandwidth-hungry multimodal problem at 2026 scale. Gemini 2.5 Pro can read a 2-hour video natively, but ingesting 100 hours of video into a queryable corpus still requires a scene-level index. The production shape combines scene segmentation (TransNetV2 or PySceneDetect), per-scene captioning with a VLM (Gemini 2.5, Qwen3-VL-Max, or Molmo 2), transcript alignment (Whisper-v3-turbo with word timestamps), and a multi-vector index that stores caption, frame embedding, and transcript side by side. The query pipeline answers with (start, end) timestamps plus frame previews.</p>
+<p>Benchmarks are public (ActivityNet-QA, NeXT-GQA) plus your own 100-query custom set. Hallucination on counting and action-type questions is the known-hard failure class; the capstone explicitly measures it.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<p>Three pipelines run in parallel at ingest. <strong>Scene segmentation</strong> cuts the video into scenes. <strong>VLM captioning</strong> generates a caption per scene and a frame embedding from a keyframe. <strong>ASR alignment</strong> produces word-level timestamps. The three streams are joined by (scene_id, time range). Each scene gets three vector types in a multi-vector index (Qdrant): caption embedding, keyframe embedding, transcript embedding.</p>
+<p>At query time, the natural-language question fires against all three vectors; results merge with RRF; a temporal-grounding adapter (TimeLens-style) refines the (start, end) window within the top scene. The VLM synthesizer (Gemini 2.5 Pro or Qwen3-VL-Max) takes query + top scenes + cropped frames and answers with cited timestamps and a frame preview.</p>
+<p>The hallucination measurement matters. Counting (&quot;how many people enter the room?&quot;) and action-type (&quot;does the chef pour before stirring?&quot;) questions are notoriously unreliable. Report accuracy separately from descriptive questions.</p>
+<h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">video file / URL
+      |
+      v
+PySceneDetect / TransNetV2  (scene segmentation)
+      |
+      +--- per-scene keyframe --- VLM caption + frame embedding
+      |                            (Gemini 2.5 Pro / Qwen3-VL-Max / Molmo 2)
+      |
+      +--- audio channel --- Whisper-v3-turbo ASR + word timestamps
+      |
+      v
+multi-vector Qdrant: {caption_emb, keyframe_emb, transcript_emb}
+      |
+query:
+  dense queries against all three -&gt; RRF merge -&gt; top-k scenes
+      |
+      v
+TimeLens / VideoITG temporal grounding (refine start/end within scene)
+      |
+      v
+VLM synth: query + top scenes + frame previews
+      |
+      v
+answer + (start, end) timestamps + frame thumbs + citations</code></pre>
+      </div>
+    <h2 id="stack"><a class="anchor" href="#stack">#</a> Stack</h2>
+<ul>
+<li>Scene segmentation: TransNetV2 (state-of-the-art 2024-26) or PySceneDetect</li>
+<li>ASR: Whisper-v3-turbo via faster-whisper with word timestamps</li>
+<li>VLM captioner + answerer: Gemini 2.5 Pro or Qwen3-VL-Max or Molmo 2</li>
+<li>Temporal grounding: TimeLens-100K-trained adapter or VideoITG</li>
+<li>Index: Qdrant with multi-vector support (caption / frame / transcript)</li>
+<li>UI: Next.js 15 with HTML5 video player and scene thumbnails</li>
+<li>Eval: ActivityNet-QA, NeXT-GQA, custom 100-question hand-labeled set</li>
+<li>Hallucination benchmark: counting and action-type subsets with hand labels</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-scene-index</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<ol>
+<li><p><strong>Ingest walker.</strong> Accept YouTube URLs or local MP4s. Downscale to 720p if needed. Persist <code>{video_id, file_path}</code>.</p>
+</li>
+<li><p><strong>Scene segmentation.</strong> Run TransNetV2 or PySceneDetect to produce <code>[{scene_id, start_ms, end_ms, keyframe_path}]</code>. Target 100 hours: ~6k-8k scenes.</p>
+</li>
+<li><p><strong>ASR pass.</strong> Run Whisper-v3-turbo on audio; export word-level timestamps; split into per-scene transcript slices.</p>
+</li>
+<li><p><strong>VLM captioning.</strong> Per scene, call Gemini 2.5 Pro (or Qwen3-VL-Max) with the keyframe and a short caption template. Produce caption + frame embedding.</p>
+</li>
+<li><p><strong>Multi-vector index.</strong> Qdrant collection with three named vectors. Payload: <code>{video_id, scene_id, start_ms, end_ms, keyframe_url}</code>.</p>
+</li>
+<li><p><strong>Query.</strong> Natural-language question fires three dense queries; merge with reciprocal rank fusion; top-k=5 scenes.</p>
+</li>
+<li><p><strong>Temporal grounding.</strong> Run TimeLens-style adapter on the top scene to refine the (start, end) window within the scene.</p>
+</li>
+<li><p><strong>VLM synth.</strong> Call Gemini 2.5 Pro with query + top-3 scene clips (as images or short clips) + transcripts. Require <code>(video_id, start_ms, end_ms)</code> citations.</p>
+</li>
+<li><p><strong>Eval.</strong> Run ActivityNet-QA and NeXT-GQA. Build a 100-query custom set. Report overall accuracy + per-class breakdown (counting, action, descriptive).</p>
+</li>
+</ol>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">$ video-qa ask --url=https://youtube.com/watch?v=X &quot;how many cars pass the intersection in the first minute?&quot;
+[scene]    23 scenes detected
+[asr]      transcript complete, 4m12s
+[index]    69 vectors written (23 scenes x 3)
+[query]    top scene: scene 3 [01:32-01:54], confidence 0.84
+[ground]   refined window: [00:12-00:58]
+[synth]    gemini 2.5 pro, 1.4s
+answer:    5 cars pass the intersection between 00:12 and 00:58.
+citations: [scene 3: 00:12-00:58]
+          [frame preview at 00:14, 00:27, 00:44, 00:51, 00:57]</code></pre>
+      </div>
+    <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-video-qa.md</code> is the deliverable. Given a YouTube URL or uploaded video, the pipeline indexes scenes and answers questions with timestamped citations.</p>
+<table>
+<thead>
+<tr>
+<th align="center">Weight</th>
+<th>Criterion</th>
+<th>How it is measured</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">25</td>
+<td>Temporal grounding IoU</td>
+<td>Intersection-over-union on held-out grounding set</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>QA accuracy</td>
+<td>NeXT-GQA and custom 100-query</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>Ingest throughput</td>
+<td>Hours of video per dollar spent</td>
+</tr>
+<tr>
+<td align="center">20</td>
+<td>UI and citation UX</td>
+<td>Timestamp links, thumbnail strip, jump-to-frame</td>
+</tr>
+<tr>
+<td align="center">15</td>
+<td>Hallucination rate</td>
+<td>Counting and action-type accuracy separately</td>
+</tr>
+<tr>
+<td align="center"><strong>100</strong></td>
+<td></td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Swap Gemini 2.5 Pro for Qwen3-VL-Max on the captioning pass. Report caption quality delta on a human-rated 50-scene sample.</p>
+</li>
+<li><p>Reduce per-scene frame embedding to one pooled vector instead of multi-vector. Measure the retrieval regression.</p>
+</li>
+<li><p>Build a &quot;counting strict&quot; mode: the synthesizer extracts each counted instance with a timestamp and the user clicks to verify. Measure whether user-verification reduces hallucination.</p>
+</li>
+<li><p>Benchmark ingest cost: hours-of-video-per-dollar across three VLM choices. Pick the sweet spot.</p>
+</li>
+<li><p>Add speaker-diarized transcript: run pyannote speaker diarization on the audio and embed per-speaker transcripts. Demonstrate &quot;what did Alice say about X?&quot; queries.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Scene segmentation</td>
+<td>&quot;Shot detection&quot;</td>
+<td>Cutting video into scenes at shot boundaries</td>
+</tr>
+<tr>
+<td>Multi-vector index</td>
+<td>&quot;Caption + frame + transcript&quot;</td>
+<td>Qdrant collection with named vectors per representation</td>
+</tr>
+<tr>
+<td>Temporal grounding</td>
+<td>&quot;When exactly did it happen&quot;</td>
+<td>Refining the (start, end) window for a query answer</td>
+</tr>
+<tr>
+<td>Frame embedding</td>
+<td>&quot;Visual representation&quot;</td>
+<td>A vector embedding of a keyframe; used for scene-visual similarity</td>
+</tr>
+<tr>
+<td>RRF fusion</td>
+<td>&quot;Reciprocal rank fusion&quot;</td>
+<td>Merge strategy across multiple ranked lists; a classic hybrid-retrieval trick</td>
+</tr>
+<tr>
+<td>Counting hallucination</td>
+<td>&quot;Miscount&quot;</td>
+<td>Known failure mode of VLMs on &quot;how many X&quot; questions</td>
+</tr>
+<tr>
+<td>ActivityNet-QA</td>
+<td>&quot;Video-QA benchmark&quot;</td>
+<td>Long-form video QA accuracy benchmark</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://allenai.org/blog/molmo2">AI2 Molmo 2</a> — open VLM checkpoints</li>
+<li><a href="https://github.com/TencentARC/TimeLens">TimeLens (CVPR 2026)</a> — temporal grounding at scale</li>
+<li><a href="https://deepmind.google/technologies/gemini">Gemini Video long-context</a> — the hosted reference</li>
+<li><a href="https://videodb.io">VideoDB</a> — CRUD-for-video API reference</li>
+<li><a href="https://www.twelvelabs.io">Twelve Labs Marengo + Pegasus</a> — commercial reference</li>
+<li><a href="https://github.com/soCzech/TransNetV2">TransNetV2</a> — scene segmentation model</li>
+<li><a href="https://github.com/Breakthrough/PySceneDetect">PySceneDetect</a> — classic open alternative</li>
+<li><a href="https://arxiv.org/abs/1906.02467">ActivityNet-QA</a> — reference eval benchmark</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-llm-observability-dashboard.html"><span>← Previous</span><b>llm observability dashboard</b></a>
+      <a class="next" href="./13-mcp-server-with-registry.html"><span>Next →</span><b>mcp server with registry</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>01 — vLLM Serving — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/Self-hosting/learning/01-vllm-serving.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Self-hosting</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Self-hosting</div>
+    <h1 class="lesson-title">01 — vLLM Serving</h1>
+    <p class="lesson-sub">**Module goal:** Master the dominant inference engine for open LLMs. Understand what vLLM actually does under the hood (PagedAttention, continuous batching, prefix caching), the flags that matter, and how to squeeze 5–20× more throughput out of a GPU than a naive Hugging Face pipeline.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Self-hosting le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="12.0" y="116.5" width="25.5" height="25.5" rx="2" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55" transform="rotate(125 24.7 129.2)"/>
+        <circle cx="19.3" cy="124.3" r="12.1" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="123.9" cy="119.3" r="11.5" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#0d7c66" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#0d7c66" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#0d7c66" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="96" lengthAdjust="spacingAndGlyphs">SELF-HOSTING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">01 — vLLM Serving</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p><strong>vLLM</strong> is an open-source LLM serving engine developed at UC Berkeley (Sky Lab) that has become the default choice for serving open-weight models in 2024–2026. Alternatives (Text Generation Inference / TGI, SGLang, llama.cpp) exist and are appropriate in specific contexts, but vLLM dominates general-purpose serving because of three engineering wins:</p>
+<ol>
+<li><p><strong>PagedAttention</strong> — a memory management scheme for the KV cache modeled on OS-level virtual memory paging. Eliminates the fragmentation that limits naive KV storage. Enables running many more concurrent requests in the same VRAM.</p>
+</li>
+<li><p><strong>Continuous batching (a.k.a. iteration-level scheduling)</strong> — instead of batching requests together and waiting for the slowest one, vLLM batches at the <em>token</em> level. New requests join the batch dynamically; finished sequences leave. Massive throughput gains for realistic mixed-length workloads.</p>
+</li>
+<li><p><strong>Prefix caching</strong> — identical prompt prefixes across requests are computed once and reused. If 100 requests share the same 6k-token system prompt, the KV state for those 6k tokens is computed once, not 100 times. Matches Anthropic-style prompt caching semantically.</p>
+</li>
+</ol>
+<p>Plus a mature ecosystem:</p>
+<ul>
+<li>OpenAI-compatible HTTP API (<code>/v1/chat/completions</code>, <code>/v1/completions</code>, <code>/v1/embeddings</code>)</li>
+<li>Tensor parallelism across GPUs (<code>--tensor-parallel-size N</code>)</li>
+<li>LoRA adapter loading at request time (<code>--enable-lora</code>)</li>
+<li>Structured output (JSON schema, regex) via the Outlines/xgrammar integrations</li>
+<li>Prometheus metrics endpoint</li>
+<li>Full support for all major open models (Llama, Qwen, Mistral, Gemma, DeepSeek, Phi, Command R)</li>
+</ul>
+<p><strong>Rule of thumb:</strong> if you&#39;re serving an open LLM in production and you can&#39;t articulate a specific reason not to, use vLLM.</p>
+<p><strong>Alternatives, briefly:</strong></p>
+<ul>
+<li><strong>TGI (Text Generation Inference)</strong> — Hugging Face&#39;s serving engine. Similar features, tighter Hugging Face ecosystem integration; slightly less throughput on most benchmarks.</li>
+<li><strong>SGLang</strong> — newer, research-oriented; excellent for complex multi-step LLM programs (structured generation, RAG). Rising.</li>
+<li><strong>llama.cpp / Ollama</strong> — CPU + consumer-GPU focused; GGUF quantization; great for local desktop / Mac usage; not a production high-throughput server.</li>
+<li><strong>Managed platforms</strong> (Together AI, Fireworks, Anyscale, Groq) — someone else runs vLLM (or similar) for you and charges per token. Sweet spot when you want open-model economics without the infra work.</li>
+</ul>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-pagedattention-why-vllm-is-fast"><a class="anchor" href="#21-pagedattention-why-vllm-is-fast">#</a> 2.1 PagedAttention — Why vLLM Is Fast</h3>
+<p>Traditional LLM serving allocates a fixed-size KV cache per sequence. Two problems:</p>
+<ul>
+<li><strong>Internal fragmentation:</strong> you allocate for <code>max_seq_len</code> but most sequences don&#39;t reach it. Wasted VRAM.</li>
+<li><strong>External fragmentation:</strong> as sequences of different lengths come and go, VRAM gets Swiss-cheesed and you can&#39;t fit new requests.</li>
+</ul>
+<p>PagedAttention treats KV cache like a paged memory system: fixed-size blocks (say 16 tokens each), allocated on demand, addressed via a block table per sequence. Analogous to OS virtual memory + physical page tables.</p>
+<p>Result:</p>
+<ul>
+<li>Near-zero fragmentation</li>
+<li>Sequences with different lengths share VRAM efficiently</li>
+<li>Multiple sequences can even share KV cache blocks (prefix caching leverages this — see 2.4)</li>
+</ul>
+<p>You don&#39;t tune PagedAttention directly. It&#39;s always on. Just know: this is why you can fit ~10× more concurrent requests in the same GPU than a naive implementation.</p>
+<h3 id="22-continuous-batching"><a class="anchor" href="#22-continuous-batching">#</a> 2.2 Continuous Batching</h3>
+<p>Old (bad) approach: <strong>static batching</strong>. You wait for N requests to arrive; process them together; the batch finishes when the <em>longest</em> sequence completes; new requests wait for the next batch cycle.</p>
+<p>Problems:</p>
+<ul>
+<li>Short requests wait for long ones — high tail latency</li>
+<li>If N-1 sequences finished 500 tokens ago but the Nth still has 1000 tokens to go, the whole GPU is running for one request</li>
+</ul>
+<p>vLLM&#39;s <strong>continuous batching</strong> (aka iteration-level scheduling) schedules at the token level. On every forward pass:</p>
+<ul>
+<li>Sequences that finished are removed</li>
+<li>New pending requests are added if there&#39;s capacity</li>
+<li>Everyone shares the compute of that single forward pass</li>
+</ul>
+<p>Result: throughput scales sub-linearly with concurrent load (more requests → more efficient batching) instead of super-linearly (more requests → more waiting).</p>
+<p>For a mixed-workload production service, continuous batching yields <strong>3-10× throughput vs static batching</strong> at the same latency.</p>
+<h3 id="23-launching-vllm"><a class="anchor" href="#23-launching-vllm">#</a> 2.3 Launching vLLM</h3>
+<p>The simplest possible launch:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --port 8000</code></pre>
+      </div>
+    <p>vLLM downloads the model from Hugging Face on first launch, warms it up, and exposes an OpenAI-compatible server. Test:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">curl http://localhost:8000/v1/chat/completions \
+    -H &quot;Content-Type: application/json&quot; \
+    -d &#39;{
+        &quot;model&quot;: &quot;meta-llama/Llama-3.1-8B-Instruct&quot;,
+        &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What is 2+2?&quot;}]
+    }&#39;</code></pre>
+      </div>
+    <p>The important flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Purpose</th>
+<th>When to change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--model</code></td>
+<td>Model identifier (HF hub or local path)</td>
+<td>Always</td>
+</tr>
+<tr>
+<td><code>--tensor-parallel-size N</code></td>
+<td>Split model across N GPUs</td>
+<td>Multi-GPU serving</td>
+</tr>
+<tr>
+<td><code>--gpu-memory-utilization 0.9</code></td>
+<td>Fraction of VRAM vLLM can use</td>
+<td>Increase if OOM-free (0.85-0.95); decrease if sharing GPU</td>
+</tr>
+<tr>
+<td><code>--max-model-len 8192</code></td>
+<td>Max context length</td>
+<td>Reduce to save VRAM if you don&#39;t need long context</td>
+</tr>
+<tr>
+<td><code>--dtype bfloat16</code></td>
+<td>Compute dtype</td>
+<td><code>bfloat16</code> for Ampere+, <code>float16</code> for older, <code>float32</code> never</td>
+</tr>
+<tr>
+<td><code>--quantization awq</code> / <code>gptq</code></td>
+<td>Load a pre-quantized model</td>
+<td>Model was quantized (see Module 02)</td>
+</tr>
+<tr>
+<td><code>--enable-prefix-caching</code></td>
+<td>Prefix caching on</td>
+<td>Nearly always in production</td>
+</tr>
+<tr>
+<td><code>--enable-lora</code></td>
+<td>Support LoRA adapters</td>
+<td>Serving fine-tuned adapters</td>
+</tr>
+<tr>
+<td><code>--served-model-name</code></td>
+<td>Alias for <code>model</code> in API</td>
+<td>UX; make the model name match your client&#39;s expectation</td>
+</tr>
+<tr>
+<td><code>--api-key</code></td>
+<td>Require Bearer auth</td>
+<td>Any exposed deployment</td>
+</tr>
+<tr>
+<td><code>--host 0.0.0.0</code></td>
+<td>Bind on all interfaces</td>
+<td>Docker / cloud deployment</td>
+</tr>
+</tbody></table>
+<p>Production launch example (7B on a single 24 GB GPU):</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --served-model-name llama-3.1-8b \
+    --host 0.0.0.0 --port 8000 \
+    --dtype bfloat16 \
+    --gpu-memory-utilization 0.90 \
+    --max-model-len 8192 \
+    --enable-prefix-caching \
+    --api-key $VLLM_API_KEY \
+    --disable-log-requests</code></pre>
+      </div>
+    <h3 id="24-prefix-caching"><a class="anchor" href="#24-prefix-caching">#</a> 2.4 Prefix Caching</h3>
+<p>If two requests share a system prompt (or any leading tokens), vLLM&#39;s prefix cache computes the KV state for those tokens once and reuses it.</p>
+<p>Enable with <code>--enable-prefix-caching</code>. Then:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Every request shares this 4k-token system prompt
+SYSTEM = &quot;You are a legal assistant. [4000-token instruction body...]&quot;
+
+# First request: full forward on the system prompt (~200ms)
+r1 = client.chat.completions.create(model=&quot;llama-3.1-8b&quot;, messages=[
+    {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: SYSTEM},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Analyze this contract clause...&quot;},
+])
+
+# Subsequent requests: system prompt KV is cached, only new tokens are computed (~5ms overhead)
+r2 = client.chat.completions.create(model=&quot;llama-3.1-8b&quot;, messages=[
+    {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: SYSTEM},  # exact bytes match r1
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Different question...&quot;},
+])</code></pre>
+      </div>
+    <p>The cache is content-addressed (prefix hash), so any request with an identical byte prefix hits. Evictions happen on VRAM pressure (LRU-ish).</p>
+<p>Prefix cache dramatically improves both <strong>latency</strong> (5x faster TTFT on cache hit) and <strong>throughput</strong> (the GPU isn&#39;t spending 90% of its time re-encoding the same system prompt across all concurrent users).</p>
+<h3 id="25-lora-adapters-via-enable-lora"><a class="anchor" href="#25-lora-adapters-via-enable-lora">#</a> 2.5 LoRA Adapters via <code>--enable-lora</code></h3>
+<p>If you&#39;ve fine-tuned with LoRA (fine-tuning track), you can serve multiple adapters against one base model:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --enable-lora \
+    --lora-modules legal=./adapters/legal-classifier medical=./adapters/medical-summarizer \
+    --max-loras 2 \
+    --max-lora-rank 32 \
+    --port 8000</code></pre>
+      </div>
+    <p>Requests specify which adapter to use via the <code>model</code> field:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">r = client.chat.completions.create(
+    model=&quot;legal&quot;,   # names the LoRA module, not the base
+    messages=[...],
+)</code></pre>
+      </div>
+    <p>Trade-offs:</p>
+<ul>
+<li>~2-5% latency overhead per request</li>
+<li>One base model in VRAM + adapters (adapters are small, ~50-200 MB each)</li>
+<li>N adapters served against 1 base = multi-tenant fine-tune serving</li>
+</ul>
+<p>For maximum throughput on a single fine-tune: <strong>merge and serve as the base</strong> (fine-tuning Module 05). For multi-tenant fine-tune serving or A/B experimentation: <strong>enable-lora</strong> is the right call.</p>
+<h3 id="26-deployment-docker-cloud-gpu"><a class="anchor" href="#26-deployment-docker-cloud-gpu">#</a> 2.6 Deployment: Docker + Cloud GPU</h3>
+<p>vLLM&#39;s official Docker image:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">docker run --gpus all --rm \
+    -v $HF_HOME:/root/.cache/huggingface \
+    -p 8000:8000 \
+    -e HF_TOKEN=$HF_TOKEN \
+    vllm/vllm-openai:latest \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --gpu-memory-utilization 0.9 \
+    --api-key $VLLM_API_KEY</code></pre>
+      </div>
+    <p>On RunPod / Modal / any cloud with GPU:</p>
+<ul>
+<li>Use a &quot;GPU cloud&quot; instance with a modern card (A10G, L4, A100, H100)</li>
+<li>Persistent volume for the model cache (huge — HF downloads can be 15+ GB)</li>
+<li>Health check <code>/health</code> returns 200 when ready</li>
+<li>Metrics endpoint at <code>/metrics</code> for Prometheus scraping (vLLM emits many; <code>vllm_num_requests_running</code>, <code>vllm_prompt_tokens_total</code>, <code>vllm_generation_tokens_total</code>, <code>vllm_time_to_first_token_seconds</code>, etc.)</li>
+</ul>
+<p><code>[IMG-SH01-01]</code> — <em>Prompt: Diagram of vLLM&#39;s core innovations. Top half: &quot;PagedAttention&quot; — show a KV cache visualized as small blocks of 16 tokens, with block-tables per sequence pointing to physical blocks (like OS memory pages). Contrast with &quot;Static allocation&quot; showing large fixed pre-allocated slots with mostly-empty regions in each. Bottom half: &quot;Continuous batching&quot; — a timeline showing three request lanes; new requests join a shared batch as older ones finish; contrast with &quot;Static batching&quot; where all requests wait for the longest one before restart. Include a small &quot;prefix cache&quot; panel showing two requests sharing a system prompt with only the divergent tail computed twice. Clean technical illustration with warm colors.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-serving-as-a-restaurant-kitchen"><a class="anchor" href="#model-1-serving-as-a-restaurant-kitchen">#</a> Model 1: Serving as a Restaurant Kitchen</h3>
+<p><strong>Static batching</strong> = the kitchen fills a table of 8 diners, seats them all together, and won&#39;t take new orders until all 8 have finished eating. The diner who ordered a salad watches the diner ordering steak eat, and the kitchen sits idle until the last diner leaves.</p>
+<p><strong>Continuous batching</strong> = the kitchen is a rolling brunch. Each cook (a token generation step) checks the dining room: who needs another course? Who&#39;s done? Who just arrived? Fill trays, serve, repeat. Nobody waits for the slowest table. The kitchen operates near peak utilization.</p>
+<p><strong>PagedAttention</strong> = the kitchen&#39;s freezer used to allocate a fixed section per menu item, wasting space on rarely-ordered ones. Now it uses a paged storage system: small standardized bins, allocated on demand, with a lookup table so cooks know where anything lives. Same freezer, dramatically more capacity.</p>
+<p><strong>Prefix caching</strong> = the sauces and stocks are pre-batched at the start of service. When 40 orders share the same base sauce, you make it once, not 40 times.</p>
+<p>All four combine to explain why vLLM produces 5-20× the throughput of a naive Hugging Face pipeline.</p>
+<h3 id="model-2-airline-vs-bus"><a class="anchor" href="#model-2-airline-vs-bus">#</a> Model 2: Airline vs. Bus</h3>
+<p>Static batching is like flying an airline that only takes off when all seats are full — great for the airline&#39;s fuel efficiency, terrible for the passenger. Continuous batching is like a bus that stops every few minutes: you never wait long to board, capacity fills up dynamically, and if the bus is full, the next one comes soon.</p>
+<p>vLLM turns your LLM into that always-departing bus. The economics: bus companies serve more passengers per mile than fully-booked airplanes with delayed departures. So does continuous batching.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Setting <code>--gpu-memory-utilization</code> too aggressively.</strong>
+Default is 0.90. Tempting to set 0.95 or 0.98 to squeeze more. But vLLM allocates the KV cache pool at startup based on this value; if activations later need slightly more (long generation, batched requests), you OOM mid-request. Symptom: works for 5 minutes, then a big request crashes it. Fix: back off to 0.85-0.90; monitor <code>vllm_gpu_cache_usage_perc</code> and only push higher if you&#39;re consistently under-using.</p>
+<p><strong>Pitfall #2 — Ignoring <code>--max-model-len</code>.</strong>
+vLLM defaults to the model&#39;s advertised context length (Llama 3.1: 128k). If you set no cap, vLLM allocates the KV cache for that max — even if your traffic uses only 2-4k of context. Result: much smaller concurrent batch, worse throughput, no user benefit. <strong>Set <code>--max-model-len</code> to what you actually serve.</strong> If your prompts + max_tokens rarely exceed 8k, set it to 8192. You may see 2-3× throughput improvement.</p>
+<p><strong>Pitfall #3 — Not sizing the machine for the model.</strong>
+A 70B model in bf16 is <del>140 GB. On a single 80 GB A100 it doesn&#39;t fit; on 2× 80 GB with <code>--tensor-parallel-size 2</code> it fits. On 4× 40 GB A100s it fits. On a single H100 80GB in 4-bit quantization (</del>35 GB) it fits. Newcomers often try to fit a 70B on a 40 GB card and get &quot;CUDA out of memory&quot; before the first request. Rule: <strong>look up the model&#39;s fp16/bf16 size in GB (~2× param count), pick a card or set of cards that fits it plus ~30% for KV cache/activations.</strong></p>
+<p>Or use tensor parallelism (<code>--tensor-parallel-size N</code>) if you have N smaller GPUs. Best when N ∈ {2, 4, 8}; requires model dimension divisibility.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> vLLM&#39;s PagedAttention is analogous to which OS-level concept?
+A) File system journaling
+B) Virtual memory paging with a page table per process
+C) TCP congestion control
+D) CPU scheduling with priority queues</p>
+<p><strong>Q2 (short):</strong> Compare static batching and continuous batching. When would each&#39;s tail-latency behavior favor the other?</p>
+<p><strong>Q3 (MC):</strong> For serving Llama 3.1 8B in bf16 on a single 24 GB GPU, a reasonable <code>--gpu-memory-utilization</code> is:
+A) 0.30
+B) 0.85–0.92
+C) 0.99
+D) 1.00</p>
+<p><strong>Q4 (short):</strong> Explain what <code>--enable-prefix-caching</code> does and give a workload where it saves the most.</p>
+<p><strong>Q5 (MC):</strong> For serving a 70B fp16 model, the minimum hardware is roughly:
+A) One 24 GB GPU
+B) One 40 GB GPU
+C) Two 80 GB GPUs (with <code>--tensor-parallel-size 2</code>)
+D) 32 GB CPU RAM</p>
+<p><strong>Q6 (short):</strong> You want to serve two fine-tuned LoRA adapters against a single base model. Which vLLM flag enables this and what&#39;s the trade-off?</p>
+<p><strong>Q7 (MC):</strong> Setting <code>--max-model-len</code> far above your actual context usage:
+A) Makes no difference
+B) Wastes VRAM allocated for KV cache pool, reducing concurrent-request capacity
+C) Speeds up inference
+D) Improves quality</p>
+<p><strong>Q8 (short):</strong> Your vLLM instance works for 5 minutes and then OOMs on a long request. Most likely cause and fix?</p>
+<p><strong>Q9 (MC):</strong> Which of these is NOT typically an advantage of vLLM over a naive HuggingFace transformers pipeline?
+A) Higher throughput
+B) Better memory utilization
+C) OpenAI-compatible API
+D) Better model quality</p>
+<p><strong>Q10 (short):</strong> Describe how you&#39;d deploy vLLM to production with health checks, metrics, and secrets — enough for a 60-second interview answer.</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> PagedAttention treats the KV cache as fixed-size blocks addressed through per-sequence block tables, exactly analogous to OS virtual memory pages with per-process page tables. Enables near-zero fragmentation and lets multiple sequences share KV blocks (used by the prefix cache).</p>
+<p><strong>A2:</strong> <strong>Static batching</strong> — batches requests together and processes them until the <em>longest</em> sequence finishes. Simpler to implement, but latency for short requests is dominated by the slowest one in the batch. Static wins when all requests have similar length (e.g., a uniform classification workload) — the tail-latency penalty vanishes if the tail <em>is</em> the median.</p>
+<p><strong>Continuous batching</strong> — scheduled at the token level; new requests join and finished ones leave every forward pass. Latency for a request depends on its own length, not the batch&#39;s; throughput scales sub-linearly with concurrency. Continuous wins for <strong>mixed-length workloads</strong> (real chat traffic) where tail latency of static would be very bad. Continuous can lose on a burst of identical short requests where the overhead of dynamic scheduling exceeds the batching benefit — rare in practice.</p>
+<p><strong>A3: B.</strong> 0.85-0.92 is the safe range. 0.30 wastes VRAM. 0.99 leaves no headroom for activations under load — will OOM on real traffic. 1.00 will OOM immediately. Default is 0.90 for a reason.</p>
+<p><strong>A4:</strong> <code>--enable-prefix-caching</code> stores the KV state of computed prompt prefixes and reuses them for later requests with matching byte-prefixes. Saves the most on <strong>workloads with a shared system prompt across many requests</strong> — a common example: a customer support chat that reuses a 4-6k token system prompt on every request. Cache hit → the model skips computing that prefix (5x faster TTFT, higher throughput). Also helpful for RAG when the retrieved context is often similar across a session (though semantic prefix matching, not just byte-exact, is not yet standard).</p>
+<p><strong>A5: C.</strong> 70B fp16 model weights = ~140 GB. Doesn&#39;t fit on a single 40 GB or 80 GB GPU. Needs either two 80 GB (2 × H100 80GB, or 2 × A100 80GB) with <code>--tensor-parallel-size 2</code> shard weights across them, or four 40 GB (2×A100 40GB with tp=2 fits weights at ~35 GB each but no KV cache room; 4×A100 40GB works comfortably with tp=4). Alternative: aggressive quantization (AWQ int4 → ~35 GB), then a single 80 GB card holds weights + KV.</p>
+<p><strong>A6:</strong> <code>--enable-lora</code>, combined with <code>--lora-modules name1=/path1 name2=/path2</code> to declare adapters. Each request specifies the adapter via the <code>model</code> field. Trade-off: ~2-5% latency overhead per request, plus additional VRAM for each adapter (small — 50-200 MB each). Advantages: one base model in memory serves many fine-tunes; A/B test cheaply; multi-tenant model-per-customer serving. For a single production fine-tune with max throughput, prefer merging and serving as the base model directly.</p>
+<p><strong>A7: B.</strong> <code>--max-model-len</code> bounds the KV cache pool size at startup. Setting it to 128k when your traffic uses 4k means the KV pool is 32× larger than needed, drastically reducing how many concurrent sequences fit in VRAM. Fix: set it to your realistic max (<code>prompt_length + max_new_tokens</code> p99 + margin). Can dramatically improve throughput with no user-facing downside for typical chat workloads.</p>
+<p><strong>A8:</strong> Most likely: <strong><code>--gpu-memory-utilization</code> set too aggressively.</strong> vLLM pre-allocated a large KV cache pool at startup; smaller requests worked fine, but a long generation combined with active batch demand pushed activation memory beyond what remained. Fix: reduce <code>--gpu-memory-utilization</code> (e.g., 0.90 → 0.85). Also consider reducing <code>--max-model-len</code> if it&#39;s set far above realistic p99 usage. Related cause: <code>--max-num-batched-tokens</code> and <code>--max-num-seqs</code> — if these are too high, vLLM tries to pack too much into one forward pass. Monitor <code>vllm_gpu_cache_usage_perc</code> and <code>vllm_num_requests_running</code>.</p>
+<p><strong>A9: D.</strong> Model quality is unchanged — vLLM produces bit-identical outputs to the reference implementation (modulo floating-point non-determinism from batched vs unbatched execution, which is minor). Throughput, memory, and API compatibility are all wins. Quality is not.</p>
+<p><strong>A10:</strong> Deploy the official Docker image (<code>vllm/vllm-openai</code>) on a GPU-enabled cloud host (RunPod / Modal / Fly.io GPU / GCP GPU / EC2 g5). Mount a persistent volume for the HF model cache to skip re-downloads on restart. Env vars: <code>HF_TOKEN</code> and a <code>VLLM_API_KEY</code> for bearer auth. Bind <code>--host 0.0.0.0</code>, expose the port behind TLS. Health check: <code>GET /health</code>. Metrics: scrape <code>/metrics</code> with Prometheus; alert on <code>vllm_num_requests_running</code> climbing (queue saturation) or <code>vllm_time_to_first_token_seconds</code> p99 climbing. Front with a small FastAPI proxy that adds auth, rate limiting, and OpenAI-compatible passthrough (or use vLLM&#39;s built-in auth directly). For rollback, keep the previous model version&#39;s container image ready and use blue-green swap at the load balancer.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/02-quantization.md</code> — reducing VRAM further with 8-bit or 4-bit models</li>
+<li><code>learning/03-openai-compatible-api.md</code> — the API layer on top of vLLM</li>
+<li><code>builds/01-self-host-llama-api.md</code> — hands-on end-to-end</li>
+<li><code>../fine-tuning/learning/05-fine-tuning-ops.md</code> — LoRA adapters this module serves</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Launch vLLM with Llama 3.1 8B Instruct on the smallest GPU you can afford. Benchmark tokens/sec at concurrency 1, 4, 16, and 64. Plot the curve.</li>
+<li>Turn <code>--enable-prefix-caching</code> on and off with an identical workload featuring a 4k-token shared system prompt. Compare TTFT.</li>
+<li>Serve two LoRA adapters (real or dummy) via <code>--enable-lora</code>. Verify each returns its expected behavior.</li>
+<li>Set <code>--max-model-len</code> to 128000, run a benchmark; set to 8192, run again. Compare throughput.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Kwon et al., &quot;Efficient Memory Management for Large Language Model Serving with PagedAttention&quot; (2023) — the vLLM paper</li>
+<li>vLLM docs — <a href="https://docs.vllm.ai">https://docs.vllm.ai</a></li>
+<li>Yu et al., &quot;Orca: A Distributed Serving System for Transformer-Based Generative Models&quot; (2022) — origin of iteration-level scheduling</li>
+<li>Nvidia H100 / A100 specs; RunPod / Modal pricing pages</li>
+<li>Together AI, Fireworks, Anyscale docs (managed vLLM)</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./goals.html"><span>← Previous</span><b>goals</b></a>
+      <a class="next" href="./learning-02-quantization.html"><span>Next →</span><b>learning 02 quantization</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OCR &amp; Document Understanding — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/19-ocr-document-understanding/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">OCR &amp; Document Understanding</h1>
+    <p class="lesson-sub">OCR is a three-stage pipeline — detect text boxes, recognise the characters, then lay them out. Every modern OCR system reorders these stages or merges them.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Use</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 06 (Detection), Phase 7 Lesson 02 (Self-Attention)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 19">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="31.7" y="34.2" width="30.8" height="30.8" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(198 47.1 49.6)"/>
+        <rect x="26.9" y="129.9" width="29.5" height="29.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(181 41.7 144.6)"/>
+        <rect x="22.2" y="125.6" width="28.2" height="28.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(163 36.3 139.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">19</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">OCR &amp; Document</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Understanding</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Trace the classical OCR pipeline (detect -&gt; recognise -&gt; layout) and the modern end-to-end alternatives (Donut, Qwen-VL-OCR)</li>
+<li>Implement CTC (Connectionist Temporal Classification) loss for sequence-to-sequence OCR training</li>
+<li>Use PaddleOCR or EasyOCR for production document parsing without training</li>
+<li>Distinguish OCR, layout parsing, and document understanding — and pick the right tool per task</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Images full of text are everywhere: receipts, invoices, IDs, scanned books, forms, whiteboards, signs, screenshots. Extracting structured data from them — not just the characters, but &quot;this is the total amount&quot; — is one of the highest-value applied-vision problems.</p>
+<p>The field splits into three skill layers:</p>
+<ol>
+<li><strong>OCR proper</strong>: turn pixels into text.</li>
+<li><strong>Layout parsing</strong>: group OCR output into regions (title, body, table, header).</li>
+<li><strong>Document understanding</strong>: extract structured fields (&quot;invoice_total = $42.50&quot;) from layout.</li>
+</ol>
+<p>Each layer has classical and modern approaches, and the gap between &quot;I want text from an image&quot; and &quot;I need the total amount from this receipt&quot; is bigger than most teams realise.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-classical-pipeline"><a class="anchor" href="#the-classical-pipeline">#</a> The classical pipeline</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    IMG[&quot;Image&quot;] --&gt; DET[&quot;Text detection&lt;br/&gt;(DB, EAST, CRAFT)&quot;]
+    DET --&gt; BOX[&quot;Word/line&lt;br/&gt;bounding boxes&quot;]
+    BOX --&gt; CROP[&quot;Crop each region&quot;]
+    CROP --&gt; REC[&quot;Recognition&lt;br/&gt;(CRNN + CTC)&quot;]
+    REC --&gt; TXT[&quot;Text strings&quot;]
+    TXT --&gt; LAY[&quot;Layout&lt;br/&gt;ordering&quot;]
+    LAY --&gt; OUT[&quot;Reading-order text&quot;]
+
+    style DET fill:#dbeafe,stroke:#2563eb
+    style REC fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a</pre></div><ul>
+<li><strong>Text detection</strong> produces per-line or per-word quadrilaterals.</li>
+<li><strong>Recognition</strong> crops each region to a fixed height, runs a CNN + BiLSTM + CTC to produce a character sequence.</li>
+<li><strong>Layout</strong> rebuilds reading order (top-to-bottom, left-to-right for Latin; different for Arabic, Japanese).</li>
+</ul>
+<h3 id="ctc-in-one-paragraph"><a class="anchor" href="#ctc-in-one-paragraph">#</a> CTC in one paragraph</h3>
+<p>OCR recognition produces a variable-length sequence from a fixed-length feature map. CTC (Graves et al., 2006) lets you train this without character-level alignment. The model outputs a distribution over (vocab + blank) at every time step; CTC loss marginalises over all alignments that reduce to the target text after merging repeats and removing blanks.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">raw output: &quot;h h h _ _ e e l l _ l l o _ _&quot;
+after merge repeats and remove blanks: &quot;hello&quot;</code></pre>
+      </div>
+    <p>CTC is the reason CRNN worked in 2015 and still trains most production OCR models in 2026.</p>
+<h3 id="modern-end-to-end-models"><a class="anchor" href="#modern-end-to-end-models">#</a> Modern end-to-end models</h3>
+<ul>
+<li><strong>Donut</strong> (Kim et al., 2022) — a ViT encoder + a text decoder; reads an image and emits JSON directly. No text detector, no layout module.</li>
+<li><strong>TrOCR</strong> — ViT + transformer decoder for line-level OCR.</li>
+<li><strong>Qwen-VL-OCR / InternVL</strong> — full vision-language models fine-tuned for OCR tasks; best accuracy in 2026 on complex documents.</li>
+<li><strong>PaddleOCR</strong> — classical DB + CRNN pipeline in a mature production package; still the open-source workhorse.</li>
+</ul>
+<p>End-to-end models need more data and compute but skip the error accumulation of multi-stage pipelines.</p>
+<h3 id="layout-parsing"><a class="anchor" href="#layout-parsing">#</a> Layout parsing</h3>
+<p>For structured documents, run a layout detector (LayoutLMv3, DocLayNet) that labels each region: Title, Paragraph, Figure, Table, Footnote. Reading order then becomes &quot;iterate through regions in layout order, concatenate.&quot;</p>
+<p>For forms, use <strong>Key-Value extraction</strong> models (Donut for visually-rich documents, LayoutLMv3 for plain scans). They take image + detected text + positions and predict structured key-value pairs.</p>
+<h3 id="evaluation-metrics"><a class="anchor" href="#evaluation-metrics">#</a> Evaluation metrics</h3>
+<ul>
+<li><strong>Character Error Rate (CER)</strong> — Levenshtein distance / length of reference. Lower is better. Production target: &lt; 2% on clean scans.</li>
+<li><strong>Word Error Rate (WER)</strong> — same at the word level.</li>
+<li><strong>F1 on structured fields</strong> — for key-value tasks; measures whether <code>{invoice_total: 42.50}</code> appears correctly.</li>
+<li><strong>Edit distance on JSON</strong> — for end-to-end document parsing; the Donut paper introduced normalised tree edit distance.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-ctc-collapse</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-ctc-loss-greedy-decoder"><a class="anchor" href="#step-1-ctc-loss-greedy-decoder">#</a> Step 1: CTC loss + greedy decoder</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=0):
+    &quot;&quot;&quot;
+    log_probs:      (T, N, C) log-softmax over vocab including blank at index 0
+    targets:        (N, S) int targets (no blanks)
+    input_lengths:  (N,) per-sample time steps used
+    target_lengths: (N,) per-sample target length
+    &quot;&quot;&quot;
+    return F.ctc_loss(log_probs, targets, input_lengths, target_lengths,
+                      blank=blank, reduction=&quot;mean&quot;, zero_infinity=True)
+
+
+def greedy_ctc_decode(log_probs, blank=0):
+    &quot;&quot;&quot;
+    log_probs: (T, N, C) log-softmax
+    returns: list of index sequences (blanks removed, repeats merged)
+    &quot;&quot;&quot;
+    preds = log_probs.argmax(dim=-1).transpose(0, 1).cpu().tolist()
+    out = []
+    for seq in preds:
+        decoded = []
+        prev = None
+        for idx in seq:
+            if idx != prev and idx != blank:
+                decoded.append(idx)
+            prev = idx
+        out.append(decoded)
+    return out</code></pre>
+      </div>
+    <p><code>F.ctc_loss</code> uses the efficient CuDNN implementation when available. The greedy decoder is simpler than a beam search and usually within 1% CER of it.</p>
+<h3 id="step-2-tiny-crnn-recogniser"><a class="anchor" href="#step-2-tiny-crnn-recogniser">#</a> Step 2: Tiny CRNN recogniser</h3>
+<p>Minimal CNN + BiLSTM for line OCR.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class TinyCRNN(nn.Module):
+    def __init__(self, vocab_size=40, hidden=128, feat=32):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, feat, 3, 1, 1), nn.BatchNorm2d(feat), nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(feat, feat * 2, 3, 1, 1), nn.BatchNorm2d(feat * 2), nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(feat * 2, feat * 4, 3, 1, 1), nn.BatchNorm2d(feat * 4), nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1)),
+            nn.Conv2d(feat * 4, feat * 4, 3, 1, 1), nn.BatchNorm2d(feat * 4), nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1)),
+        )
+        self.rnn = nn.LSTM(feat * 4, hidden, bidirectional=True, batch_first=True)
+        self.head = nn.Linear(hidden * 2, vocab_size)
+
+    def forward(self, x):
+        # x: (N, 1, H, W)
+        f = self.cnn(x)                # (N, C, H&#39;, W&#39;)
+        f = f.mean(dim=2).transpose(1, 2)  # (N, W&#39;, C)
+        h, _ = self.rnn(f)
+        return F.log_softmax(self.head(h).transpose(0, 1), dim=-1)  # (W&#39;, N, vocab)</code></pre>
+      </div>
+    <p>Fixed-height input (the CNN max-pools height to 1). Width is the time dimension for CTC.</p>
+<h3 id="step-3-synthetic-ocr"><a class="anchor" href="#step-3-synthetic-ocr">#</a> Step 3: Synthetic OCR</h3>
+<p>Generate black-on-white digit strings for an end-to-end smoke test.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def synthetic_line(text, height=32, char_width=16):
+    W = char_width * len(text)
+    img = np.ones((height, W), dtype=np.float32)
+    for i, c in enumerate(text):
+        x = i * char_width
+        shade = 0.0 if c.isalnum() else 0.5
+        img[6:height - 6, x + 2:x + char_width - 2] = shade
+    return img
+
+
+def build_batch(strings, vocab):
+    H = 32
+    W = 16 * max(len(s) for s in strings)
+    imgs = np.ones((len(strings), 1, H, W), dtype=np.float32)
+    target_lengths = []
+    targets = []
+    for i, s in enumerate(strings):
+        imgs[i, 0, :, :16 * len(s)] = synthetic_line(s)
+        ids = [vocab.index(c) for c in s]
+        targets.extend(ids)
+        target_lengths.append(len(ids))
+    return torch.from_numpy(imgs), torch.tensor(targets), torch.tensor(target_lengths)
+
+
+vocab = [&quot;_&quot;] + list(&quot;0123456789abcdefghijklmnopqrstuvwxyz&quot;)
+imgs, targets, lengths = build_batch([&quot;hello&quot;, &quot;world&quot;], vocab)
+print(f&quot;images: {imgs.shape}   targets: {targets.shape}   lengths: {lengths.tolist()}&quot;)</code></pre>
+      </div>
+    <p>A real OCR dataset adds fonts, noise, rotation, blur, and colour. The pipeline above is identical.</p>
+<h3 id="step-4-training-sketch"><a class="anchor" href="#step-4-training-sketch">#</a> Step 4: Training sketch</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">model = TinyCRNN(vocab_size=len(vocab))
+opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+for step in range(200):
+    strings = [&quot;abc&quot; + str(step % 10)] * 4 + [&quot;xyz&quot; + str((step + 1) % 10)] * 4
+    imgs, targets, target_lens = build_batch(strings, vocab)
+    log_probs = model(imgs)  # (W&#39;, 8, vocab)
+    input_lens = torch.full((8,), log_probs.size(0), dtype=torch.long)
+    loss = ctc_loss(log_probs, targets, input_lens, target_lens, blank=0)
+    opt.zero_grad(); loss.backward(); opt.step()</code></pre>
+      </div>
+    <p>Loss should drop from ~3 to ~0.2 over 200 steps on this trivial synthetic data.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Three production paths:</p>
+<ul>
+<li><strong>PaddleOCR</strong> — mature, fast, multilingual. One-line usage: <code>paddleocr.PaddleOCR(lang=&quot;en&quot;).ocr(image_path)</code>.</li>
+<li><strong>EasyOCR</strong> — Python-native, multilingual, PyTorch backbone.</li>
+<li><strong>Tesseract</strong> — classical; still useful for old scanned documents when models struggle.</li>
+</ul>
+<p>For end-to-end document parsing, use Donut or a VLM:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import DonutProcessor, VisionEncoderDecoderModel
+
+processor = DonutProcessor.from_pretrained(&quot;naver-clova-ix/donut-base-finetuned-cord-v2&quot;)
+model = VisionEncoderDecoderModel.from_pretrained(&quot;naver-clova-ix/donut-base-finetuned-cord-v2&quot;)</code></pre>
+      </div>
+    <p>For receipts, invoices, and forms with repeatable structure, fine-tune Donut. For arbitrary documents or OCR with reasoning, a VLM like Qwen-VL-OCR is the current default.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-ocr-stack-picker.md</code> — a prompt that picks Tesseract / PaddleOCR / Donut / VLM-OCR given document type, language, and structure.</li>
+<li><code>outputs/skill-ctc-decoder.md</code> — a skill that writes greedy and beam-search CTC decoders from scratch, including length normalisation.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Train the TinyCRNN on 5-digit random numeric strings for 500 steps. Report CER on a held-out set.</li>
+<li><strong>(Medium)</strong> Replace greedy decoding with beam search (beam_width=5). Report CER delta. On which inputs does beam search win?</li>
+<li><strong>(Hard)</strong> Use PaddleOCR on a set of 20 receipts, extract line items, and compute F1 against hand-labelled ground truth for {item_name, price} pairs.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>OCR</td>
+<td>&quot;Text from pixels&quot;</td>
+<td>Turning image regions into character sequences</td>
+</tr>
+<tr>
+<td>CTC</td>
+<td>&quot;Alignment-free loss&quot;</td>
+<td>Loss that trains a sequence model without per-timestep labels; marginalises over alignments</td>
+</tr>
+<tr>
+<td>CRNN</td>
+<td>&quot;Classic OCR model&quot;</td>
+<td>Conv feature extractor + BiLSTM + CTC; the 2015 baseline still used in production</td>
+</tr>
+<tr>
+<td>Donut</td>
+<td>&quot;End-to-end OCR&quot;</td>
+<td>ViT encoder + text decoder; emits JSON directly from image</td>
+</tr>
+<tr>
+<td>Layout parsing</td>
+<td>&quot;Find regions&quot;</td>
+<td>Detect and label Title/Table/Figure/Paragraph regions in a document</td>
+</tr>
+<tr>
+<td>Reading order</td>
+<td>&quot;Text sequence&quot;</td>
+<td>Ordering of recognised regions into a sentence; trivial for Latin, non-trivial for mixed layouts</td>
+</tr>
+<tr>
+<td>CER / WER</td>
+<td>&quot;Error rates&quot;</td>
+<td>Levenshtein distance / reference length at character or word granularity</td>
+</tr>
+<tr>
+<td>VLM-OCR</td>
+<td>&quot;LLM that reads&quot;</td>
+<td>A vision-language model trained or prompted for OCR tasks; current SOTA on complex documents</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1507.05717">CRNN (Shi et al., 2015)</a> — the original CNN+RNN+CTC architecture</li>
+<li><a href="https://www.cs.toronto.edu/~graves/icml_2006.pdf">CTC (Graves et al., 2006)</a> — the original CTC paper; densely packed with the algorithmic ideas</li>
+<li><a href="https://arxiv.org/abs/2111.15664">Donut (Kim et al., 2022)</a> — OCR-free document understanding transformer</li>
+<li><a href="https://github.com/PaddlePaddle/PaddleOCR">PaddleOCR</a> — the open-source production OCR stack</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./18-open-vocab-clip.html"><span>← Previous</span><b>open vocab clip</b></a>
+      <a class="next" href="./20-image-retrieval-metric.html"><span>Next →</span><b>image retrieval metric</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

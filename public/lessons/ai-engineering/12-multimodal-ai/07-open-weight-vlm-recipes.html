@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Open-Weight VLM Recipes: What Actually Matters — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/07-open-weight-vlm-recipes/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Open-Weight VLM Recipes: What Actually Matters</h1>
+    <p class="lesson-sub">The 2024-2026 open-weight VLM literature is a forest of ablation tables. Apple&#39;s MM1 tested 13 combinations of image encoder, connector, and data mix. Allen AI&#39;s Molmo proved detailed human captions beat GPT-4V distillation. Cambrian-1 ran 20+ encoder comparisons. Idefics2 formalized the five-axis design space. Prismatic VLMs compared 27 training recipes on a controlled benchmark. Out of all that noise, a small set of results holds across papers: image encoder matters more than connector architecture, data mixture matters more than either, and detailed human captions beat distilled synthetic data. This lesson reads those tables so you do not have to.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + lab</b></div><div><span>Languages</span><b>Python (stdlib, ablation table parser + recipe picker)</b></div><div><span>Prerequisites</span><b>Phase 12 · 05 (LLaVA baseline)</b></div><div><span>Time</span><b>~180 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M67.9,76.7 L73.4,68.5 L78.9,76.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M50.1,79.2 L68.0,52.5 L85.8,79.2 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M45.3,73.9 L62.6,48.1 L79.8,73.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="40.6" y="42.1" width="33.1" height="33.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(231 57.1 58.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Open-Weight VLM</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Recipes: What…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Name the five-axis VLM design space: image encoder, connector, LLM, data mix, resolution schedule.</li>
+<li>Read an MM1 / Idefics2 / Cambrian-1 ablation table and predict which knob moves a given benchmark.</li>
+<li>Pick a recipe (encoder, connector, data, resolution) for a new VLM given a compute budget and task mix.</li>
+<li>Explain why detailed human captions beat GPT-4V distillation at the same token count.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Hundreds of open-weight VLMs exist. Most of the gap between &quot;good&quot; and &quot;state-of-the-art&quot; is not architecture. It is data, resolution schedule, and encoder choice. Knowing which knob to turn first when your model underperforms saves you a 5-million-GPU-hour mistake.</p>
+<p>The 2023 wave (LLaVA-1.5, InstructBLIP, MiniGPT-4) ran on caption-pair pretraining + LLaVA-Instruct-150k. Good baseline. Topped out around MMMU 35%.</p>
+<p>The 2024 wave (MM1, Idefics2, Molmo, Cambrian-1, Prismatic VLMs) ran exhaustive ablations. Results were surprising and practical.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-five-axis-design-space"><a class="anchor" href="#the-five-axis-design-space">#</a> The five-axis design space</h3>
+<p>Idefics2 (Laurençon et al., 2024) named the axes:</p>
+<ol>
+<li>Image encoder. CLIP ViT-L/14, SigLIP SO400m/14, DINOv2 ViT-g/14, InternViT-6B. Encoders differ in patch size, resolution, and pretraining objective.</li>
+<li>Connector. MLP (2-4 layers), Q-Former (32 queries + cross-attn), Perceiver Resampler (64 queries), C-Abstractor (convolutional + bilinear pooling).</li>
+<li>Language model. Llama-3 8B / 70B, Mistral 7B, Phi-3, Gemma-2, Qwen2.5. LLM size is the dominant param cost.</li>
+<li>Training data. Caption pairs (CC3M, LAION), interleaved (OBELICS, MMC4), instruction (LLaVA-Instruct, ShareGPT4V, PixMo, Cauldron).</li>
+<li>Resolution schedule. Fixed 224/336/448, AnyRes, native dynamic. Ramped during training or constant.</li>
+</ol>
+<p>Every production VLM makes a choice on each axis. Most of the variance in MMMU scores is explained by axes 1, 4, and 5 — not by which connector you picked.</p>
+<h3 id="axis-1-encoder-connector"><a class="anchor" href="#axis-1-encoder-connector">#</a> Axis 1: encoder &gt; connector</h3>
+<p>MM1 Section 3.2 showed: swapping from CLIP ViT-L/14 to SigLIP SO400m/14 added 3+ points MMMU. Swapping the connector from MLP to Perceiver Resampler added less than 1 point. Idefics2 replicated: SigLIP &gt; CLIP, Q-Former ≈ MLP ≈ Perceiver at the same token count.</p>
+<p>Cambrian-1&#39;s &quot;Cambrian Vision Encoders Match-Up&quot; (Tong et al., 2024) ran 20+ encoders on a vision-centric benchmark (CV-Bench). The top of the leaderboard is a mix of DINOv2 and SigLIP; CLIP is middle of the pack; ImageBind and ViT-MAE are lower. The gap from CLIP ViT-L to DINOv2 ViT-g/14 is ~5-7 points on CV-Bench.</p>
+<p>The 2026 default encoder for open VLMs is SigLIP 2 SO400m/14 for semantic + dense features, sometimes concatenated with DINOv2 ViT-g/14 features (Cambrian&#39;s &quot;Spatial Vision Aggregator&quot; does this).</p>
+<h3 id="axis-2-connector-design-is-a-wash"><a class="anchor" href="#axis-2-connector-design-is-a-wash">#</a> Axis 2: connector design is a wash</h3>
+<p>MM1, Idefics2, Prismatic, and MM-Interleaved all reached the same conclusion: at a fixed visual-token count, connector architecture barely matters. A 2-layer MLP on mean-pooled patches performs within 1 point of a 32-query Q-Former at the same token budget.</p>
+<p>What does matter is the token count. More visual tokens = more LLM compute = better performance up to a point, then diminishing returns. 64 tokens per image is too few for OCR. 576-1024 tokens is the sweet spot for most open VLMs. 2048+ helps only for documents and charts.</p>
+<p>Q-Former vs MLP is a cost question, not a quality question: Q-Former caps tokens at 32-64 regardless of image resolution; MLP emits all patch tokens. For high-res inputs, Q-Former saves LLM context; for low-res, the difference is noise.</p>
+<h3 id="axis-3-llm-size-sets-the-ceiling"><a class="anchor" href="#axis-3-llm-size-sets-the-ceiling">#</a> Axis 3: LLM size sets the ceiling</h3>
+<p>Doubling the LLM from 7B to 13B reliably adds 2-4 points on MMMU across every VLM paper. At 70B you saturate most benchmarks. The VLM&#39;s multimodal reasoning ceiling is the LLM&#39;s text reasoning ceiling — the visual encoder can only feed it, not reason for it.</p>
+<p>This is why Qwen2.5-VL-72B and Claude Opus 4.7 crush MMMU-Pro and ScreenSpot-Pro: the language brain is huge. A 7B VLM cannot substitute for a 70B VLM through clever connector design.</p>
+<h3 id="axis-4-data-detailed-human-captions-beat-distillation"><a class="anchor" href="#axis-4-data-detailed-human-captions-beat-distillation">#</a> Axis 4: data — detailed human captions beat distillation</h3>
+<p>Molmo + PixMo (Deitke et al., 2024) is the 2024 result everyone should read. Allen AI had human annotators describe images in 1-3 minute dense speech-to-text passes, yielding 712K densely-captioned images. No GPT-4V distillation anywhere in the training data.</p>
+<p>Molmo-72B beat Llama-3.2-90B-Vision on 11 of 11 benchmarks. The delta is not architecture — it is caption quality. Detailed human captions contain 5-10x more information per image than short web captions and stay factually grounded where GPT-4V distillation hallucinates.</p>
+<p>ShareGPT4V (Chen et al., 2023) and Cauldron (Idefics2) followed the same playbook with mixed human + GPT-4V captions. The trend is clear: for the 2026 frontier, caption density &gt; caption quantity &gt; distillation convenience.</p>
+<h3 id="axis-5-resolution-and-its-schedule"><a class="anchor" href="#axis-5-resolution-and-its-schedule">#</a> Axis 5: resolution and its schedule</h3>
+<p>Idefics2&#39;s ablations: 384 -&gt; 448 adds 1-2 points. 448 -&gt; 980 with image splitting (AnyRes) adds another 3-5 on OCR benchmarks. Flat resolution training plateaus at medium accuracy; resolution ramping (start 224, finish 448 or native) trains faster and ends higher.</p>
+<p>Cambrian-1 ran a resolution vs tokens trade-off: at fixed compute, you can have more tokens at lower resolution or fewer tokens at higher resolution. Higher resolution wins for OCR; lower-res-more-tokens wins for general scene understanding.</p>
+<p>The 2026 production recipe: train Stage 1 at 384 fixed, Stage 2 with dynamic resolution up to 1280 for OCR-heavy tasks.</p>
+<h3 id="the-prismatic-controlled-comparison"><a class="anchor" href="#the-prismatic-controlled-comparison">#</a> The Prismatic controlled comparison</h3>
+<p>Prismatic VLMs (Karamcheti et al., 2024) is the paper that controlled all the axes. Same 13B LLM, same instruction data, same evaluation — only one axis varies at a time. Results:</p>
+<ul>
+<li>Per-image visual-token count explains ~60% of variance.</li>
+<li>Encoder choice explains ~20%.</li>
+<li>Connector architecture explains ~5%.</li>
+<li>Everything else (data mix, scheduler, LR) the remaining ~15%.</li>
+</ul>
+<p>This is a rough decomposition, but it is the cleanest answer to &quot;what should I ablate first&quot; in the literature.</p>
+<h3 id="a-picker-for-2026"><a class="anchor" href="#a-picker-for-2026">#</a> A picker for 2026</h3>
+<p>Given the evidence, the default open-VLM recipe for a new project in 2026:</p>
+<ul>
+<li>Encoder: SigLIP 2 SO400m/14 at native resolution with NaFlex, concatenated with DINOv2 ViT-g/14 for dense features if you need segmentation/grounding.</li>
+<li>Connector: 2-layer MLP on patch tokens. Skip Q-Former unless you are token-constrained.</li>
+<li>LLM: Qwen2.5 / Llama-3.1 / Gemma 2, 7B for cost, 70B for quality, picked by target latency.</li>
+<li>Data: PixMo + ShareGPT4V + Cauldron, topped up with task-specific instruction data.</li>
+<li>Resolution: dynamic (min 256, max 1280 pixels per long side).</li>
+<li>Schedule: Stage 1 alignment (projector-only), Stage 2 full fine-tune, Stage 3 task-specific fine-tune.</li>
+</ul>
+<p>Every one of those defaults traces back to a measured ablation in the papers cited at the end of this lesson.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-vlm-recipe-knobs</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> is an ablation table parser and recipe picker. It encodes the MM1 and Idefics2 ablation tables (condensed) and lets you query:</p>
+<ul>
+<li>&quot;Given budget X and task Y, what recipe wins?&quot;</li>
+<li>&quot;If I swap SigLIP for CLIP on a 7B Llama, what is the expected MMMU delta?&quot;</li>
+<li>&quot;Which axis should I ablate first for an 80% confidence answer?&quot;</li>
+</ul>
+<p>The output is a ranked recipe list with expected benchmark deltas and an &quot;ablate first&quot; recommendation.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-vlm-recipe-picker.md</code>. Given a target task mix, a compute budget, and a latency target, it emits a full recipe (encoder, connector, LLM, data mix, resolution schedule) with citations to the ablation that justifies each choice. Stops engineers from reinventing the Idefics2 ablation table every time a new VLM project starts.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Read MM1 Section 3.2. For a fixed 2B LLM at budget 50M images, which encoder wins? Would the answer flip at 13B LLM? Why?</p>
+</li>
+<li><p>Cambrian-1 finds that concatenating DINOv2 + SigLIP outperforms either alone on vision-centric benchmarks but adds no signal on MMMU. Predict which benchmarks gain and which stay flat.</p>
+</li>
+<li><p>Your target is a mobile UI agent on a 2B LLM. Pick encoder, connector, resolution, and data mix. Justify each choice with a specific ablation table.</p>
+</li>
+<li><p>Molmo ships 4B and 72B models. The 4B is competitive with closed 7B VLMs; the 72B beats Llama-3.2-90B-Vision on 11/11 benchmarks. What does that tell you about the LLM-size plateau hypothesis?</p>
+</li>
+<li><p>Design an ablation table to isolate data-mix quality from encoder quality on a 7B VLM. How many training runs minimum? Propose the four axis settings.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Ablation</td>
+<td>&quot;Turning one knob&quot;</td>
+<td>Training multiple runs that differ in exactly one design-space axis, holding everything else constant</td>
+</tr>
+<tr>
+<td>Connector</td>
+<td>&quot;Bridge&quot; / &quot;projector&quot;</td>
+<td>Trainable module that maps vision encoder output into the LLM&#39;s token space (MLP, Q-Former, Perceiver)</td>
+</tr>
+<tr>
+<td>Detailed human caption</td>
+<td>&quot;Dense caption&quot;</td>
+<td>A multi-sentence human-written description (typically 80-300 tokens) richer than a web alt text</td>
+</tr>
+<tr>
+<td>Distillation</td>
+<td>&quot;GPT-4V captions&quot;</td>
+<td>Training data generated by a stronger proprietary VLM; convenient but prone to inherited hallucination</td>
+</tr>
+<tr>
+<td>AnyRes / dynamic res</td>
+<td>&quot;High-res path&quot;</td>
+<td>Strategy to feed images larger than the encoder&#39;s native resolution via tiling or M-RoPE</td>
+</tr>
+<tr>
+<td>Resolution ramp</td>
+<td>&quot;Curriculum&quot;</td>
+<td>Training schedule that starts low-resolution and increases, speeding alignment learning</td>
+</tr>
+<tr>
+<td>Vision-centric bench</td>
+<td>&quot;CV-Bench / BLINK&quot;</td>
+<td>Evaluation that stresses fine-grained visual perception rather than language-heavy reasoning</td>
+</tr>
+<tr>
+<td>PixMo</td>
+<td>&quot;Molmo&#39;s data&quot;</td>
+<td>Allen AI&#39;s 712K densely-captioned image dataset; human speech transcribed into dense captions</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2403.09611">McKinzie et al. — MM1 (arXiv:2403.09611)</a></li>
+<li><a href="https://arxiv.org/abs/2405.02246">Laurençon et al. — Idefics2 / What matters building VLMs (arXiv:2405.02246)</a></li>
+<li><a href="https://arxiv.org/abs/2409.17146">Deitke et al. — Molmo and PixMo (arXiv:2409.17146)</a></li>
+<li><a href="https://arxiv.org/abs/2406.16860">Tong et al. — Cambrian-1 (arXiv:2406.16860)</a></li>
+<li><a href="https://arxiv.org/abs/2402.07865">Karamcheti et al. — Prismatic VLMs (arXiv:2402.07865)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-any-resolution-patch-n-pack.html"><span>← Previous</span><b>any resolution patch n pack</b></a>
+      <a class="next" href="./08-llava-onevision-single-multi-video.html"><span>Next →</span><b>llava onevision single multi video</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

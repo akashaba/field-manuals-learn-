@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Convolutions from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/02-convolutions-from-scratch/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Convolutions from Scratch</h1>
+    <p class="lesson-sub">A convolution is a tiny dense layer you slide across an image, sharing the same weights at every location.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 3 (Deep Learning Core), Phase 4 Lesson 01 (Image Fundamentals)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="17.5" cy="122.6" r="11.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="122.1" cy="117.7" r="11.2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.6" cy="112.7" r="10.6" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="111.2" cy="107.8" r="10.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="105.8" cy="102.9" r="9.3" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.4" cy="98.0" r="8.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Convolutions from</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement 2D convolution from scratch using only NumPy, including the nested-loop version and a vectorised <code>im2col</code> version</li>
+<li>Compute output spatial size for any combination of input size, kernel size, padding, and stride, and justify the <code>(H - K + 2P) / S + 1</code> formula</li>
+<li>Hand-design kernels (edge, blur, sharpen, Sobel) and explain why each one produces the pattern of activations it does</li>
+<li>Stack convolutions into a feature extractor and connect the depth-of-the-stack to the size of the receptive field</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A fully connected layer on a 224x224 RGB image would need 224 * 224 * 3 = 150,528 input weights per neuron. A single hidden layer with 1,000 units is already 150 million parameters — before you have learnt anything useful. Worse, that layer has no notion that a dog in the top-left and a dog in the bottom-right are the same pattern. It treats every pixel position as independent, which is exactly wrong for images: translating a cat by three pixels should not force the network to relearn the concept.</p>
+<p>The two properties an image model needs are <strong>translation equivariance</strong> (the output shifts when the input shifts) and <strong>parameter sharing</strong> (the same feature detector runs everywhere). Dense layers give you neither. Convolution gives you both for free.</p>
+<p>Convolution was not invented for deep learning. It is the same operation that powers JPEG compression, Gaussian blur in Photoshop, edge detection in industrial vision, and every audio filter ever shipped. The reason CNNs dominated ImageNet from 2012 to 2020 is that convolution is the correct prior for data where nearby values are related and the same pattern can appear anywhere.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="one-kernel-sliding"><a class="anchor" href="#one-kernel-sliding">#</a> One kernel, sliding</h3>
+<p>A 2D convolution takes a small weight matrix called the kernel (or filter), slides it across the input, and at each location computes the sum of element-wise products. That sum becomes one output pixel.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph IN[&quot;Input (H x W)&quot;]
+        direction LR
+        I1[&quot;5 x 5 image&quot;]
+    end
+    subgraph K[&quot;Kernel (3 x 3)&quot;]
+        K1[&quot;learned&lt;br/&gt;weights&quot;]
+    end
+    subgraph OUT[&quot;Output (H-2 x W-2)&quot;]
+        O1[&quot;3 x 3 map&quot;]
+    end
+    I1 --&gt; |&quot;slide kernel&lt;br/&gt;compute dot product&lt;br/&gt;at each position&quot;| O1
+    K1 --&gt; O1
+
+    style IN fill:#dbeafe,stroke:#2563eb
+    style K fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a</pre></div><p>A concrete 3x3 example on a 5x5 input (no padding, stride 1):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input X (5 x 5):                Kernel W (3 x 3):
+
+  1  2  0  1  2                   1  0 -1
+  0  1  3  1  0                   2  0 -2
+  2  1  0  2  1                   1  0 -1
+  1  0  2  1  3
+  2  1  1  0  1
+
+The kernel slides across every valid 3 x 3 window. Output Y is 3 x 3:
+
+ Y[0,0] = sum( W * X[0:3, 0:3] )
+ Y[0,1] = sum( W * X[0:3, 1:4] )
+ Y[0,2] = sum( W * X[0:3, 2:5] )
+ Y[1,0] = sum( W * X[1:4, 0:3] )
+ ... and so on</code></pre>
+      </div>
+    <p>That one formula — <strong>shared weights, locality, sliding window</strong> — is the entire idea. Everything else is bookkeeping.</p>
+<h3 id="output-size-formula"><a class="anchor" href="#output-size-formula">#</a> Output size formula</h3>
+<p>Given input spatial size <code>H</code>, kernel size <code>K</code>, padding <code>P</code>, stride <code>S</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">H_out = floor( (H - K + 2P) / S ) + 1</code></pre>
+      </div>
+    <p>Memorise this. You will compute it dozens of times per architecture.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>H</th>
+<th>K</th>
+<th>P</th>
+<th>S</th>
+<th>H_out</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Valid conv, no padding</td>
+<td>32</td>
+<td>3</td>
+<td>0</td>
+<td>1</td>
+<td>30</td>
+</tr>
+<tr>
+<td>Same conv (preserves size)</td>
+<td>32</td>
+<td>3</td>
+<td>1</td>
+<td>1</td>
+<td>32</td>
+</tr>
+<tr>
+<td>Downsample by 2</td>
+<td>32</td>
+<td>3</td>
+<td>1</td>
+<td>2</td>
+<td>16</td>
+</tr>
+<tr>
+<td>Pool 2x2</td>
+<td>32</td>
+<td>2</td>
+<td>0</td>
+<td>2</td>
+<td>16</td>
+</tr>
+<tr>
+<td>Large receptive field</td>
+<td>32</td>
+<td>7</td>
+<td>3</td>
+<td>2</td>
+<td>16</td>
+</tr>
+</tbody></table>
+<p>&quot;Same padding&quot; means pick P so that H_out == H when S == 1. For odd K, that is P = (K - 1) / 2. That is why 3x3 kernels dominate — they are the smallest odd kernel that still has a centre.</p>
+<h3 id="padding"><a class="anchor" href="#padding">#</a> Padding</h3>
+<p>Without padding, every convolution shrinks the feature map. Stack 20 of them and your 224x224 image becomes 184x184, which wastes compute on the border and complicates residual connections that need matching shapes.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Zero padding (P = 1) on a 5 x 5 input:
+
+  0  0  0  0  0  0  0
+  0  1  2  0  1  2  0
+  0  0  1  3  1  0  0
+  0  2  1  0  2  1  0       Now the kernel can centre on pixel
+  0  1  0  2  1  3  0       (0, 0) and still have three rows and
+  0  2  1  1  0  1  0       three columns of values to multiply.
+  0  0  0  0  0  0  0</code></pre>
+      </div>
+    <p>Modes you meet in practice: <code>zero</code> (most common), <code>reflect</code> (mirror the edge, avoids hard borders in generative models), <code>replicate</code> (copy the edge), <code>circular</code> (wrap around, used in toroidal problems).</p>
+<h3 id="stride"><a class="anchor" href="#stride">#</a> Stride</h3>
+<p>Stride is the step size of the slide. <code>stride=1</code> is the default. <code>stride=2</code> halves the spatial dimensions and is the classic way to downsample inside a CNN without a separate pooling layer — every modern architecture (ResNet, ConvNeXt, MobileNet) uses strided convs in place of max-pool somewhere.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Stride 1 on a 5 x 5 input, 3 x 3 kernel:
+
+  starts: (0,0) (0,1) (0,2)        -&gt; output row 0
+          (1,0) (1,1) (1,2)        -&gt; output row 1
+          (2,0) (2,1) (2,2)        -&gt; output row 2
+
+  Output: 3 x 3
+
+Stride 2 on the same input:
+
+  starts: (0,0) (0,2)              -&gt; output row 0
+          (2,0) (2,2)              -&gt; output row 1
+
+  Output: 2 x 2</code></pre>
+      </div>
+    <h3 id="multiple-input-channels"><a class="anchor" href="#multiple-input-channels">#</a> Multiple input channels</h3>
+<p>Real images have three channels. A 3x3 convolution on an RGB input is actually a 3x3x3 volume: one 3x3 slice per input channel. At each spatial position, you multiply and sum across all three slices and add a bias.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input:   (C_in,  H,  W)        3 x 5 x 5
+Kernel:  (C_in,  K,  K)        3 x 3 x 3 (one kernel)
+Output:  (1,     H&#39;, W&#39;)       2D map
+
+For a layer that produces C_out output channels, you stack C_out kernels:
+
+Weight:  (C_out, C_in, K, K)   e.g. 64 x 3 x 3 x 3
+Output:  (C_out, H&#39;, W&#39;)       64 x 3 x 3
+
+Parameter count: C_out * C_in * K * K + C_out   (the + C_out is biases)</code></pre>
+      </div>
+    <p>That last line is the one you will calculate when planning a model. A 64-channel 3x3 conv on a 3-channel input has <code>64 * 3 * 3 * 3 + 64 = 1,792</code> parameters. Cheap.</p>
+<h3 id="the-im2col-trick"><a class="anchor" href="#the-im2col-trick">#</a> The im2col trick</h3>
+<p>Nested loops are easy to read but slow. GPUs want big matrix multiplies. The trick: flatten every receptive-field window of the input into one column of a big matrix, flatten the kernel into a row, and the whole convolution becomes a single matmul.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    X[&quot;Input&lt;br/&gt;(C_in, H, W)&quot;] --&gt; IM2COL[&quot;im2col&lt;br/&gt;(extract patches)&quot;]
+    IM2COL --&gt; COLS[&quot;Cols matrix&lt;br/&gt;(C_in * K * K, H_out * W_out)&quot;]
+    W[&quot;Weight&lt;br/&gt;(C_out, C_in, K, K)&quot;] --&gt; FLAT[&quot;Flatten&lt;br/&gt;(C_out, C_in * K * K)&quot;]
+    FLAT --&gt; MM[&quot;matmul&quot;]
+    COLS --&gt; MM
+    MM --&gt; OUT[&quot;Output&lt;br/&gt;(C_out, H_out * W_out)&lt;br/&gt;reshape to (C_out, H_out, W_out)&quot;]
+
+    style X fill:#dbeafe,stroke:#2563eb
+    style W fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a</pre></div><p>Every production conv implementation is some variant of this plus cache-tiling tricks (direct conv, Winograd, FFT conv for large kernels). Understand im2col and you understand the core.</p>
+<h3 id="receptive-field"><a class="anchor" href="#receptive-field">#</a> Receptive field</h3>
+<p>A single 3x3 conv looks at 9 input pixels. Stack two 3x3 convs and a neuron in the second layer looks at 5x5 input pixels. Three 3x3 convs give 7x7. In general:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">RF after L stacked K x K convs (stride 1) = 1 + L * (K - 1)
+
+With strides:   RF grows multiplicatively with stride along each layer.</code></pre>
+      </div>
+    <p>The entire reason &quot;3x3 all the way down&quot; works (VGG, ResNet, ConvNeXt) is that two 3x3 convs see the same input area as one 5x5 conv but with fewer parameters and an extra non-linearity in between.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">convolution-kernel</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-pad-an-array"><a class="anchor" href="#step-1-pad-an-array">#</a> Step 1: Pad an array</h3>
+<p>Start with the smallest primitive: a function that pads with zeros around an H x W array.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def pad2d(x, p):
+    if p == 0:
+        return x
+    h, w = x.shape[-2:]
+    out = np.zeros(x.shape[:-2] + (h + 2 * p, w + 2 * p), dtype=x.dtype)
+    out[..., p:p + h, p:p + w] = x
+    return out
+
+x = np.arange(9).reshape(3, 3)
+print(x)
+print()
+print(pad2d(x, 1))</code></pre>
+      </div>
+    <p>The trailing-axes trick <code>x.shape[:-2]</code> means the same function works on <code>(H, W)</code>, <code>(C, H, W)</code>, or <code>(N, C, H, W)</code> without modification.</p>
+<h3 id="step-2-2d-convolution-with-nested-loops"><a class="anchor" href="#step-2-2d-convolution-with-nested-loops">#</a> Step 2: 2D convolution with nested loops</h3>
+<p>The reference implementation — slow, but unambiguous. This is what <code>torch.nn.functional.conv2d</code> does in principle.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def conv2d_naive(x, w, b=None, stride=1, padding=0):
+    c_in, h, w_in = x.shape
+    c_out, c_in_w, kh, kw = w.shape
+    assert c_in == c_in_w
+
+    x_pad = pad2d(x, padding)
+    h_out = (h + 2 * padding - kh) // stride + 1
+    w_out = (w_in + 2 * padding - kw) // stride + 1
+
+    out = np.zeros((c_out, h_out, w_out), dtype=np.float32)
+    for oc in range(c_out):
+        for i in range(h_out):
+            for j in range(w_out):
+                hs = i * stride
+                ws = j * stride
+                patch = x_pad[:, hs:hs + kh, ws:ws + kw]
+                out[oc, i, j] = np.sum(patch * w[oc])
+        if b is not None:
+            out[oc] += b[oc]
+    return out</code></pre>
+      </div>
+    <p>Four nested loops (output channel, row, column, plus the implicit sum over C_in, kh, kw). This is the ground truth you will check every faster implementation against.</p>
+<h3 id="step-3-verify-with-a-hand-designed-kernel"><a class="anchor" href="#step-3-verify-with-a-hand-designed-kernel">#</a> Step 3: Verify with a hand-designed kernel</h3>
+<p>Build a vertical Sobel kernel, apply it to a synthetic step image, and watch the vertical edge light up.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def synthetic_step_image():
+    img = np.zeros((1, 16, 16), dtype=np.float32)
+    img[:, :, 8:] = 1.0
+    return img
+
+sobel_x = np.array([
+    [[-1, 0, 1],
+     [-2, 0, 2],
+     [-1, 0, 1]]
+], dtype=np.float32)[None]
+
+x = synthetic_step_image()
+y = conv2d_naive(x, sobel_x, padding=1)
+print(y[0].round(1))</code></pre>
+      </div>
+    <p>Expect large positive values on column 7 (left-to-right brightness increase) and zeros everywhere else. That single print is your sanity check that the math is right.</p>
+<h3 id="step-4-im2col"><a class="anchor" href="#step-4-im2col">#</a> Step 4: im2col</h3>
+<p>Convert every kernel-sized window in the input into a column of a matrix. For <code>C_in=3, K=3</code>, each column is 27 numbers.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def im2col(x, kh, kw, stride=1, padding=0):
+    c_in, h, w = x.shape
+    x_pad = pad2d(x, padding)
+    h_out = (h + 2 * padding - kh) // stride + 1
+    w_out = (w + 2 * padding - kw) // stride + 1
+
+    cols = np.zeros((c_in * kh * kw, h_out * w_out), dtype=x.dtype)
+    col = 0
+    for i in range(h_out):
+        for j in range(w_out):
+            hs = i * stride
+            ws = j * stride
+            patch = x_pad[:, hs:hs + kh, ws:ws + kw]
+            cols[:, col] = patch.reshape(-1)
+            col += 1
+    return cols, h_out, w_out</code></pre>
+      </div>
+    <p>It is still a Python loop, but now the heavy lifting will be a single vectorised matmul.</p>
+<h3 id="step-5-fast-conv-via-im2col-matmul"><a class="anchor" href="#step-5-fast-conv-via-im2col-matmul">#</a> Step 5: Fast conv via im2col + matmul</h3>
+<p>Replace the quadruple loop with one matrix multiplication.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def conv2d_im2col(x, w, b=None, stride=1, padding=0):
+    c_out, c_in, kh, kw = w.shape
+    cols, h_out, w_out = im2col(x, kh, kw, stride, padding)
+    w_flat = w.reshape(c_out, -1)
+    out = w_flat @ cols
+    if b is not None:
+        out += b[:, None]
+    return out.reshape(c_out, h_out, w_out)</code></pre>
+      </div>
+    <p>Correctness check: run both implementations and compare.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">rng = np.random.default_rng(0)
+x = rng.normal(0, 1, (3, 16, 16)).astype(np.float32)
+w = rng.normal(0, 1, (8, 3, 3, 3)).astype(np.float32)
+b = rng.normal(0, 1, (8,)).astype(np.float32)
+
+y_naive = conv2d_naive(x, w, b, padding=1)
+y_im2col = conv2d_im2col(x, w, b, padding=1)
+
+print(f&quot;max abs diff: {np.max(np.abs(y_naive - y_im2col)):.2e}&quot;)</code></pre>
+      </div>
+    <p><code>max abs diff</code> should be around <code>1e-5</code> — the difference is floating-point accumulation order, not a bug.</p>
+<h3 id="step-6-a-bank-of-hand-designed-kernels"><a class="anchor" href="#step-6-a-bank-of-hand-designed-kernels">#</a> Step 6: A bank of hand-designed kernels</h3>
+<p>Five filters that show what a single conv layer can express before any training.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">KERNELS = {
+    &quot;identity&quot;: np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=np.float32),
+    &quot;blur_3x3&quot;: np.ones((3, 3), dtype=np.float32) / 9.0,
+    &quot;sharpen&quot;: np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32),
+    &quot;sobel_x&quot;: np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32),
+    &quot;sobel_y&quot;: np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32),
+}
+
+def apply_kernel(img2d, kernel):
+    x = img2d[None].astype(np.float32)
+    w = kernel[None, None]
+    return conv2d_im2col(x, w, padding=1)[0]</code></pre>
+      </div>
+    <p>Applied to any grayscale image, blur softens, sharpen crisps up edges, Sobel-x lights up vertical edges, Sobel-y lights up horizontal edges. These are exactly the patterns that the <em>first</em> trained conv layer in AlexNet and VGG ended up learning — because a good image model needs edge and blob detectors no matter what task comes later.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>PyTorch&#39;s <code>nn.Conv2d</code> wraps the same operation with autograd, CUDA kernels, and cuDNN optimisation. Shape semantics are identical.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+conv = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
+print(conv)
+print(f&quot;weight shape: {tuple(conv.weight.shape)}   # (C_out, C_in, K, K)&quot;)
+print(f&quot;bias shape:   {tuple(conv.bias.shape)}&quot;)
+print(f&quot;param count:  {sum(p.numel() for p in conv.parameters())}&quot;)
+
+x = torch.randn(8, 3, 224, 224)
+y = conv(x)
+print(f&quot;\ninput  shape: {tuple(x.shape)}&quot;)
+print(f&quot;output shape: {tuple(y.shape)}&quot;)</code></pre>
+      </div>
+    <p>Swap <code>padding=1</code> for <code>padding=0</code> and the output drops to 222x222. Swap <code>stride=1</code> for <code>stride=2</code> and it drops to 112x112. Same formula you memorised above.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-cnn-architect.md</code> — a prompt that, given input size, parameter budget, and target receptive field, designs a stack of <code>Conv2d</code> layers with the right K/S/P at every step.</li>
+<li><code>outputs/skill-conv-shape-calculator.md</code> — a skill that walks a network spec layer by layer and returns the output shape, receptive field, and parameter count for every block.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Given a 128x128 grayscale input and a stack of <code>[Conv3x3(s=1,p=1), Conv3x3(s=2,p=1), Conv3x3(s=1,p=1), Conv3x3(s=2,p=1)]</code>, compute the output spatial size and the receptive field at each layer by hand. Verify with a PyTorch <code>nn.Sequential</code> of dummy convs.</li>
+<li><strong>(Medium)</strong> Extend <code>conv2d_naive</code> and <code>conv2d_im2col</code> to accept a <code>groups</code> argument. Show that <code>groups=C_in=C_out</code> reproduces a depthwise convolution and that its parameter count is <code>C * K * K</code> instead of <code>C * C * K * K</code>.</li>
+<li><strong>(Hard)</strong> Implement the backward pass of <code>conv2d_im2col</code> by hand: given the gradient of the output, compute the gradient of <code>x</code> and <code>w</code>. Verify against <code>torch.autograd.grad</code> on the same inputs and weights. The trick: the gradient of im2col is <code>col2im</code>, and it has to accumulate overlapping windows.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Convolution</td>
+<td>&quot;Sliding a filter&quot;</td>
+<td>A learnable dot product applied at every spatial location with shared weights; mathematically a cross-correlation, but everyone calls it convolution</td>
+</tr>
+<tr>
+<td>Kernel / filter</td>
+<td>&quot;The feature detector&quot;</td>
+<td>A small weight tensor of shape (C_in, K, K) whose dot product with a window of input produces one output pixel</td>
+</tr>
+<tr>
+<td>Stride</td>
+<td>&quot;How far you jump&quot;</td>
+<td>The step size between consecutive kernel placements; stride 2 halves each spatial dimension</td>
+</tr>
+<tr>
+<td>Padding</td>
+<td>&quot;Zeros on the edges&quot;</td>
+<td>Extra values added around the input so the kernel can centre on border pixels; <code>same</code> padding keeps output size equal to input size</td>
+</tr>
+<tr>
+<td>Receptive field</td>
+<td>&quot;How much the neuron sees&quot;</td>
+<td>The patch of original input that a given output activation depends on, growing with depth and stride</td>
+</tr>
+<tr>
+<td>im2col</td>
+<td>&quot;The GEMM trick&quot;</td>
+<td>Rearranging every receptive window into columns so convolution becomes one big matrix multiply — the core of every fast conv kernel</td>
+</tr>
+<tr>
+<td>Depthwise conv</td>
+<td>&quot;One kernel per channel&quot;</td>
+<td>A conv with <code>groups == C_in</code>, computing each output channel from only its matching input channel; the backbone of MobileNet and ConvNeXt</td>
+</tr>
+<tr>
+<td>Translation equivariance</td>
+<td>&quot;Shift in, shift out&quot;</td>
+<td>Property that shifting the input by k pixels shifts the output by k pixels; comes for free with shared weights</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1603.07285">A guide to convolution arithmetic for deep learning (Dumoulin &amp; Visin, 2016)</a> — the definitive diagrams of padding/stride/dilation that every course quietly copies</li>
+<li><a href="https://cs231n.github.io/convolutional-networks/">CS231n: Convolutional Neural Networks for Visual Recognition</a> — the canonical lecture notes, including the original im2col explanation</li>
+<li><a href="https://nbviewer.org/github/fastai/fastbook/blob/master/13_convolutions.ipynb">The Annotated ConvNet (fast.ai)</a> — a notebook that walks from manual convolution to a trained digit classifier</li>
+<li><a href="https://distill.pub/2019/computing-receptive-fields/">Receptive Field Arithmetic for CNNs (Dang Ha The Hien)</a> — the paper-quality interactive explainer of receptive field calculations</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-image-fundamentals.html"><span>← Previous</span><b>image fundamentals</b></a>
+      <a class="next" href="./03-cnns-lenet-to-resnet.html"><span>Next →</span><b>cnns lenet to resnet</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

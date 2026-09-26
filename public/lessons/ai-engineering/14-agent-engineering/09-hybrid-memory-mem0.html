@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hybrid Memory: Vector + Graph + KV — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/09-hybrid-memory-mem0/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Hybrid Memory: Vector + Graph + KV</h1>
+    <p class="lesson-sub">Hybrid memory runs three stores in parallel — vector for semantic similarity, KV for fast fact lookup, graph for entity-relationship reasoning — with a scoring layer that fuses them on retrieval. This is a widely used production pattern for external memory; Mem0 (Chhikara et al., 2025) is one reference implementation.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 07 (MemGPT), Phase 14 · 08 (Letta Blocks)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="111.0" cy="107.6" r="9.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="105.6" cy="102.7" r="9.3" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.2" cy="97.8" r="8.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.7,97.7 L94.8,85.6 L102.8,97.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.0,92.4 L89.3,81.3 L96.7,92.4 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.3" y="117.6" width="25.8" height="25.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(130 26.2 130.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hybrid Memory:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Vector + Graph + KV</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why a single store (vector only, graph only, KV only) is insufficient for agent memory.</li>
+<li>Name Mem0&#39;s three parallel stores and what each one optimizes for.</li>
+<li>Describe Mem0&#39;s fusion scoring — relevance, importance, recency — and why it is a weighted sum, not a hierarchy.</li>
+<li>Implement a toy three-store memory in stdlib with an <code>add()</code> that writes to all three and a <code>search()</code> that fuses results.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>One store is wrong for one of three query classes:</p>
+<ul>
+<li><strong>Semantic similarity</strong> — &quot;what did we discuss about agent drift last week?&quot; Vector wins; KV and graph miss.</li>
+<li><strong>Fact lookup</strong> — &quot;what is the user&#39;s phone number?&quot; KV wins; vector is wasteful, graph is overkill.</li>
+<li><strong>Relationship reasoning</strong> — &quot;which customers share the same billing entity?&quot; Graph wins; vector and KV cannot answer.</li>
+</ul>
+<p>Production agents issue all three in one session. A single-store memory is always wrong for two of them. Mem0&#39;s contribution is wiring all three behind a single <code>add</code>/<code>search</code> surface with a scoring function that fuses them.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="three-stores-in-parallel"><a class="anchor" href="#three-stores-in-parallel">#</a> Three stores in parallel</h3>
+<p>Mem0 (arXiv:2504.19413, April 2025) on <code>add(text, user_id, metadata)</code>:</p>
+<ol>
+<li>Extract candidate facts from the text (an LLM-driven step).</li>
+<li>Write each fact to the vector store (embedding) for semantic search.</li>
+<li>Write each fact to the KV store keyed on (user_id, fact_type, entity) for O(1) lookup.</li>
+<li>Write each fact to the graph store (Mem0g) as typed edges for relationship queries.</li>
+</ol>
+<p>On <code>search(query, user_id)</code>:</p>
+<ol>
+<li>Vector store returns top-k by embedding cosine.</li>
+<li>KV store returns direct hits keyed on query-derived (user_id, type, entity).</li>
+<li>Graph store returns subgraph reachable from query entities.</li>
+<li>A scoring layer fuses the three.</li>
+</ol>
+<h3 id="fusion-scoring"><a class="anchor" href="#fusion-scoring">#</a> Fusion scoring</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">score = w_relevance * relevance(q, record)
+      + w_importance * importance(record)
+      + w_recency * recency(record)</code></pre>
+      </div>
+    <ul>
+<li><strong>Relevance</strong> — vector cosine, KV exact match, graph path weight.</li>
+<li><strong>Importance</strong> — tagged at write time or learned (some facts matter more: names, IDs, policies).</li>
+<li><strong>Recency</strong> — exponential decay over time since last write or read.</li>
+</ul>
+<p>Weights are tuned per product. Higher <code>w_recency</code> for chat agents; higher <code>w_importance</code> for compliance agents; higher <code>w_relevance</code> for retrieval agents.</p>
+<h3 id="mem0g-and-temporal-reasoning"><a class="anchor" href="#mem0g-and-temporal-reasoning">#</a> Mem0g and temporal reasoning</h3>
+<p>Mem0g adds a conflict detector. When a new fact contradicts an existing edge, the existing edge is marked invalid but not deleted. Temporal queries (&quot;what was the user&#39;s city in March?&quot;) traverse the valid-at-time subgraph.</p>
+<p>This is the compliance-grade behavior Letta&#39;s invalidation pattern generalizes.</p>
+<h3 id="benchmark-numbers"><a class="anchor" href="#benchmark-numbers">#</a> Benchmark numbers</h3>
+<p>The Mem0 paper reports (2025):</p>
+<ul>
+<li><strong>LoCoMo</strong> (long-form conversation memory): 91.6</li>
+<li><strong>LongMemEval</strong> (long-horizon episodic memory): 93.4</li>
+<li><strong>BEAM 1M</strong> (1M-token memory benchmark): 64.1</li>
+</ul>
+<p>Comparison baselines (full-context 128k LLM, flat vector store, flat KV) all lose by 10+ points. Benchmarks alone don&#39;t justify choice — operational shape does — but the numbers show the fusion design is not a rounding error.</p>
+<h3 id="scope-taxonomy"><a class="anchor" href="#scope-taxonomy">#</a> Scope taxonomy</h3>
+<p>Mem0 splits memory by scope:</p>
+<ul>
+<li><strong>User memory</strong> — persists across sessions, keyed on <code>user_id</code>.</li>
+<li><strong>Session memory</strong> — persists within one thread.</li>
+<li><strong>Agent memory</strong> — per-agent instance state.</li>
+</ul>
+<p>Every write picks one scope. Retrieval can query across scopes with per-scope weights. Mixing scopes without thought is how you get &quot;the assistant told Alice about Bob&#39;s project&quot; incidents.</p>
+<h3 id="where-this-pattern-goes-wrong"><a class="anchor" href="#where-this-pattern-goes-wrong">#</a> Where this pattern goes wrong</h3>
+<ul>
+<li><strong>Embedding drift.</strong> Vector results that look right on the first hundred queries degrade as the corpus grows. Add periodic re-embedding of the top-N-used records.</li>
+<li><strong>KV schema creep.</strong> <code>(user_id, type, entity)</code> looks simple until every team adds their own <code>type</code>. Audit the type set quarterly.</li>
+<li><strong>Graph explosion.</strong> One noisy extractor adds 50 edges per message. Cap graph writes per <code>add</code> call; drop low-confidence edges.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ae-memory-fusion</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements the three-store pattern in stdlib:</p>
+<ul>
+<li><code>VectorStore</code> — naive token-overlap similarity as an embedding stand-in.</li>
+<li><code>KVStore</code> — dict keyed on <code>(user_id, fact_type, entity)</code>.</li>
+<li><code>GraphStore</code> — typed edges (subject, relation, object, valid).</li>
+<li><code>Mem0</code> — top-level facade with <code>add()</code>, <code>search()</code>, fusion scoring, and scope-aware retrieval.</li>
+<li>A worked trace on a multi-user, multi-session conversation.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The output shows three separate recall paths plus the fused top-k. Flip the scoring weights at the top of <code>main()</code> and watch the ranking change.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li><strong>Mem0 (Apache 2.0)</strong> — production-ready. Self-host with Postgres + Qdrant + Neo4j, or use the managed cloud.</li>
+<li><strong>Letta</strong> — three-tier core/recall/archival; bring your own vector and graph backends.</li>
+<li><strong>Zep</strong> — commercial alternative with temporal KG and fact extraction.</li>
+<li><strong>Custom builds</strong> — when you need exact control over the extractor (compliance) or fusion weights (voice agents where recency dominates).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-hybrid-memory.md</code> generates a three-store memory scaffold with a fusion scorer, scope taxonomy, and temporal invalidation wired in.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Replace the toy vector similarity with a real embedding model (sentence-transformers, Ollama, OpenAI embeddings). Measure recall@10 on a synthetic long conversation. Does the ranking drift over 1000 writes?</li>
+<li>Add a temporal query: <code>search(query, as_of=timestamp)</code>. Return only records valid at or before that time. Which store needs the most work?</li>
+<li>Implement a conflict detector: if an incoming fact contradicts a graph edge, invalidate the old edge and log both. Test on &quot;user lives in Berlin&quot; -&gt; &quot;user lives in Lisbon.&quot;</li>
+<li>Port the fusion scorer to include a <code>user_feedback</code> dimension (thumbs-up on retrieved records). How do you prevent gaming (the agent only returns records it already liked)?</li>
+<li>Read the Mem0 docs (<code>docs.mem0.ai</code>). Port the toy to <code>mem0</code> client calls. Compare retrieval quality on the same 20 test queries.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Hybrid memory</td>
+<td>&quot;Vector plus graph plus KV&quot;</td>
+<td>Three stores written in parallel, fused on retrieval</td>
+</tr>
+<tr>
+<td>Fact extraction</td>
+<td>&quot;Memory ingestion&quot;</td>
+<td>LLM step that breaks text into (entity, relation, fact) tuples</td>
+</tr>
+<tr>
+<td>Fusion scoring</td>
+<td>&quot;Relevance ranking&quot;</td>
+<td>Weighted sum of relevance, importance, recency</td>
+</tr>
+<tr>
+<td>Scope</td>
+<td>&quot;Memory namespace&quot;</td>
+<td>user / session / agent — determines who sees what</td>
+</tr>
+<tr>
+<td>Mem0g</td>
+<td>&quot;Memory graph&quot;</td>
+<td>Typed edges with temporal validity for relationship queries</td>
+</tr>
+<tr>
+<td>Temporal invalidation</td>
+<td>&quot;Soft delete&quot;</td>
+<td>Mark contradicted edges invalid; never delete</td>
+</tr>
+<tr>
+<td>Embedding drift</td>
+<td>&quot;Retrieval rot&quot;</td>
+<td>Vector quality degrades as corpus grows; re-embed periodically</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2504.19413">Chhikara et al., Mem0 (arXiv:2504.19413)</a> — the original paper</li>
+<li><a href="https://docs.mem0.ai/platform/overview">Mem0 docs</a> — production API, SDKs, managed cloud</li>
+<li><a href="https://arxiv.org/abs/2310.08560">Packer et al., MemGPT (arXiv:2310.08560)</a> — the virtual-context predecessor</li>
+<li><a href="https://www.letta.com/blog/memory-blocks">Letta, Memory Blocks blog</a> — the three-tier sibling design</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-memory-blocks-sleep-time-compute.html"><span>← Previous</span><b>memory blocks sleep time compute</b></a>
+      <a class="next" href="./10-skill-libraries-voyager.html"><span>Next →</span><b>skill libraries voyager</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

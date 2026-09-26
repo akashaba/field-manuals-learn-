@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image Generation — GANs — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/09-image-generation-gans/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Image Generation — GANs</h1>
+    <p class="lesson-sub">A GAN is two neural networks in a fixed game. One draws, one critiques. They get better together until the drawings fool the critic.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 3 Lesson 06 (Optimizers), Phase 3 Lesson 07 (Regularization)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="115.2" cy="111.4" r="10.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.7" cy="106.5" r="9.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.3" cy="101.6" r="9.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.9" cy="96.6" r="8.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M85.6,96.4 L93.5,84.6 L101.4,96.4 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.8,91.1 L88.1,80.3 L95.3,91.1 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Image Generation —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">GANs</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain the minimax game between generator and discriminator and why the equilibrium corresponds to p_model = p_data</li>
+<li>Implement a DCGAN in PyTorch and get it to generate coherent 32x32 synthetic images in under 60 lines</li>
+<li>Stabilise GAN training with the three standard tricks: non-saturating loss, spectral norm, TTUR (two-timescale update rule)</li>
+<li>Read training curves that distinguish healthy convergence from mode collapse, oscillation, and discriminator-wins-completely</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Classification teaches a network to map images to labels. Generation inverts the problem: sample new images that look like they came from the same distribution. There is no &quot;correct&quot; output you can diff against; there is only a distribution you want to mimic.</p>
+<p>The standard loss functions (MSE, cross-entropy) cannot measure &quot;did this sample come from the real distribution.&quot; Minimising per-pixel error produces blurry averages, not realistic samples. The breakthrough was to learn the loss: train a second network whose job is to tell real from fake, and use its judgement to push the generator.</p>
+<p>GANs (Goodfellow et al., 2014) defined that framework. By 2018 StyleGAN was producing 1024x1024 faces indistinguishable from photographs. Diffusion models have since taken the throne on quality and controllability, but every trick that makes diffusion practical — normalisation choices, latent spaces, feature losses — was first understood on GANs.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-two-networks"><a class="anchor" href="#the-two-networks">#</a> The two networks</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    Z[&quot;z ~ N(0, I)&lt;br/&gt;noise&quot;] --&gt; G[&quot;Generator&lt;br/&gt;transposed convs&quot;]
+    G --&gt; FAKE[&quot;Fake image&quot;]
+    REAL[&quot;Real image&quot;] --&gt; D[&quot;Discriminator&lt;br/&gt;conv classifier&quot;]
+    FAKE --&gt; D
+    D --&gt; OUT[&quot;P(real)&quot;]
+
+    style G fill:#dbeafe,stroke:#2563eb
+    style D fill:#fef3c7,stroke:#d97706
+    style OUT fill:#dcfce7,stroke:#16a34a</pre></div><p>The <strong>generator</strong> G takes a vector of noise <code>z</code> and outputs an image. The <strong>discriminator</strong> D takes an image and outputs a single scalar: the probability that the image is real.</p>
+<h3 id="the-game"><a class="anchor" href="#the-game">#</a> The game</h3>
+<p>G wants D to be wrong. D wants to be right. Formally:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">min_G max_D  E_x[log D(x)] + E_z[log(1 - D(G(z)))]</code></pre>
+      </div>
+    <p>Read right to left: D is maximising accuracy on real (<code>log D(real)</code>) and fake (<code>log (1 - D(fake))</code>) images. G is minimising D&#39;s accuracy on fakes — it wants <code>D(G(z))</code> to be high.</p>
+<p>Goodfellow proved that this minimax has a global equilibrium where <code>p_G = p_data</code>, D outputs 0.5 everywhere, and the Jensen-Shannon divergence between generated and real distributions is zero. The hard part is getting there.</p>
+<h3 id="non-saturating-loss"><a class="anchor" href="#non-saturating-loss">#</a> Non-saturating loss</h3>
+<p>The form above is numerically unstable. Early in training, <code>D(G(z))</code> is near zero for every fake, so <code>log(1 - D(G(z)))</code> has vanishing gradients with respect to G. The fix: flip G&#39;s loss.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_D = -E_x[log D(x)] - E_z[log(1 - D(G(z)))]
+L_G = -E_z[log D(G(z))]                          # non-saturating</code></pre>
+      </div>
+    <p>Now when <code>D(G(z))</code> is near zero, G&#39;s loss is large and its gradient is informative. Every modern GAN trains with this variant.</p>
+<h3 id="dcgan-architecture-rules"><a class="anchor" href="#dcgan-architecture-rules">#</a> DCGAN architecture rules</h3>
+<p>Radford, Metz, Chintala (2015) distilled years of failed experiments into five rules that make GAN training stable:</p>
+<ol>
+<li>Replace pooling with strided convs (both nets).</li>
+<li>Use batch norm in both generator and discriminator, except output of G and input of D.</li>
+<li>Remove fully connected layers on deeper architectures.</li>
+<li>G uses ReLU on all layers except output (tanh for output in [-1, 1]).</li>
+<li>D uses LeakyReLU (negative_slope=0.2) on all layers.</li>
+</ol>
+<p>Every modern conv-based GAN (StyleGAN, BigGAN, GigaGAN) still starts from these rules and replaces pieces one at a time.</p>
+<h3 id="failure-modes-and-their-signatures"><a class="anchor" href="#failure-modes-and-their-signatures">#</a> Failure modes and their signatures</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    M1[&quot;Mode collapse&lt;br/&gt;G produces a narrow&lt;br/&gt;set of outputs&quot;] --&gt; S1[&quot;D loss low,&lt;br/&gt;G loss oscillating,&lt;br/&gt;sample variety drops&quot;]
+    M2[&quot;Vanishing gradients&lt;br/&gt;D wins completely&quot;] --&gt; S2[&quot;D accuracy ~100%,&lt;br/&gt;G loss huge and static&quot;]
+    M3[&quot;Oscillation&lt;br/&gt;G and D keep trading&lt;br/&gt;wins forever&quot;] --&gt; S3[&quot;Both losses swing&lt;br/&gt;wildly with no downward trend&quot;]
+
+    style M1 fill:#fecaca,stroke:#dc2626
+    style M2 fill:#fecaca,stroke:#dc2626
+    style M3 fill:#fecaca,stroke:#dc2626</pre></div><ul>
+<li><strong>Mode collapse</strong>: G finds one image that fools D and produces only that. Fix: add minibatch discrimination, spectral norm, or label-conditioning.</li>
+<li><strong>Discriminator wins</strong>: D becomes too strong too fast, G&#39;s gradients vanish. Fix: smaller D, lower D learning rate, or apply label smoothing on the real labels.</li>
+<li><strong>Oscillation</strong>: the two nets trade wins without ever approaching equilibrium. Fix: TTUR (D learns faster than G by a factor of 2-4), or switch to Wasserstein loss.</li>
+</ul>
+<h3 id="evaluation"><a class="anchor" href="#evaluation">#</a> Evaluation</h3>
+<p>GANs have no ground truth, so how do you know they are working?</p>
+<ul>
+<li><strong>Sample inspection</strong> — just look at 64 samples at the end of every epoch. Non-negotiable.</li>
+<li><strong>FID (Fréchet Inception Distance)</strong> — distance between Inception-v3 feature distributions of real and generated sets. Lower is better. Community standard.</li>
+<li><strong>Inception Score</strong> — older, more brittle; prefer FID.</li>
+<li><strong>Precision/Recall for generative models</strong> — measures quality (precision) and coverage (recall) separately. More informative than FID alone.</li>
+</ul>
+<p>For a small synthetic-data run, sample inspection is enough.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv-gan-image</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-generator"><a class="anchor" href="#step-1-generator">#</a> Step 1: Generator</h3>
+<p>A small DCGAN generator that takes 64-dim noise and produces a 32x32 image.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+class Generator(nn.Module):
+    def __init__(self, z_dim=64, img_channels=3, feat=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.ConvTranspose2d(z_dim, feat * 4, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(feat * 4),
+            nn.ReLU(inplace=True),
+            nn.ConvTranspose2d(feat * 4, feat * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feat * 2),
+            nn.ReLU(inplace=True),
+            nn.ConvTranspose2d(feat * 2, feat, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feat),
+            nn.ReLU(inplace=True),
+            nn.ConvTranspose2d(feat, img_channels, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.Tanh(),
+        )
+
+    def forward(self, z):
+        return self.net(z.view(z.size(0), -1, 1, 1))</code></pre>
+      </div>
+    <p>Four transposed convs, each with <code>kernel_size=4, stride=2, padding=1</code> so they cleanly double spatial size. Output activations in [-1, 1] via tanh.</p>
+<h3 id="step-2-discriminator"><a class="anchor" href="#step-2-discriminator">#</a> Step 2: Discriminator</h3>
+<p>Mirror of the generator. LeakyReLU, strided convs, ends with a scalar logit.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Discriminator(nn.Module):
+    def __init__(self, img_channels=3, feat=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(img_channels, feat, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(feat, feat * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feat * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(feat * 2, feat * 4, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feat * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(feat * 4, 1, kernel_size=4, stride=1, padding=0),
+        )
+
+    def forward(self, x):
+        return self.net(x).view(-1)</code></pre>
+      </div>
+    <p>The last conv reduces a <code>4x4</code> feature map to <code>1x1</code>. Output is a single scalar per image; apply sigmoid only during loss computation.</p>
+<h3 id="step-3-training-step"><a class="anchor" href="#step-3-training-step">#</a> Step 3: Training step</h3>
+<p>Alternate: update D once, then G once, every batch.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch.nn.functional as F
+
+def train_step(G, D, real, z, opt_g, opt_d, device):
+    real = real.to(device)
+    bs = real.size(0)
+
+    # D step
+    opt_d.zero_grad()
+    d_real = D(real)
+    d_fake = D(G(z).detach())
+    loss_d = (F.binary_cross_entropy_with_logits(d_real, torch.ones_like(d_real))
+              + F.binary_cross_entropy_with_logits(d_fake, torch.zeros_like(d_fake)))
+    loss_d.backward()
+    opt_d.step()
+
+    # G step
+    opt_g.zero_grad()
+    d_fake = D(G(z))
+    loss_g = F.binary_cross_entropy_with_logits(d_fake, torch.ones_like(d_fake))
+    loss_g.backward()
+    opt_g.step()
+
+    return loss_d.item(), loss_g.item()</code></pre>
+      </div>
+    <p><code>G(z).detach()</code> in the D step is critical: we do not want gradients flowing into G during its update. Forgetting that is the classic beginner bug.</p>
+<h3 id="step-4-full-training-loop-on-synthetic-shapes"><a class="anchor" href="#step-4-full-training-loop-on-synthetic-shapes">#</a> Step 4: Full training loop on synthetic shapes</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+
+def synthetic_images(num=2000, size=32, seed=0):
+    rng = np.random.default_rng(seed)
+    imgs = np.zeros((num, 3, size, size), dtype=np.float32) - 1.0
+    for i in range(num):
+        r = rng.uniform(6, 12)
+        cx, cy = rng.uniform(r, size - r, size=2)
+        yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 &lt; r ** 2
+        color = rng.uniform(-0.5, 1.0, size=3)
+        for c in range(3):
+            imgs[i, c][mask] = color[c]
+    return torch.from_numpy(imgs)
+
+device = &quot;cuda&quot; if torch.cuda.is_available() else &quot;cpu&quot;
+data = synthetic_images()
+loader = DataLoader(TensorDataset(data), batch_size=64, shuffle=True)
+
+G = Generator(z_dim=64, img_channels=3, feat=32).to(device)
+D = Discriminator(img_channels=3, feat=32).to(device)
+opt_g = torch.optim.Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
+opt_d = torch.optim.Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
+
+for epoch in range(10):
+    for (batch,) in loader:
+        z = torch.randn(batch.size(0), 64, device=device)
+        ld, lg = train_step(G, D, batch, z, opt_g, opt_d, device)
+    print(f&quot;epoch {epoch}  D {ld:.3f}  G {lg:.3f}&quot;)</code></pre>
+      </div>
+    <p><code>Adam(lr=2e-4, betas=(0.5, 0.999))</code> is the DCGAN default — the low beta1 keeps the momentum term from stabilising the adversarial game too much.</p>
+<h3 id="step-5-sampling"><a class="anchor" href="#step-5-sampling">#</a> Step 5: Sampling</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@torch.no_grad()
+def sample(G, n=16, z_dim=64, device=&quot;cpu&quot;):
+    G.eval()
+    z = torch.randn(n, z_dim, device=device)
+    imgs = G(z)
+    imgs = (imgs + 1) / 2
+    return imgs.clamp(0, 1)</code></pre>
+      </div>
+    <p>Always switch to eval mode before sampling. For DCGAN this matters because batch norm running stats are used instead of the batch&#39;s stats.</p>
+<h3 id="step-6-spectral-normalisation"><a class="anchor" href="#step-6-spectral-normalisation">#</a> Step 6: Spectral normalisation</h3>
+<p>A drop-in replacement for BN in the discriminator that guarantees the network is 1-Lipschitz. Fixes most &quot;D wins too hard&quot; failures.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from torch.nn.utils import spectral_norm
+
+def build_sn_discriminator(img_channels=3, feat=64):
+    return nn.Sequential(
+        spectral_norm(nn.Conv2d(img_channels, feat, 4, 2, 1)),
+        nn.LeakyReLU(0.2, inplace=True),
+        spectral_norm(nn.Conv2d(feat, feat * 2, 4, 2, 1)),
+        nn.LeakyReLU(0.2, inplace=True),
+        spectral_norm(nn.Conv2d(feat * 2, feat * 4, 4, 2, 1)),
+        nn.LeakyReLU(0.2, inplace=True),
+        spectral_norm(nn.Conv2d(feat * 4, 1, 4, 1, 0)),
+    )</code></pre>
+      </div>
+    <p>Swap <code>Discriminator</code> for <code>build_sn_discriminator()</code> and you often do not need the TTUR trick. Spectral norm is the easiest single robustness upgrade you can apply.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For serious generation, use pretrained weights or switch to diffusion. Two standard libraries:</p>
+<ul>
+<li><code>torch_fidelity</code> computes FID / IS on your generator without writing custom eval code.</li>
+<li><code>pytorch-gan-zoo</code> (legacy) and <code>StudioGAN</code> ship tested implementations of DCGAN, WGAN-GP, SN-GAN, StyleGAN, and BigGAN.</li>
+</ul>
+<p>In 2026, GANs are still the best choice for: real-time image generation (latency &lt;10 ms), style transfer, image-to-image translation with precise control (Pix2Pix, CycleGAN). Diffusion wins on photorealism and text conditioning.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-gan-training-triage.md</code> — a prompt that reads a training curve description and picks the failure mode (mode collapse, D-wins, oscillation) plus the single recommended fix.</li>
+<li><code>outputs/skill-dcgan-scaffold.md</code> — a skill that writes a DCGAN scaffold from <code>z_dim</code>, target <code>image_size</code>, and <code>num_channels</code>, including training loop and sample saver.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Train the DCGAN above on the synthetic circle dataset and save a grid of 16 samples at the end of each epoch. By which epoch do the generated circles become clearly circular?</li>
+<li><strong>(Medium)</strong> Replace the discriminator&#39;s batch norm with spectral norm. Train both versions side by side. Which one converges faster? Which one has lower variance across three seeds?</li>
+<li><strong>(Hard)</strong> Implement a conditional DCGAN: feed the class label into both G and D (concat one-hot to the noise in G, concat a class embedding channel in D). Train on the synthetic &quot;circles vs squares&quot; dataset from lesson 7 and show that class conditioning works by sampling with specific labels.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Generator (G)</td>
+<td>&quot;The draws-stuff net&quot;</td>
+<td>Maps noise to images; trained to fool the discriminator</td>
+</tr>
+<tr>
+<td>Discriminator (D)</td>
+<td>&quot;The critic&quot;</td>
+<td>Binary classifier; trained to distinguish real from generated images</td>
+</tr>
+<tr>
+<td>Minimax</td>
+<td>&quot;The game&quot;</td>
+<td>min over G, max over D of an adversarial loss; equilibrium is p_G = p_data</td>
+</tr>
+<tr>
+<td>Non-saturating loss</td>
+<td>&quot;The numerically sane version&quot;</td>
+<td>G&#39;s loss is -log(D(G(z))) instead of log(1 - D(G(z))) to avoid vanishing gradients early in training</td>
+</tr>
+<tr>
+<td>Mode collapse</td>
+<td>&quot;Generator makes one thing&quot;</td>
+<td>G produces only a small subset of the data distribution; fix with SN, minibatch discrimination, or larger batch</td>
+</tr>
+<tr>
+<td>TTUR</td>
+<td>&quot;Two learning rates&quot;</td>
+<td>D learns faster than G, typically by a factor of 2-4; stabilises training</td>
+</tr>
+<tr>
+<td>Spectral norm</td>
+<td>&quot;1-Lipschitz layer&quot;</td>
+<td>A weight-normalisation that bounds each layer&#39;s Lipschitz constant; stops D from becoming arbitrarily steep</td>
+</tr>
+<tr>
+<td>FID</td>
+<td>&quot;Fréchet Inception Distance&quot;</td>
+<td>Distance between Inception-v3 feature distributions of real and generated sets; the standard evaluation metric</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1406.2661">Generative Adversarial Networks (Goodfellow et al., 2014)</a> — the paper that started it all</li>
+<li><a href="https://arxiv.org/abs/1511.06434">DCGAN (Radford, Metz, Chintala, 2015)</a> — the architecture rules that made GANs trainable</li>
+<li><a href="https://arxiv.org/abs/1802.05957">Spectral Normalization for GANs (Miyato et al., 2018)</a> — the single most useful stabilisation trick</li>
+<li><a href="https://arxiv.org/abs/2106.12423">StyleGAN3 (Karras et al., 2021)</a> — the SOTA GAN; reads like a greatest-hits album of every trick from the last decade</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-instance-segmentation-mask-rcnn.html"><span>← Previous</span><b>instance segmentation mask rcnn</b></a>
+      <a class="next" href="./10-image-generation-diffusion.html"><span>Next →</span><b>image generation diffusion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

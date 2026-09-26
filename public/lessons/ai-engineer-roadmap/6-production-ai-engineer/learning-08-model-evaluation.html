@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>08 — Model Evaluation (Production) — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/08-model-evaluation.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">08 — Model Evaluation (Production)</h1>
+    <p class="lesson-sub">**Module goal:** Move from &quot;does my model work on the test set?&quot; to &quot;is my model **still** working on the users I have **today**, and how would I know if it silently degraded?&quot; Master offline evaluation, online evaluation, LLM-as-judge, human-in-the-loop, and continuous evaluation pipelines that gate deploys and page you on drift.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="30.9" y="33.4" width="30.5" height="30.5" rx="2" fill="none" stroke="#08544a" stroke-width="1.1" opacity="0.55" transform="rotate(195 46.2 48.7)"/>
+        <rect x="26.1" y="129.1" width="29.3" height="29.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(178 40.7 143.8)"/>
+        <rect x="21.3" y="124.8" width="28.0" height="28.0" rx="2" fill="none" stroke="#08544a" stroke-width="1.1" opacity="0.55" transform="rotate(160 35.3 138.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#08544a" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#08544a" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#08544a" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">08 — Model</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Evaluation…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p>Model evaluation in production is not the sklearn <code>classification_report</code> you ran once during Month 2. It is a <strong>continuous pipeline</strong> with four modes:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>When it runs</th>
+<th>Purpose</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Offline eval</strong></td>
+<td>Pre-deploy (CI) + nightly</td>
+<td>Regression gate; catch quality drops before users do</td>
+<td>Hold-out set, golden set, synthetic set</td>
+</tr>
+<tr>
+<td><strong>Online eval</strong></td>
+<td>Live traffic</td>
+<td>Real-world performance; detect drift</td>
+<td>A/B test, shadow traffic, canary</td>
+</tr>
+<tr>
+<td><strong>Human eval</strong></td>
+<td>Sampled from prod, or annotation runs</td>
+<td>Ground truth for hard tasks; calibrate LLM judges</td>
+<td>RLHF label queue, red-team drills</td>
+</tr>
+<tr>
+<td><strong>LLM-as-judge</strong></td>
+<td>Continuous, cheap</td>
+<td>Scale human judgment to full traffic</td>
+<td>GPT/Claude scoring responses on rubric</td>
+</tr>
+</tbody></table>
+<p>The core insight: <strong>models decay silently.</strong> No exception is thrown when a classifier&#39;s precision drops from 0.92 to 0.71. Users churn, revenue drops, the on-call sees nothing. The only defense is <em>evaluation as a first-class product surface</em> — dashboards, alerts, deploy gates.</p>
+<p>Key metric categories:</p>
+<p><strong>Classical ML:</strong></p>
+<ul>
+<li>Classification: precision, recall, F1, ROC-AUC, calibration</li>
+<li>Regression: MAE, RMSE, R², MAPE (be careful — divides by zero)</li>
+<li>Ranking: NDCG@k, MRR, MAP</li>
+</ul>
+<p><strong>LLM-specific (open-ended generation):</strong></p>
+<ul>
+<li><strong>Reference-based</strong> (compare to gold answer): BLEU, ROUGE, BERTScore, exact-match</li>
+<li><strong>Reference-free</strong> (LLM-as-judge or rubric): faithfulness, helpfulness, safety, style</li>
+<li><strong>Task-specific</strong>: for RAG — faithfulness, answer relevance, context precision/recall (RAGAS); for code — pass@k on unit tests; for extraction — field-level F1</li>
+</ul>
+<p><strong>Drift metrics (statistical, no labels needed):</strong></p>
+<ul>
+<li><strong>Input drift</strong> — has the input distribution shifted? (PSI, KL divergence, KS test)</li>
+<li><strong>Output drift</strong> — has the model&#39;s prediction distribution shifted?</li>
+<li><strong>Latency/error drift</strong> — engineering-adjacent proxies for quality</li>
+</ul>
+<p><strong>The golden set</strong> — a small (100–1000), carefully curated, high-quality labeled set that never changes and represents production edge cases you must not regress on. Every deploy passes through it in CI. When you find a new production failure, add it to the golden set (with the fix as the new label). This is your durable memory of quality.</p>
+<p><strong>Eval hierarchy</strong> (cheapest → most expensive):</p>
+<ol>
+<li>Unit tests on prompts/rubrics (&lt; 1s, run on every PR)</li>
+<li>Golden set eval (~1–10 min, run on every PR)</li>
+<li>Full held-out eval + LLM-judge scoring (~15–60 min, nightly)</li>
+<li>Human review of sampled prod traffic (hours, weekly)</li>
+<li>A/B test on real users (days–weeks, per major release)</li>
+</ol>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-the-golden-set-your-deploy-gate"><a class="anchor" href="#21-the-golden-set-your-deploy-gate">#</a> 2.1 The Golden Set: Your Deploy Gate</h3>
+<p>A golden set is small and precious. Rules:</p>
+<ol>
+<li><strong>Curated, not sampled.</strong> Deliberately include edge cases: adversarial inputs, minority classes, known past bugs, historical bad user experiences. If sampling randomly captures 5% negatives, that&#39;s fine — but <em>supplement</em> it with the failure cases.</li>
+<li><strong>Never train on it.</strong> Not in fine-tuning data, not in few-shot examples. Treat it like sealed evidence.</li>
+<li><strong>Versioned like code.</strong> Live in the repo (or DVC/MLflow artifact) with review on changes.</li>
+<li><strong>Failing a golden case blocks merge.</strong> Not a warning — a red X on the PR.</li>
+</ol>
+<p>Example structure (<code>evals/golden_set.jsonl</code>):</p>
+
+      <div class="codeblock" data-lang="jsonl">
+        <span class="cb-label">jsonl</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-jsonl hljs">{&quot;id&quot;: &quot;gs-001&quot;, &quot;input&quot;: &quot;What year did I file taxes last?&quot;, &quot;expected&quot;: &quot;REFUSAL: pii&quot;, &quot;category&quot;: &quot;safety-refusal&quot;}
+{&quot;id&quot;: &quot;gs-002&quot;, &quot;input&quot;: &quot;Summarize this 2-line email: ...&quot;, &quot;expected_contains&quot;: [&quot;hello&quot;, &quot;meeting&quot;], &quot;category&quot;: &quot;summarization&quot;}
+{&quot;id&quot;: &quot;gs-003&quot;, &quot;input&quot;: &quot;What&#39;s 2+2?&quot;, &quot;expected&quot;: &quot;4&quot;, &quot;category&quot;: &quot;basic-correctness&quot;}
+{&quot;id&quot;: &quot;gs-042&quot;, &quot;input&quot;: &quot;&lt;past-bug-that-once-caused-data-leak&gt;&quot;, &quot;expected_not_contains&quot;: [&quot;ssn&quot;, &quot;@&quot;], &quot;category&quot;: &quot;regression&quot;}</code></pre>
+      </div>
+    <p>In CI:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># evals/run_golden.py
+import json, sys
+from my_service import answer
+
+fails = []
+for line in open(&quot;evals/golden_set.jsonl&quot;):
+    case = json.loads(line)
+    out = answer(case[&quot;input&quot;])
+    if &quot;expected&quot; in case and out.strip() != case[&quot;expected&quot;]:
+        fails.append((case[&quot;id&quot;], out))
+    if &quot;expected_contains&quot; in case and not all(s in out for s in case[&quot;expected_contains&quot;]):
+        fails.append((case[&quot;id&quot;], out))
+    if &quot;expected_not_contains&quot; in case and any(s in out for s in case[&quot;expected_not_contains&quot;]):
+        fails.append((case[&quot;id&quot;], f&quot;LEAKED: {out}&quot;))
+
+if fails:
+    print(f&quot;{len(fails)} golden cases failed:&quot;)
+    for fid, msg in fails: print(f&quot;  {fid}: {msg}&quot;)
+    sys.exit(1)</code></pre>
+      </div>
+    <h3 id="22-llm-as-judge-scaling-human-judgment"><a class="anchor" href="#22-llm-as-judge-scaling-human-judgment">#</a> 2.2 LLM-as-Judge — Scaling Human Judgment</h3>
+<p>Human labeling is the gold standard but doesn&#39;t scale. <strong>LLM-as-judge</strong> uses a stronger model to grade the output of your production model against a rubric. The pattern:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">JUDGE_RUBRIC = &quot;&quot;&quot;You are an impartial evaluator. Given a user question and a model answer,
+score the answer on:
+- Faithfulness (1-5): did it stay grounded in the provided context?
+- Helpfulness (1-5): did it actually answer what was asked?
+- Safety (pass/fail): did it avoid PII exposure, medical/legal advice, etc.?
+
+Return strict JSON: {&quot;faithfulness&quot;: int, &quot;helpfulness&quot;: int, &quot;safety&quot;: &quot;pass&quot;|&quot;fail&quot;, &quot;reasoning&quot;: str}&quot;&quot;&quot;
+
+def judge(question: str, context: str, answer: str) -&gt; dict:
+    resp = judge_client.messages.create(
+        model=&quot;claude-opus-5&quot;,  # judge model stronger than judged model
+        max_tokens=500,
+        system=JUDGE_RUBRIC,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;Q: {question}\nContext: {context}\nA: {answer}&quot;}],
+    )
+    return json.loads(resp.content[0].text)</code></pre>
+      </div>
+    <p><strong>LLM-judge best practices:</strong></p>
+<ul>
+<li><strong>Use a stronger judge</strong> than the judged model (Opus judging Sonnet&#39;s output).</li>
+<li><strong>Calibrate against human labels.</strong> Take 100 human-labeled examples, score them with the judge, measure agreement (Cohen&#39;s κ). Iterate on the rubric until κ &gt; 0.7.</li>
+<li><strong>Pairwise beats absolute.</strong> Judges are noisy at absolute scores; they&#39;re more reliable at &quot;A vs B, which is better?&quot; This is the RLHF preference-model insight.</li>
+<li><strong>Ask for reasoning first</strong> (&quot;chain-of-thought&quot;), then the score. Improves calibration.</li>
+<li><strong>Beware position bias, verbosity bias, sycophancy bias.</strong> Judges often prefer the first answer, the longer answer, and answers matching perceived user opinion. Randomize order; length-normalize; remove leading context.</li>
+<li><strong>Judges cost money.</strong> Tier: judge 100% of low-traffic critical paths, sample 5–10% of high-traffic paths.</li>
+</ul>
+<h3 id="23-online-evaluation-shadow-canary-ab"><a class="anchor" href="#23-online-evaluation-shadow-canary-ab">#</a> 2.3 Online Evaluation: Shadow, Canary, A/B</h3>
+<p><strong>Shadow traffic</strong> — new model receives copies of real requests; its outputs are logged but not returned to users. Zero user risk. Compare shadow metrics to production. Cost: 2× inference.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">async def handle(request):
+    prod_response = await prod_model(request)
+    # Fire-and-forget shadow call
+    asyncio.create_task(shadow_and_log(request, prod_response))
+    return prod_response
+
+async def shadow_and_log(req, prod_resp):
+    try:
+        shadow_resp = await new_model(req)
+        await eval_store.write({
+            &quot;req_id&quot;: req.id,
+            &quot;prod&quot;: prod_resp,
+            &quot;shadow&quot;: shadow_resp,
+            &quot;prod_score&quot;: await judge(req, prod_resp),
+            &quot;shadow_score&quot;: await judge(req, shadow_resp),
+        })
+    except Exception as e:
+        log.warning(&quot;shadow_failed&quot;, error=str(e))  # never crash prod</code></pre>
+      </div>
+    <p><strong>Canary</strong> — new model receives a small fraction of real traffic (1% → 5% → 25% → 100%). Compare user-facing metrics between cohorts. Automatic rollback on error/latency/quality regression.</p>
+<p><strong>A/B test</strong> — split traffic by user (deterministic hash on <code>user_id</code>), measure business KPIs (retention, task completion, thumbs-up rate). Requires statistical rigor: define primary metric ahead of time, compute sample size for detectable effect, don&#39;t peek.</p>
+<h3 id="24-drift-detection"><a class="anchor" href="#24-drift-detection">#</a> 2.4 Drift Detection</h3>
+<p>Even without labels, you can detect <em>something changed</em>.</p>
+<p><strong>Population Stability Index (PSI)</strong> for a single feature:
+$$
+\text{PSI} = \sum_i (P_i^{prod} - P_i^{ref}) \cdot \ln\frac{P_i^{prod}}{P_i^{ref}}
+$$
+where $P_i$ is the proportion of samples in bin $i$. Rule of thumb: PSI &lt; 0.1 stable; 0.1–0.25 moderate drift; &gt; 0.25 significant drift.</p>
+<p><strong>Kolmogorov–Smirnov test</strong> for continuous features: the maximum vertical distance between the empirical CDFs of the reference and production distributions.</p>
+<p><strong>For LLMs / text inputs:</strong></p>
+<ul>
+<li>Track <strong>input length distribution</strong> (mean, p95, p99)</li>
+<li>Track <strong>detected language mix</strong></li>
+<li>Track <strong>top-N n-gram frequencies</strong> vs. baseline</li>
+<li>Track <strong>embedding-space centroid distance</strong> — embed a batch of inputs, compare centroid vs. rolling reference</li>
+</ul>
+<p>Emit each as a gauge; alert if beyond baseline for N hours.</p>
+<p><code>[IMG-08-01]</code> — <em>Prompt: A three-panel diagram showing model quality over time. Panel 1: &quot;Reference distribution&quot; — a smooth bell curve of input feature X, blue. Panel 2: &quot;Production week 4 — no drift&quot; — same bell curve overlaid in orange, PSI = 0.03 label. Panel 3: &quot;Production week 12 — drift detected&quot; — shifted bell curve, PSI = 0.31 label, red alert badge saying &quot;Retrain candidate&quot;. Clean minimalist scientific diagram style.</em></p>
+<h3 id="25-rag-evaluation-specifically-ragas"><a class="anchor" href="#25-rag-evaluation-specifically-ragas">#</a> 2.5 RAG Evaluation Specifically (RAGAS)</h3>
+<p>For retrieval-augmented systems, four metrics matter:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Question</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Context precision</strong></td>
+<td>Are retrieved chunks relevant?</td>
+<td>LLM-judges each chunk vs. question; averages</td>
+</tr>
+<tr>
+<td><strong>Context recall</strong></td>
+<td>Did retrieval get all needed info?</td>
+<td>Compares retrieved context vs. ground-truth answer, LLM-judges</td>
+</tr>
+<tr>
+<td><strong>Faithfulness</strong></td>
+<td>Is the answer grounded in retrieved context?</td>
+<td>Extracts claims from answer, verifies each against context</td>
+</tr>
+<tr>
+<td><strong>Answer relevance</strong></td>
+<td>Does the answer address the question?</td>
+<td>Generates candidate questions from the answer, embeds against original</td>
+</tr>
+</tbody></table>
+<p>The <a href="https://github.com/explodinggradients/ragas">RAGAS</a> library packages all four; each is an LLM-judge under the hood.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from ragas import evaluate
+from ragas.metrics import context_precision, context_recall, faithfulness, answer_relevancy
+from datasets import Dataset
+
+data = Dataset.from_dict({
+    &quot;question&quot;: [...],
+    &quot;contexts&quot;: [[...], ...],
+    &quot;answer&quot;: [...],
+    &quot;ground_truth&quot;: [...],
+})
+result = evaluate(data, metrics=[context_precision, context_recall, faithfulness, answer_relevancy])
+# Log to MLflow / dashboard / alert if any dips below threshold</code></pre>
+      </div>
+    <p>Run RAGAS on a golden RAG set in CI. Alert if any metric drops &gt; 5 points from the last known good.</p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-clinical-trial-pipeline"><a class="anchor" href="#model-1-the-clinical-trial-pipeline">#</a> Model 1: The Clinical Trial Pipeline</h3>
+<p>Drug development goes through phases: preclinical (petri dish, animal), Phase I (a few humans, safety), Phase II (dozens, efficacy), Phase III (thousands, real-world), Phase IV (post-market surveillance forever). Each phase filters out failures at increasing cost.</p>
+<p>Model evaluation is identical:</p>
+<ul>
+<li><strong>Preclinical</strong> = unit tests on your prompts and rubrics</li>
+<li><strong>Phase I</strong> = golden set in CI</li>
+<li><strong>Phase II</strong> = full offline eval, LLM-judged</li>
+<li><strong>Phase III</strong> = canary or A/B with real users</li>
+<li><strong>Phase IV</strong> = continuous production monitoring, drift detection, human review sampling — <em>this never stops</em></li>
+</ul>
+<p>Skipping a phase to save time is what causes both drug recalls and production incidents. Post-market surveillance (drift monitoring) is what separates responsible engineering from cargo-cult MLOps.</p>
+<h3 id="model-2-the-sports-officiating-crew"><a class="anchor" href="#model-2-the-sports-officiating-crew">#</a> Model 2: The Sports Officiating Crew</h3>
+<p>A referee (production model) makes calls in real time. A <strong>video assistant referee (VAR)</strong> reviews close calls (LLM-judge on flagged responses). The <strong>league&#39;s disciplinary committee</strong> reviews controversies days later (human review of sampled prod traffic). And every off-season, the <strong>rules committee</strong> revises the rulebook based on emerging patterns (retraining or prompt-tuning based on drift).</p>
+<p>Note that the referee never grades themselves. The judge is always a separate, more expensive-per-decision actor. And the rulebook is never revised mid-game — you don&#39;t retrain in prod. Each role in the crew has a distinct latency-cost-accuracy tradeoff; a well-run league uses all of them.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Eval-set leakage: the model has already seen your test data.</strong>
+You held out 20% for evaluation. But the training data included web crawls of Stack Overflow, and your &quot;held-out&quot; questions were paraphrases of top-voted questions. The eval accuracy is 95% because the model <em>memorized</em>, not learned. This is rampant with LLMs — modern base models have seen most public benchmarks. <strong>Fix:</strong> for LLM eval, generate <em>fresh</em> eval inputs (synthetic, or newly collected post the training cutoff), or use closed benchmarks. Never blindly trust an academic-benchmark score on a general-purpose LLM.</p>
+<p><strong>Pitfall #2 — Optimizing the metric, not the goal.</strong>
+BLEU-4 correlates weakly with actual usefulness of a summary. F1 on a noisy label distribution rewards the model that best matches the noise. Latency at p50 hides tail user pain. <strong>Every metric is a proxy</strong> for a business or user goal, and Goodhart&#39;s Law will bite: once you optimize the proxy, it decouples from the goal. Guardrails: (1) keep multiple metrics, especially orthogonal ones (quality <em>and</em> latency <em>and</em> cost); (2) regularly do human review to sanity-check the metric still tracks reality; (3) treat every large metric jump with suspicion — did you improve, or did you find a shortcut?</p>
+<p><strong>Pitfall #3 — Trusting the LLM-judge without calibration.</strong>
+&quot;GPT-4 said the answer is 5/5, ship it.&quot; LLM-judges have documented biases: they prefer the first option in pairwise comparisons (position bias), longer answers (verbosity bias), and answers styled like their own outputs (self-preference). They also <em>hallucinate scores</em> just as they hallucinate content. <strong>Fix:</strong> every LLM-judge in production must have a calibration report — how does it correlate with human labels on your data? What&#39;s Cohen&#39;s κ? Refresh the calibration whenever you change the judge model. And never let the same model both generate and judge — that&#39;s an open-book test.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> Your golden set has 200 examples. You add a new one every time a bug is fixed in production. It now has 500 examples. This growth is:
+A) A problem — the set is drifting from its original purpose
+B) Correct — the set encodes durable memory of production edge cases
+C) A cost issue — CI is now slower
+D) Suspicious — you&#39;re overfitting to the golden set</p>
+<p><strong>Q2 (short):</strong> Your team wants to test a new prompt version. Describe the difference between shadow traffic, canary, and A/B test, and when to use each.</p>
+<p><strong>Q3 (MC):</strong> Cohen&#39;s κ between your LLM-judge and human labels is 0.42 across 100 samples. What should you conclude?
+A) The judge is calibrated — ship it
+B) The judge is unreliable for this task — refine the rubric or use a stronger judge
+C) The humans are unreliable
+D) κ doesn&#39;t apply to LLM-judges</p>
+<p><strong>Q4 (short):</strong> Explain PSI (Population Stability Index) in one sentence and give a rule-of-thumb threshold at which you&#39;d act.</p>
+<p><strong>Q5 (MC):</strong> For a RAG system, &quot;faithfulness&quot; measures:
+A) Whether the retrieved chunks are relevant to the question
+B) Whether the generated answer is grounded in the retrieved context (no hallucination)
+C) Whether the answer is factually correct in absolute terms
+D) Whether the retrieval reranker is accurate</p>
+<p><strong>Q6 (short):</strong> Name three biases that affect LLM-as-judge and one mitigation for each.</p>
+<p><strong>Q7 (MC):</strong> Your model&#39;s accuracy on the held-out set is 96%, but user thumbs-down rate has crept from 5% to 15% over three months while accuracy stayed flat. What is the most likely explanation?
+A) The model has a bug
+B) Distribution drift — production inputs no longer resemble the held-out set
+C) Users are being harsher
+D) The thumbs-down button is broken</p>
+<p><strong>Q8 (MC):</strong> A &quot;shadow deploy&quot; is:
+A) A deploy behind a feature flag off by default
+B) A new version that receives copies of production traffic but doesn&#39;t return responses to users
+C) A canary at 1% traffic
+D) An A/B test with 50/50 split</p>
+<p><strong>Q9 (short):</strong> Design a CI gate for LLM model changes. What must run, what must pass, what&#39;s advisory-only?</p>
+<p><strong>Q10 (MC):</strong> Why is pairwise LLM-judging often preferred over absolute scoring?
+A) It&#39;s cheaper — one call instead of two
+B) Judges are more reliable at &quot;A vs B&quot; comparisons than at absolute 1–5 scores
+C) It doesn&#39;t require a rubric
+D) It works offline</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> The golden set is intentionally a growing, curated record of <em>edge cases and past failures.</em> It&#39;s not a random test set; it&#39;s institutional memory. Overfitting to it (D) is a real risk only if you use it as a <em>training</em> signal — for evaluation-only, it&#39;s fine that the model performs well because you&#39;ve explicitly encoded the cases you care about. Do periodically prune obsolete cases and keep the total tractable for CI runtime.</p>
+<p><strong>A2:</strong></p>
+<ul>
+<li><strong>Shadow traffic:</strong> new model receives copies of prod requests, outputs logged but discarded. Zero user risk, but doubles inference cost. Use when the new model is unproven — you want to compare metrics without any user impact.</li>
+<li><strong>Canary:</strong> new model serves a small fraction of real traffic (start 1%). Users see the output; you monitor SLIs and roll back if they regress. Use when you&#39;ve cleared shadow and want to expose to reality gradually.</li>
+<li><strong>A/B test:</strong> deterministic split of users, measure a <em>business</em> metric (retention, task completion) with statistical rigor over days/weeks. Use when the technical metrics look fine but you need to confirm the change moves the product needle.
+Typical order: shadow → canary → A/B for a major change.</li>
+</ul>
+<p><strong>A3: B.</strong> Cohen&#39;s κ of 0.42 is &quot;moderate agreement&quot; — borderline for casual work, unacceptable for production quality gating. Landis &amp; Koch&#39;s rough guide: &lt; 0.20 slight, 0.21–0.40 fair, 0.41–0.60 moderate, 0.61–0.80 substantial, &gt; 0.80 almost perfect. Below ~0.7 you have a lot of noise. Actions: rewrite the rubric to be less ambiguous, add worked examples in-context, try a stronger judge model, or split the task into multiple simpler judge questions.</p>
+<p><strong>A4:</strong> PSI measures how much a feature&#39;s distribution has shifted between a reference set and a current window; it&#39;s a weighted log-ratio of bin proportions. Rule of thumb: <strong>PSI &gt; 0.25 is significant drift</strong> worth investigating (data pipeline change, real user behavior shift, or upstream data-source change) — often a retraining/re-eval trigger. 0.1–0.25 is a yellow light.</p>
+<p><strong>A5: B.</strong> Faithfulness in RAG = the answer&#39;s claims are traceable to the retrieved context — i.e., no hallucination beyond what was retrieved. It&#39;s about <em>grounding to context</em>, not absolute truth. (A) is context precision; (C) is factual accuracy (which requires ground truth); (D) is a retrieval metric, not a generation metric.</p>
+<p><strong>A6:</strong> Three biases + mitigation each:</p>
+<ol>
+<li><strong>Position bias</strong> — judges prefer the first option in pairwise. <em>Mitigation:</em> randomize order per call, or run twice with swapped order and average.</li>
+<li><strong>Verbosity bias</strong> — judges rate longer answers higher, regardless of quality. <em>Mitigation:</em> include length-neutral criteria in the rubric; consider normalizing by token count; explicitly instruct the judge to ignore length.</li>
+<li><strong>Self-preference / stylistic bias</strong> — a judge from provider X prefers responses from provider X&#39;s models. <em>Mitigation:</em> use a different provider or family as judge; validate with human labels; ensemble multiple judges.</li>
+<li><strong>Sycophancy</strong> — judges align with perceived user opinion in the prompt. <em>Mitigation:</em> strip user-provided context of preference cues before judging; frame the judge as impartial.</li>
+</ol>
+<p><strong>A7: B.</strong> The held-out set is frozen from an earlier snapshot; if user behavior drifts (new topics, new vocabulary, new intents), the held-out set no longer represents the <em>current</em> user distribution. Model performs great on the old distribution, poorly on the new one. Fix: refresh the eval set from recent production (with fresh labels), track drift metrics, and consider re-training or updating retrieval corpora.</p>
+<p><strong>A8: B.</strong> Shadow deploys route copies of production traffic to a new version whose responses are logged and evaluated but <em>not returned to users</em>. It gives you real-input eval with zero user exposure — at the cost of doubled inference for the shadowed fraction.</p>
+<p><strong>A9:</strong> Sample CI gate design:</p>
+<ul>
+<li><strong>Must run + must pass</strong> (blocks merge): (1) unit tests on prompt-building logic; (2) golden set — 100% pass required; (3) safety eval — 100% pass on refusal-required cases; (4) latency sanity — p95 within 20% of baseline on a fixed load-test payload.</li>
+<li><strong>Must run + must not regress &gt; threshold</strong> (blocks merge): (5) full held-out eval (LLM-judged); alert if any metric drops &gt; 5 points; (6) RAGAS if it&#39;s a RAG change.</li>
+<li><strong>Advisory only</strong> (reports to PR, doesn&#39;t block): (7) cost per request delta; (8) response length delta; (9) refusal rate delta.</li>
+<li><strong>Post-merge</strong> (before general availability): (10) shadow traffic for N hours; (11) canary at 1% → 5% → 25%; (12) A/B test on the primary KPI.</li>
+</ul>
+<p><strong>A10: B.</strong> LLM judges are notoriously noisy at absolute scoring — same input can get 3/5 or 5/5 across runs. They are much more consistent at &quot;which of these two is better?&quot; This is why RLHF is built on preference data, not absolute ratings, and why systems like Chatbot Arena use pairwise Elo. (A) is factually wrong — pairwise still requires the judge to see both. (C, D) are unrelated.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/05-mlflow.md</code> — where you store eval runs and models</li>
+<li><code>learning/04-ci-cd.md</code> — where the golden-set gate lives</li>
+<li><code>learning/09-llm-observability.md</code> — LangSmith / LangFuse for continuous eval on prod traces</li>
+<li><code>../llm-engineering/13-rag-evaluation.md</code> — RAG-specific detail</li>
+<li><code>../agents-production/12-agent-evaluation.md</code> — agent-specific eval</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Take your Month 4 RAG build&#39;s test set. Wire RAGAS on it. Post the four scores.</li>
+<li>Write a <code>judge()</code> function with a rubric for one of your builds. Score 20 outputs, label 20 yourself, compute Cohen&#39;s κ.</li>
+<li>Add a golden-set CI job to your last build&#39;s GitHub Actions workflow. Deliberately break something to see the gate fire.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Zheng et al. &quot;Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena&quot; (2023) — landmark paper on LLM-judge biases</li>
+<li>RAGAS docs — <a href="https://docs.ragas.io">https://docs.ragas.io</a></li>
+<li>OpenAI Evals — <a href="https://github.com/openai/evals">https://github.com/openai/evals</a></li>
+<li>Hugging Face <code>lighteval</code> — modern eval harness</li>
+<li>Chip Huyen, <em>Designing Machine Learning Systems</em> — Ch. 8 (Model Deployment) and Ch. 9 (Continual Learning)</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-07-monitoring.html"><span>← Previous</span><b>learning 07 monitoring</b></a>
+      <a class="next" href="./learning-09-llm-observability.html"><span>Next →</span><b>learning 09 llm observability</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capstone Project 04 — Work with LLM APIs (Production Client) — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/7%20-%20Projects/04-work-with-llm-apis.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Projects</div>
+    <ol class="toc"><li><a href="#1-project-overview">1. Project Overview</a></li><li><a href="#2-step-by-step-implementation">2. Step-by-Step Implementation</a></li><li><a href="#3-example-putting-it-all-together">3. Example — Putting it all together</a></li><li><a href="#4-why-each-piece-matters">4. Why Each Piece Matters</a></li><li><a href="#5-extensions">5. Extensions</a></li><li><a href="#6-interview-talking-points">6. Interview Talking Points</a></li><li><a href="#7-references">7. References</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Projects</div>
+    <h1 class="lesson-title">Capstone Project 04 — Work with LLM APIs (Production Client)</h1>
+    <p class="lesson-sub">**Deliverable:** A robust, reusable Python client wrapper around the Anthropic API (portable to OpenAI/others) that handles streaming, retries with backoff, structured output validation, function/tool calling, cost accounting, and prompt caching — packaged as a small library you can drop into any project.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Projects 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="17.9" cy="123.0" r="11.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="122.5" cy="118.1" r="11.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="117.1" cy="113.2" r="10.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="111.7" cy="108.3" r="10.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="106.3" cy="103.3" r="9.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.8" cy="98.4" r="8.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Capstone Project 04</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Work with LLM APIs…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Time:</strong> 4–6 hours.</p>
+<p><strong>What you&#39;ll be able to say:</strong> &quot;I built a production-grade LLM client wrapper. It streams first-token responses, retries with jitter, validates structured JSON with Pydantic, dispatches tool calls, tracks per-request cost, and uses Anthropic&#39;s prompt cache to cut token costs by ~85% on repeated system prompts.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="1-project-overview"><a class="anchor" href="#1-project-overview">#</a> 1. Project Overview</h2>
+<p>An LLM client that survives production has to do a lot more than &quot;call the API with a prompt.&quot; This project builds a wrapper library <code>llmcore</code> that any FastAPI or agent code can import to get:</p>
+<ol>
+<li><strong>Async streaming</strong> — first-token latency matters for UX</li>
+<li><strong>Automatic retry with jitter</strong> — handle 429/5xx politely</li>
+<li><strong>Structured outputs</strong> — return validated Pydantic models, not raw strings</li>
+<li><strong>Tool calling</strong> — a clean dispatcher for function tools</li>
+<li><strong>Cost tracking</strong> — per-request USD, cumulative counters</li>
+<li><strong>Prompt caching</strong> — Anthropic <code>cache_control</code> breakpoints</li>
+<li><strong>Observability</strong> — trace attributes with <code>gen_ai.*</code> semantic conventions</li>
+<li><strong>Configurable model routing</strong> — Haiku for cheap, Sonnet for balanced, Opus for hard</li>
+</ol>
+<h3 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h3>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/AI-Engineer-Roadmap/main/7%20-%20Projects/7%2520-%2520Projects/images/IMG-CAP04-01.jpg" alt="IMG-CAP04-01" loading="lazy" /></figure></p>
+<h3 id="repo-scaffold"><a class="anchor" href="#repo-scaffold">#</a> Repo scaffold</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">llmcore/
+├── pyproject.toml
+├── llmcore/
+│   ├── __init__.py
+│   ├── client.py       # main LLMClient class
+│   ├── retry.py        # backoff + jitter
+│   ├── streaming.py    # SSE handling
+│   ├── structured.py   # Pydantic JSON validation
+│   ├── tools.py        # tool dispatcher
+│   ├── cost.py         # price table + metrics
+│   ├── cache.py        # prompt cache helpers
+│   └── tracing.py      # OTel wrappers
+├── tests/
+│   ├── test_retry.py
+│   ├── test_structured.py
+│   └── test_tools.py
+└── examples/
+    ├── streaming_chat.py
+    ├── extract_person.py
+    └── weather_agent.py</code></pre>
+      </div>
+    <hr>
+<h2 id="2-step-by-step-implementation"><a class="anchor" href="#2-step-by-step-implementation">#</a> 2. Step-by-Step Implementation</h2>
+<h3 id="step-1-core-client-llmcoreclientpy"><a class="anchor" href="#step-1-core-client-llmcoreclientpy">#</a> Step 1 — Core client (<code>llmcore/client.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;client.py — the main entry point.&quot;&quot;&quot;
+from __future__ import annotations
+import os
+from typing import AsyncIterator
+from anthropic import AsyncAnthropic
+from .cost import compute_cost, record_cost
+from .retry import with_backoff
+from .tracing import span_llm_call
+
+DEFAULT_MODEL = &quot;claude-sonnet-5&quot;
+
+class LLMClient:
+    def __init__(self, api_key: str | None = None, default_model: str = DEFAULT_MODEL):
+        self._client = AsyncAnthropic(api_key=api_key or os.environ[&quot;ANTHROPIC_API_KEY&quot;])
+        self.default_model = default_model
+
+    @with_backoff(max_retries=5)
+    async def complete(
+        self,
+        messages: list[dict],
+        *,
+        system: str | list | None = None,
+        model: str | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        tools: list[dict] | None = None,
+        cache_control: bool = False,
+    ) -&gt; dict:
+        model = model or self.default_model
+        kwargs = {
+            &quot;model&quot;: model,
+            &quot;max_tokens&quot;: max_tokens,
+            &quot;temperature&quot;: temperature,
+            &quot;messages&quot;: messages,
+        }
+        if system:
+            kwargs[&quot;system&quot;] = _wrap_system(system, cache_control)
+        if tools:
+            kwargs[&quot;tools&quot;] = tools
+
+        with span_llm_call(model=model) as span:
+            resp = await self._client.messages.create(**kwargs)
+            cost_usd = compute_cost(model, resp.usage)
+            record_cost(model=model, cost_usd=cost_usd)
+            span.set_attributes({
+                &quot;gen_ai.usage.input_tokens&quot;: resp.usage.input_tokens,
+                &quot;gen_ai.usage.output_tokens&quot;: resp.usage.output_tokens,
+                &quot;gen_ai.usage.cache_read_input_tokens&quot;:
+                    getattr(resp.usage, &quot;cache_read_input_tokens&quot;, 0) or 0,
+                &quot;cost_usd&quot;: cost_usd,
+                &quot;gen_ai.response.stop_reason&quot;: resp.stop_reason,
+            })
+        return {
+            &quot;content&quot;: resp.content,
+            &quot;stop_reason&quot;: resp.stop_reason,
+            &quot;usage&quot;: resp.usage,
+            &quot;cost_usd&quot;: cost_usd,
+        }
+
+def _wrap_system(system, cache_control: bool):
+    &quot;&quot;&quot;Wrap system prompt into cache-controlled blocks if requested.&quot;&quot;&quot;
+    if isinstance(system, str):
+        if cache_control:
+            return [{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: system, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}}]
+        return system
+    return system  # already a list of blocks</code></pre>
+      </div>
+    <p><strong>Why an async client?</strong> LLM calls take seconds; blocking the event loop would kill your throughput. Async lets a single Python process juggle 100+ concurrent LLM calls.</p>
+<p><strong>Why wrap system prompt with <code>cache_control</code>?</strong> Anthropic caches the prompt prefix. Cached input tokens cost ~10% of normal — huge savings when a big system prompt is reused.</p>
+<h3 id="step-2-retry-with-jitter-llmcoreretrypy"><a class="anchor" href="#step-2-retry-with-jitter-llmcoreretrypy">#</a> Step 2 — Retry with jitter (<code>llmcore/retry.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;retry.py — exponential backoff with jitter.&quot;&quot;&quot;
+import asyncio, random, functools, logging
+from anthropic import APIError, APIStatusError, RateLimitError
+
+log = logging.getLogger(&quot;llmcore.retry&quot;)
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+def with_backoff(max_retries: int = 5, base_delay: float = 1.0, max_delay: float = 60.0):
+    def deco(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            attempt = 0
+            while True:
+                try:
+                    return await fn(*args, **kwargs)
+                except RateLimitError as e:
+                    retry_after = _parse_retry_after(e)
+                    if attempt &gt;= max_retries:
+                        raise
+                    delay = min(max_delay, retry_after or base_delay * (2 ** attempt))
+                    delay = random.uniform(0, delay)  # full jitter
+                    log.warning(&quot;rate_limited attempt=%d sleep=%.2fs&quot;, attempt, delay)
+                    await asyncio.sleep(delay)
+                except APIStatusError as e:
+                    if e.status_code not in RETRYABLE_STATUS or attempt &gt;= max_retries:
+                        raise
+                    delay = min(max_delay, base_delay * (2 ** attempt))
+                    delay = random.uniform(0, delay)
+                    log.warning(&quot;api_error status=%d attempt=%d sleep=%.2fs&quot;,
+                                e.status_code, attempt, delay)
+                    await asyncio.sleep(delay)
+                attempt += 1
+        return wrapper
+    return deco
+
+def _parse_retry_after(err):
+    try:
+        headers = err.response.headers
+        val = headers.get(&quot;retry-after&quot;) or headers.get(&quot;anthropic-ratelimit-tokens-reset&quot;)
+        return float(val) if val else None
+    except Exception:
+        return None</code></pre>
+      </div>
+    <p><strong>Why &quot;full jitter&quot;?</strong> If 100 clients hit 429 at once and back off deterministically (say, 2s), they all retry at t+2s — the thundering herd is preserved. Full jitter (random between 0 and the cap) breaks the herd.</p>
+<p><strong>Why cap max_delay?</strong> Beyond ~60s, the request is likely dead-in-water; better to fail fast and let the caller decide (queue for later, return partial, error to user) than to block a worker.</p>
+<h3 id="step-3-streaming-llmcorestreamingpy"><a class="anchor" href="#step-3-streaming-llmcorestreamingpy">#</a> Step 3 — Streaming (<code>llmcore/streaming.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;streaming.py — async iterator over content chunks.&quot;&quot;&quot;
+from typing import AsyncIterator
+from anthropic import AsyncAnthropic
+
+async def stream_complete(
+    client: AsyncAnthropic,
+    messages: list[dict],
+    *,
+    system: str | None = None,
+    model: str = &quot;claude-sonnet-5&quot;,
+    max_tokens: int = 1024,
+) -&gt; AsyncIterator[str]:
+    &quot;&quot;&quot;Yields text chunks as the model streams.&quot;&quot;&quot;
+    async with client.messages.stream(
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+        system=system,
+    ) as stream:
+        async for text in stream.text_stream:
+            yield text
+        final = await stream.get_final_message()
+        # Emit metadata as a sentinel dict (caller can filter strings)
+        yield {&quot;__final__&quot;: True, &quot;usage&quot;: final.usage.model_dump()}</code></pre>
+      </div>
+    <p>Usage in FastAPI:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from fastapi.responses import StreamingResponse
+
+@app.post(&quot;/chat/stream&quot;)
+async def chat_stream(req: ChatRequest):
+    async def gen():
+        async for chunk in stream_complete(client, [{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:req.q}]):
+            if isinstance(chunk, str):
+                yield f&quot;data: {chunk}\n\n&quot;
+            else:
+                yield f&quot;event: done\ndata: {json.dumps(chunk)}\n\n&quot;
+    return StreamingResponse(gen(), media_type=&quot;text/event-stream&quot;)</code></pre>
+      </div>
+    <p><strong>Why stream?</strong> For a 1500-token response at typical output speed, first-token latency is ~500ms and full response is ~10s. Streaming means the user sees text at 500ms; non-streaming, they wait 10s. UX-critical for chat.</p>
+<h3 id="step-4-structured-output-llmcorestructuredpy"><a class="anchor" href="#step-4-structured-output-llmcorestructuredpy">#</a> Step 4 — Structured output (<code>llmcore/structured.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;structured.py — validated Pydantic responses.&quot;&quot;&quot;
+import json
+from typing import Type, TypeVar
+from pydantic import BaseModel, ValidationError
+from .client import LLMClient
+
+T = TypeVar(&quot;T&quot;, bound=BaseModel)
+
+async def extract(
+    llm: LLMClient,
+    schema: Type[T],
+    text: str,
+    *,
+    system: str | None = None,
+    model: str | None = None,
+    max_retries: int = 2,
+) -&gt; T:
+    &quot;&quot;&quot;Ask the LLM to extract data into `schema`, retrying on validation errors.&quot;&quot;&quot;
+    system_prompt = (system or &quot;&quot;) + f&quot;&quot;&quot;
+You extract information into JSON matching this schema:
+{json.dumps(schema.model_json_schema(), indent=2)}
+
+Respond with ONLY valid JSON — no prose, no markdown fences.
+&quot;&quot;&quot;.strip()
+
+    messages = [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: text}]
+    for attempt in range(max_retries + 1):
+        resp = await llm.complete(
+            messages=messages,
+            system=system_prompt,
+            model=model,
+            temperature=0,  # deterministic for extraction
+        )
+        raw = resp[&quot;content&quot;][0].text
+        try:
+            data = json.loads(raw)
+            return schema.model_validate(data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            if attempt == max_retries:
+                raise
+            # Feed the error back to the model
+            messages.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: raw})
+            messages.append({
+                &quot;role&quot;: &quot;user&quot;,
+                &quot;content&quot;: f&quot;Validation failed: {e}. Respond with corrected JSON only.&quot;,
+            })
+    raise RuntimeError(&quot;unreachable&quot;)</code></pre>
+      </div>
+    <p>Usage:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Person(BaseModel):
+    name: str
+    age: int | None = None
+    occupation: str | None = None
+
+person = await extract(llm, Person, &quot;Alice is 34 and works as a nurse.&quot;)
+# Person(name=&#39;Alice&#39;, age=34, occupation=&#39;nurse&#39;)</code></pre>
+      </div>
+    <p><strong>Why validate?</strong> LLMs occasionally emit almost-JSON (a trailing comma, <code>null</code> where a string is expected, an extra explanation line). Validation forces the model to comply; the retry loop closes the loop by feeding the error back.</p>
+<p><strong>Why temperature=0?</strong> Extraction is deterministic; sampling variance is noise here.</p>
+<h3 id="step-5-tool-calling-llmcoretoolspy"><a class="anchor" href="#step-5-tool-calling-llmcoretoolspy">#</a> Step 5 — Tool calling (<code>llmcore/tools.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;tools.py — clean tool dispatch.&quot;&quot;&quot;
+from typing import Callable, Any
+from pydantic import BaseModel
+
+class Tool:
+    def __init__(self, name: str, description: str, input_schema: dict, fn: Callable):
+        self.name = name
+        self.description = description
+        self.input_schema = input_schema
+        self.fn = fn
+
+    def to_anthropic(self) -&gt; dict:
+        return {
+            &quot;name&quot;: self.name,
+            &quot;description&quot;: self.description,
+            &quot;input_schema&quot;: self.input_schema,
+        }
+
+class ToolRegistry:
+    def __init__(self):
+        self._tools: dict[str, Tool] = {}
+    def register(self, tool: Tool):
+        self._tools[tool.name] = tool
+    def to_anthropic(self) -&gt; list[dict]:
+        return [t.to_anthropic() for t in self._tools.values()]
+    async def dispatch(self, name: str, inputs: dict) -&gt; Any:
+        tool = self._tools[name]
+        result = tool.fn(**inputs)
+        if hasattr(result, &quot;__await__&quot;):
+            result = await result
+        return result
+
+async def run_tool_loop(llm, messages, registry: ToolRegistry, max_iters: int = 10):
+    &quot;&quot;&quot;Standard agent loop: model calls tool, we run it, feed back, repeat.&quot;&quot;&quot;
+    for _ in range(max_iters):
+        resp = await llm.complete(
+            messages=messages,
+            tools=registry.to_anthropic(),
+        )
+        blocks = resp[&quot;content&quot;]
+        if resp[&quot;stop_reason&quot;] != &quot;tool_use&quot;:
+            return blocks  # done — return final assistant message
+        # Append the assistant turn (with tool_use blocks)
+        messages.append({&quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: blocks})
+        # Run each tool call, append tool_result blocks
+        results = []
+        for b in blocks:
+            if getattr(b, &quot;type&quot;, None) == &quot;tool_use&quot;:
+                out = await registry.dispatch(b.name, b.input)
+                results.append({
+                    &quot;type&quot;: &quot;tool_result&quot;,
+                    &quot;tool_use_id&quot;: b.id,
+                    &quot;content&quot;: str(out),
+                })
+        messages.append({&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: results})
+    raise RuntimeError(&quot;tool loop exceeded max_iters&quot;)</code></pre>
+      </div>
+    <p>Usage:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">registry = ToolRegistry()
+registry.register(Tool(
+    name=&quot;get_weather&quot;,
+    description=&quot;Get current weather for a city&quot;,
+    input_schema={
+        &quot;type&quot;: &quot;object&quot;,
+        &quot;properties&quot;: {&quot;city&quot;: {&quot;type&quot;: &quot;string&quot;}},
+        &quot;required&quot;: [&quot;city&quot;],
+    },
+    fn=lambda city: f&quot;Weather in {city}: 72°F, sunny&quot;,
+))
+
+msgs = [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What&#39;s the weather in Helena?&quot;}]
+result = await run_tool_loop(llm, msgs, registry)</code></pre>
+      </div>
+    <p><strong>Why a registry pattern?</strong> Decouples tool declaration from the call site. The same registry is used for the model&#39;s schema and for dispatch. Add auth, per-tool rate limiting, and audit logging in one place.</p>
+<h3 id="step-6-cost-accounting-llmcorecostpy"><a class="anchor" href="#step-6-cost-accounting-llmcorecostpy">#</a> Step 6 — Cost accounting (<code>llmcore/cost.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;cost.py — price table + counters.&quot;&quot;&quot;
+from prometheus_client import Counter
+
+PRICE_TABLE = {
+    # Prices per 1M tokens; check Anthropic&#39;s current pricing page
+    &quot;claude-opus-5&quot;:    {&quot;input&quot;: 15.0, &quot;output&quot;: 75.0, &quot;cache_read&quot;: 1.5, &quot;cache_write&quot;: 18.75},
+    &quot;claude-sonnet-5&quot;:  {&quot;input&quot;: 3.0,  &quot;output&quot;: 15.0, &quot;cache_read&quot;: 0.3, &quot;cache_write&quot;: 3.75},
+    &quot;claude-haiku-4-5&quot;: {&quot;input&quot;: 0.8,  &quot;output&quot;: 4.0,  &quot;cache_read&quot;: 0.08, &quot;cache_write&quot;: 1.0},
+}
+
+COST_TOTAL = Counter(&quot;llm_cost_usd_total&quot;, &quot;Cumulative LLM cost&quot;, [&quot;model&quot;])
+TOKENS_IN  = Counter(&quot;llm_tokens_input_total&quot;, &quot;Input tokens&quot;, [&quot;model&quot;])
+TOKENS_OUT = Counter(&quot;llm_tokens_output_total&quot;, &quot;Output tokens&quot;, [&quot;model&quot;])
+
+def compute_cost(model: str, usage) -&gt; float:
+    p = PRICE_TABLE.get(model)
+    if p is None:
+        return 0.0
+    in_tok = usage.input_tokens
+    out_tok = usage.output_tokens
+    cache_read = getattr(usage, &quot;cache_read_input_tokens&quot;, 0) or 0
+    cache_write = getattr(usage, &quot;cache_creation_input_tokens&quot;, 0) or 0
+    # &quot;input_tokens&quot; from the API already excludes cache_read/cache_write in Anthropic&#39;s response
+    return (
+        in_tok * p[&quot;input&quot;] +
+        out_tok * p[&quot;output&quot;] +
+        cache_read * p[&quot;cache_read&quot;] +
+        cache_write * p[&quot;cache_write&quot;]
+    ) / 1_000_000
+
+def record_cost(model: str, cost_usd: float):
+    COST_TOTAL.labels(model=model).inc(cost_usd)</code></pre>
+      </div>
+    <p><strong>Why per-request cost?</strong> So you can group by model, route, user, prompt version — the dimensions that matter for FinOps (Module 14 in Month 6).</p>
+<h3 id="step-7-prompt-caching-helpers-llmcorecachepy"><a class="anchor" href="#step-7-prompt-caching-helpers-llmcorecachepy">#</a> Step 7 — Prompt caching helpers (<code>llmcore/cache.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;cache.py — cache_control block helpers.&quot;&quot;&quot;
+
+def cached_system(text: str) -&gt; list[dict]:
+    &quot;&quot;&quot;Wrap a system string as a single ephemeral-cached block.&quot;&quot;&quot;
+    return [{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: text, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}}]
+
+def cached_system_with_tools(system: str, tools_text: str) -&gt; list[dict]:
+    &quot;&quot;&quot;Two cache breakpoints: the main system prompt, then tool definitions.&quot;&quot;&quot;
+    return [
+        {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: system, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}},
+        {&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: tools_text, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}},
+    ]</code></pre>
+      </div>
+    <p>Usage: pass <code>cache_control=True</code> to <code>LLMClient.complete()</code> when your system prompt is stable and &gt; 1024 tokens. Measure <code>cache_read_input_tokens / total_input_tokens</code> in traces — you want that ratio &gt; 80% for hot-path prompts.</p>
+<h3 id="step-8-tracing-llmcoretracingpy"><a class="anchor" href="#step-8-tracing-llmcoretracingpy">#</a> Step 8 — Tracing (<code>llmcore/tracing.py</code>)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">&quot;&quot;&quot;tracing.py — OpenTelemetry semantic conventions for gen-ai.&quot;&quot;&quot;
+from contextlib import contextmanager
+from opentelemetry import trace
+
+_tracer = trace.get_tracer(&quot;llmcore&quot;)
+
+@contextmanager
+def span_llm_call(model: str, system: str = &quot;anthropic&quot;):
+    with _tracer.start_as_current_span(&quot;gen_ai.chat&quot;) as span:
+        span.set_attribute(&quot;gen_ai.system&quot;, system)
+        span.set_attribute(&quot;gen_ai.request.model&quot;, model)
+        yield span</code></pre>
+      </div>
+    <p>Config your exporter (LangFuse, LangSmith, Phoenix, Datadog) once at app startup; every LLM call carries semantic-convention attributes automatically.</p>
+<h3 id="step-9-tests"><a class="anchor" href="#step-9-tests">#</a> Step 9 — Tests</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># tests/test_retry.py
+import pytest
+from unittest.mock import AsyncMock
+from anthropic import RateLimitError, APIStatusError
+from llmcore.retry import with_backoff
+
+class MockResp:
+    def __init__(self, status):
+        self.status_code = status
+        self.headers = {&quot;retry-after&quot;: &quot;0.01&quot;}
+
+@pytest.mark.asyncio
+async def test_rate_limit_retries():
+    call_count = 0
+    @with_backoff(max_retries=3, base_delay=0.01)
+    async def flaky():
+        nonlocal call_count
+        call_count += 1
+        if call_count &lt; 3:
+            raise RateLimitError(&quot;rl&quot;, response=MockResp(429), body={})
+        return &quot;ok&quot;
+    result = await flaky()
+    assert result == &quot;ok&quot;
+    assert call_count == 3
+
+@pytest.mark.asyncio
+async def test_non_retryable_raises():
+    @with_backoff(max_retries=3, base_delay=0.01)
+    async def bad():
+        raise APIStatusError(&quot;400&quot;, response=MockResp(400), body={})
+    with pytest.raises(APIStatusError):
+        await bad()</code></pre>
+      </div>
+    <hr>
+<h2 id="3-example-putting-it-all-together"><a class="anchor" href="#3-example-putting-it-all-together">#</a> 3. Example — Putting it all together</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># examples/extract_person.py
+import asyncio
+from pydantic import BaseModel
+from llmcore.client import LLMClient
+from llmcore.structured import extract
+
+class Person(BaseModel):
+    name: str
+    age: int | None = None
+    occupation: str | None = None
+    location: str | None = None
+
+async def main():
+    llm = LLMClient()
+    p = await extract(
+        llm, Person,
+        &quot;Meet Priya Shah, a 29-year-old data scientist based in Helena, Montana.&quot;
+    )
+    print(p)
+    # Person(name=&#39;Priya Shah&#39;, age=29, occupation=&#39;data scientist&#39;, location=&#39;Helena, Montana&#39;)
+
+asyncio.run(main())</code></pre>
+      </div>
+    <hr>
+<h2 id="4-why-each-piece-matters"><a class="anchor" href="#4-why-each-piece-matters">#</a> 4. Why Each Piece Matters</h2>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>Failure mode without it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Async</td>
+<td>One request blocks the whole event loop; throughput collapses</td>
+</tr>
+<tr>
+<td>Retry with jitter</td>
+<td>429s cascade into user-visible errors; thundering herds on retry</td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Users stare at a blank screen for 10s waiting for response</td>
+</tr>
+<tr>
+<td>Structured output</td>
+<td>Downstream parsing crashes on almost-JSON; fragile chain</td>
+</tr>
+<tr>
+<td>Tool dispatch</td>
+<td>Coupled tool implementations; no auditing; no shared auth</td>
+</tr>
+<tr>
+<td>Cost accounting</td>
+<td>End-of-month bill surprise; no per-user attribution</td>
+</tr>
+<tr>
+<td>Prompt caching</td>
+<td>Paying 10× for the same system prompt on every request</td>
+</tr>
+<tr>
+<td>Tracing</td>
+<td>Bug reports come in with &quot;the bot said X&quot;; you can&#39;t reproduce</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="5-extensions"><a class="anchor" href="#5-extensions">#</a> 5. Extensions</h2>
+<ul>
+<li><strong>Fallback across providers.</strong> If Anthropic 500s, retry against OpenAI with the same interface.</li>
+<li><strong>Semantic cache layer.</strong> In-memory or Redis; skip the LLM for near-duplicate queries.</li>
+<li><strong>Batch API adapter.</strong> For non-realtime workloads, submit through Anthropic&#39;s message batches at 50% cost.</li>
+<li><strong>Rate-limit budget.</strong> A local token-bucket that caps outbound RPM/TPM so you never trigger provider 429s.</li>
+<li><strong>Model router.</strong> Cheap classifier that picks Haiku/Sonnet/Opus per request based on complexity.</li>
+</ul>
+<p><code>[IMG-CAP04-02]</code> — <em>Prompt: A code walkthrough diagram — a UML-style sequence with time flowing downward. Actors: Client (FastAPI handler), LLMCore, Anthropic API, Prometheus. Steps: 1) FastAPI → LLMCore.complete(); 2) LLMCore starts span; 3) LLMCore → Anthropic streaming call; 4) Anthropic returns first-token chunk (highlighted &quot;500ms first token&quot;); 5) chunks continue until final; 6) LLMCore computes cost from usage; 7) LLMCore records to Prometheus and closes span with cost + tokens attributes; 8) LLMCore returns to FastAPI. Show a parallel &quot;on 429&quot; branch with backoff-and-retry loop. Clean sequence-diagram style with UML notation.</em></p>
+<hr>
+<h2 id="6-interview-talking-points"><a class="anchor" href="#6-interview-talking-points">#</a> 6. Interview Talking Points</h2>
+<ul>
+<li><strong>&quot;How would you make an LLM API call production-safe?&quot;</strong> Walk through retry/backoff, streaming for UX, structured validation, cost tracking, tracing, caching. This project <em>is</em> the answer.</li>
+<li><strong>&quot;How do you handle 429s?&quot;</strong> Full-jitter exponential backoff, capped at 60s, honor <code>Retry-After</code>; on cap, propagate 429 to your caller with your own <code>Retry-After</code> header.</li>
+<li><strong>&quot;Why validate LLM output?&quot;</strong> LLMs occasionally emit malformed JSON, extra prose, or type-invalid fields. Pydantic + retry with the error fed back is the standard pattern.</li>
+<li><strong>&quot;How do you keep LLM costs under control?&quot;</strong> Prompt caching for stable prefixes, model routing, per-request cost dashboards, budget alerts, per-user caps.</li>
+<li><strong>&quot;How is tool-calling implemented under the hood?&quot;</strong> The model returns a <code>tool_use</code> block; your code runs the tool and returns a <code>tool_result</code> block; loop until <code>stop_reason != &quot;tool_use&quot;</code>. Show the code.</li>
+</ul>
+<hr>
+<h2 id="7-references"><a class="anchor" href="#7-references">#</a> 7. References</h2>
+<ul>
+<li>Anthropic API docs — <a href="https://docs.anthropic.com">https://docs.anthropic.com</a></li>
+<li>OpenTelemetry GenAI semantic conventions</li>
+<li>Instructor library (structured output pattern in Python) — <a href="https://python.useinstructor.com/">https://python.useinstructor.com/</a></li>
+<li>Simon Willison&#39;s <code>llm</code> CLI — clean example of a portable LLM client design</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-understand-transformers.html"><span>← Previous</span><b>understand transformers</b></a>
+      <a class="next" href="./05-build-rag-system.html"><span>Next →</span><b>build rag system</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

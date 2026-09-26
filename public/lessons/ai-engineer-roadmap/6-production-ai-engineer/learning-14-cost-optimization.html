@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>14 — Cost Optimization — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/14-cost-optimization.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">14 — Cost Optimization</h1>
+    <p class="lesson-sub">**Module goal:** Turn a hemorrhaging LLM bill into a controlled operating expense. Master the levers — model selection, prompt caching, semantic caching, output-length control, batching, off-peak scheduling, model routing, self-hosting economics — and the FinOps practices that put a per-request dollar cost on your Grafana dashboard so cost becomes a **first-class SLI**.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.3,72.7 L61.3,47.1 L78.4,72.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.5" y="41.1" width="32.9" height="32.9" rx="2" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55" transform="rotate(227 55.9 57.5)"/>
+        <rect x="34.7" y="36.8" width="31.6" height="31.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.5 52.6)"/>
+        <rect x="29.9" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.1 47.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">14 — Cost</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Optimization</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p>Every LLM request has a cost:</p>
+<p>$$
+\text{cost} = (T_{\text{in}} - T_{\text{cache_read}}) \cdot p_{\text{in}} + T_{\text{cache_read}} \cdot p_{\text{cache}} + T_{\text{out}} \cdot p_{\text{out}}
+$$</p>
+<p>where $T$ are token counts and $p$ are per-million-token prices. For a typical Anthropic model call, output tokens cost roughly 5× input tokens; cached input tokens cost roughly 0.1× input tokens. <strong>The output side dominates unless you have a very long prompt.</strong></p>
+<p>Cost is a function of four things you control:</p>
+<ol>
+<li><strong>How often the LLM is called</strong> — cache, retry hygiene, agent step limits</li>
+<li><strong>Which model handles it</strong> — model routing (Haiku for classification, Opus for reasoning)</li>
+<li><strong>How much context is sent</strong> — prompt engineering discipline, prompt caching, retrieval precision</li>
+<li><strong>How much output is generated</strong> — <code>max_tokens</code>, structured outputs, &quot;no unnecessary preamble&quot; instructions</li>
+</ol>
+<p>Plus one structural lever: <strong>when</strong> the compute happens — batch API, off-peak, self-hosted with reserved GPUs.</p>
+<p><strong>FinOps discipline</strong> (Cloud FinOps Foundation):</p>
+<ul>
+<li><strong>Inform</strong> — know your costs by dimension (model, route, user, tenant, feature)</li>
+<li><strong>Optimize</strong> — apply the levers below</li>
+<li><strong>Operate</strong> — make cost a monitored, alerted, budgeted metric like latency</li>
+</ul>
+<p><strong>Order-of-magnitude example.</strong> A chatbot serving 100k users:</p>
+<ul>
+<li><strong>Naïve</strong>: 1 call per interaction, 8k input + 1k output, Opus everywhere → ~ $0.09/interaction × 5 interactions/day × 100k users × 30 days ≈ <strong>$1.35M/month</strong></li>
+<li><strong>Optimized</strong>: model routing (80% Haiku, 20% Sonnet, 0% Opus except escalation), prompt caching (85% hit rate on 6k-token system prompt), max_tokens=512 unless needed, semantic cache 30% hit rate → ~ $0.006/interaction ≈ <strong>$90k/month</strong></li>
+<li><strong>A 15× reduction with no quality loss</strong> is realistic when applied comprehensively.</li>
+</ul>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-model-routing-the-highest-impact-lever"><a class="anchor" href="#21-model-routing-the-highest-impact-lever">#</a> 2.1 Model Routing (The Highest-Impact Lever)</h3>
+<p>Not every request needs the flagship model. Route by:</p>
+<ul>
+<li><strong>Intent classification</strong> — a cheap classifier (Haiku, or a small BERT) decides &quot;simple FAQ&quot; vs &quot;complex reasoning&quot; vs &quot;code gen&quot; and dispatches.</li>
+<li><strong>Explicit user tier</strong> — free users get Sonnet, pro users get Opus.</li>
+<li><strong>Confidence-based escalation</strong> — Haiku answers; if it flags low confidence or user thumbs-down, retry on Sonnet.</li>
+<li><strong>Length heuristic</strong> — short factual questions to a small model; multi-turn code review to a large one.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">async def route_and_answer(request: str) -&gt; str:
+    intent = await classify(request, model=&quot;claude-haiku-4-5&quot;)  # cheap
+    if intent == &quot;faq&quot;:
+        return await run(request, &quot;claude-haiku-4-5&quot;)
+    if intent == &quot;reasoning&quot;:
+        return await run(request, &quot;claude-sonnet-5&quot;)
+    if intent == &quot;hard&quot;:
+        return await run(request, &quot;claude-opus-5&quot;)</code></pre>
+      </div>
+    <p>Instrument every route with per-model metrics; watch for accidental fallthrough where a &quot;simple&quot; intent starts eating Opus tokens.</p>
+<h3 id="22-prompt-caching-revisited-specific-to-cost"><a class="anchor" href="#22-prompt-caching-revisited-specific-to-cost">#</a> 2.2 Prompt Caching Revisited (Specific to Cost)</h3>
+<p>Module 11 covered how prompt caching works. Cost impact:</p>
+<ul>
+<li>Anthropic pricing: cache-read tokens cost ~10% of normal input tokens (specific ratio varies by model; check the pricing page).</li>
+<li>Break-even: <strong>2–3 uses of a cached prefix</strong>. Anything &gt; 1024 tokens reused across requests should be cached.</li>
+<li>What to cache: the system prompt, few-shot examples, tool definitions, large reference documents, long user history summaries.</li>
+<li>What NOT to cache: per-request content that varies (the user&#39;s current message), transient state.</li>
+</ul>
+<p>The pattern in prompt design: <strong>put stable content first, dynamic content last</strong>. The cache matches prefixes byte-for-byte from the start; changing anything early breaks the cache. Order:</p>
+<ol>
+<li>Big system instructions (rarely change)</li>
+<li>Tool definitions (change per-deploy)</li>
+<li>Retrieved context (per-user, but may be reusable within a session)</li>
+<li>Chat history (grows every turn)</li>
+<li>Current user message (always changes)</li>
+</ol>
+<p>Set <code>cache_control</code> breakpoints between stable sections to allow partial cache hits.</p>
+<h3 id="23-output-cost-discipline"><a class="anchor" href="#23-output-cost-discipline">#</a> 2.3 Output Cost Discipline</h3>
+<p>Output tokens are the expensive dimension. Techniques:</p>
+<ul>
+<li><strong>Set <code>max_tokens</code> explicitly.</strong> Default may be very high; users writing &quot;give me a 3-word answer&quot; don&#39;t need 4096 tokens allocated.</li>
+<li><strong>Structured output caps generation.</strong> JSON schema with fixed field lengths yields shorter, predictable outputs.</li>
+<li><strong>Instruct brevity.</strong> &quot;Answer in one sentence&quot; or &quot;no preamble, no closing pleasantries&quot; in the system prompt reduces filler tokens substantially.</li>
+<li><strong>Stop sequences.</strong> Terminate when the model outputs a boundary token; useful for repeated-generation loops.</li>
+<li><strong>Sampling temperature 0</strong> for deterministic tasks (classification, extraction) — no need for repeated sampling.</li>
+</ul>
+<p>Measuring where output goes: log <code>output_tokens</code> per route; identify the p99 routes and investigate. Often one route with a &quot;generate detailed explanation&quot; instruction is 80% of your output cost.</p>
+<h3 id="24-batch-api-async-at-half-the-price"><a class="anchor" href="#24-batch-api-async-at-half-the-price">#</a> 2.4 Batch API — Async at Half the Price</h3>
+<p>For non-realtime workloads, most providers offer a <strong>batch API</strong>: submit jobs, receive results within 24 hours, pay ~50%. Perfect for:</p>
+<ul>
+<li>Nightly evaluation runs</li>
+<li>Backfilling embeddings</li>
+<li>Bulk classification (labeling old records)</li>
+<li>Non-urgent report generation</li>
+</ul>
+<p>Anthropic&#39;s Message Batches API accepts up to 100k messages per batch; returns a results URL when complete.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">batch = await client.messages.batches.create(
+    requests=[
+        {&quot;custom_id&quot;: f&quot;req-{i}&quot;, &quot;params&quot;: {...}}
+        for i in range(50_000)
+    ]
+)
+# Poll batch.id until completed; download results</code></pre>
+      </div>
+    <p>Rule of thumb: <strong>if your workload doesn&#39;t need a response in the current HTTP request, batch it.</strong></p>
+<h3 id="25-semantic-cache-deduplication"><a class="anchor" href="#25-semantic-cache-deduplication">#</a> 2.5 Semantic Cache &amp; Deduplication</h3>
+<p>Module 11 covered semantic caching. Cost impact per hit: ~$0.001 in embedding + Redis ops vs $0.01–$1 for the skipped LLM call. Achievable hit rates on well-defined workloads (FAQ, product search, customer support) are 30–60%; on open-ended chat, 5–15%.</p>
+<p><strong>Deduplication for streaming input</strong>: if the same user sends the same question twice in 10 seconds (accidental double-submit), respond from cache without re-invoking. Even a 1% dedup rate at scale saves noticeably.</p>
+<h3 id="26-retrieval-precision"><a class="anchor" href="#26-retrieval-precision">#</a> 2.6 Retrieval Precision</h3>
+<p>RAG systems retrieve top-K chunks; each chunk consumes prompt tokens. Cost levers:</p>
+<ul>
+<li><strong>Reduce K</strong> — 5 relevant chunks beats 20 mediocre ones on both quality and cost.</li>
+<li><strong>Rerank</strong> — a lightweight reranker (Cohere Rerank, cross-encoder) turns 50 candidates into the 5 best; smaller context, better answer.</li>
+<li><strong>Compress context</strong> — LLMs like LangChain&#39;s <code>ContextualCompressor</code> extract only relevant sentences from retrieved chunks.</li>
+<li><strong>Chunk size tuning</strong> — smaller chunks = more precise, less waste per chunk; but too small loses context. Empirically 300–800 tokens per chunk works.</li>
+<li><strong>Metadata filtering</strong> — filter by tenant/category/date <em>before</em> semantic search; smaller candidate set to rerank.</li>
+</ul>
+<h3 id="27-self-hosting-economics"><a class="anchor" href="#27-self-hosting-economics">#</a> 2.7 Self-Hosting Economics</h3>
+<p>At sufficient scale, self-hosting open-weight models (Llama, Mistral, Qwen, DeepSeek) beats managed APIs. The math:</p>
+<ul>
+<li><strong>Managed API</strong>: pay per token, scales linearly with usage, zero infra work.</li>
+<li><strong>Self-hosted</strong>: pay per GPU-hour whether utilized or not. Break-even at ~40–70% sustained utilization of the largest model tier.</li>
+</ul>
+<p>Levers to make self-hosted economics work:</p>
+<ul>
+<li><strong>Batch multiple requests per forward pass</strong> (dynamic batching via vLLM, TGI, SGLang) — sub-linear cost per request as batch size grows.</li>
+<li><strong>Quantization</strong> (INT8, INT4, GPTQ, AWQ) — 2–4× smaller model → runs on cheaper GPUs.</li>
+<li><strong>KV-cache reuse</strong> across sessions — vLLM&#39;s prefix caching, similar to Anthropic&#39;s prompt cache.</li>
+<li><strong>Speculative decoding</strong> — small &quot;draft&quot; model proposes tokens, big model verifies; 2–3× speedup.</li>
+<li><strong>Right-size the model</strong> — a fine-tuned 7B for classification beats an untuned 70B on both quality and cost.</li>
+<li><strong>Spot/preemptible GPUs</strong> — 60–90% cheaper if your workload can tolerate interruption (batch, off-peak).</li>
+</ul>
+<p><strong>Reality check</strong>: if you&#39;re processing &lt; 500B tokens/month, managed API is almost always cheaper (once you count infra, ops, on-call, the wrong-gpu-purchased mistake). At &gt; 1T tokens/month, self-hosting starts winning; requires an ML platform team.</p>
+<h3 id="28-the-cost-dashboard-making-it-a-first-class-sli"><a class="anchor" href="#28-the-cost-dashboard-making-it-a-first-class-sli">#</a> 2.8 The Cost Dashboard (Making It a First-Class SLI)</h3>
+<p>Build these panels (Module 7 introduced the metrics):</p>
+<ul>
+<li><strong>$ per hour / per day</strong> — moving average, plus 30-day trend</li>
+<li><strong>$ per user (top 10 spenders)</strong> — flag outliers, spam accounts, or one power user underpricing your tier</li>
+<li><strong>$ per route</strong> — where the money goes</li>
+<li><strong>$ per model</strong> — is model routing working?</li>
+<li><strong>Cache hit rate &amp; $ saved by cache</strong> — direct ROI on your cache work</li>
+<li><strong>Cost anomaly alert</strong> — when 15-min cost rate is 2× the trailing 24-hour baseline, page</li>
+</ul>
+<p>Bind budget alerts at the cloud level too (AWS Budgets, GCP Budgets) as a backstop against per-metric misconfig.</p>
+<p><code>[IMG-14-01]</code> — <em>Prompt: A cost-optimization stack for LLM applications. Vertical waterfall diagram, top labeled &quot;Naïve LLM spend $1.35M/month&quot;, each descending step labeled with a lever and % savings: &quot;Model routing (-70%)&quot;, &quot;Prompt caching (-50%)&quot;, &quot;Semantic cache (-20%)&quot;, &quot;max_tokens + brevity prompt (-25%)&quot;, &quot;Batch API for offline (-10%)&quot;, down to a final small bar labeled &quot;$90k/month&quot;. Green descending steps against neutral background, clean financial dashboard style, clearly labeled percentages that don&#39;t need to compound arithmetically since each stacks on the remainder.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-utility-bill"><a class="anchor" href="#model-1-the-utility-bill">#</a> Model 1: The Utility Bill</h3>
+<p>Your household electric bill has fixed charges (delivery, meter fee — like base infra), variable per-kWh cost (like tokens), and time-of-use rates (peak vs off-peak — like the batch API discount). You can:</p>
+<ul>
+<li>Switch to more efficient appliances (a smaller model that does the job)</li>
+<li>Insulate the house (prompt caching to avoid heat loss)</li>
+<li>Run the dishwasher at night (batch API for non-urgent work)</li>
+<li>Turn off lights (max_tokens = don&#39;t generate what you won&#39;t read)</li>
+<li>Solar panels if you use enough (self-host at scale)</li>
+<li>Check the bill monthly and investigate anomalies (cost dashboards + alerts)</li>
+</ul>
+<p>Cost engineering is not one heroic optimization; it&#39;s a portfolio of small habits that compound. And ignoring the bill entirely until it&#39;s shocking is what &quot;surprise $47k Anthropic bill&quot; incidents look like.</p>
+<h3 id="model-2-the-rush-hour-cab-vs-the-airport-shuttle"><a class="anchor" href="#model-2-the-rush-hour-cab-vs-the-airport-shuttle">#</a> Model 2: The Rush-Hour Cab vs the Airport Shuttle</h3>
+<p>You need to go from A to B. A rush-hour taxi (managed synchronous API, biggest model) gets you there fastest, at highest cost. A ride-share (managed API, appropriate model) is cheaper if you accept some routing. The airport shuttle (batch API) is much cheaper if you can wait until it fills. Public transit (self-hosted) is cheapest per rider but requires you to run the transit system. Walking (cache hit — you didn&#39;t need to travel) is free but only works for the trip you already made.</p>
+<p>Match the transport to the trip. Emergency room = flagship model + synchronous. Grocery run = mid-tier model. Vacation planning that can wait = batch. The bug is when every trip uses the emergency ride.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Using the flagship model everywhere &quot;for quality.&quot;</strong>
+Opus-class models are extraordinary at long-form reasoning and code review; they&#39;re 5–10× more expensive than Haiku-class and provide <em>no measurable quality improvement</em> on tasks like classification, extraction, and short factual Q&amp;A. Teams often anchor on the biggest model because it was easiest to prototype with, then leave it in production. <strong>Fix:</strong> build an offline eval that scores your task on Haiku, Sonnet, Opus. Often the smallest model that clears the quality bar is 2 tiers below what&#39;s in production. Model routing (2.1) formalizes this — a cheap classifier picks the model per request.</p>
+<p><strong>Pitfall #2 — Cost invisible until end-of-month.</strong>
+Your finance team forwards you an invoice: &quot;Anthropic $47,000 this month, was $8,000 last month.&quot; You have no telemetry for what caused the jump — a new feature? A retry loop bug? A bad prompt version? A single user? By the time you know, it&#39;s already spent. <strong>Fix:</strong> attach <code>$</code> as a first-class dimension on every LLM span (Module 9), roll up per-user, per-route, per-model in real time, and set alerts on 15-min cost-rate anomalies. Cost visibility should be as sharp as latency visibility.</p>
+<p><strong>Pitfall #3 — Optimizing tokens while ignoring compute-hours (or vice versa).</strong>
+Two failure modes:</p>
+<ul>
+<li><strong>API-only team</strong>: optimizes prompts, ignores that a self-hosted 8B model would replace 90% of their calls at 1/20 cost. They&#39;re penny-wise (fewer tokens) but pound-foolish (no self-host strategy).</li>
+<li><strong>Self-host-only team</strong>: buys 8× H100s, uses them at 5% average utilization, spends more on idle GPUs than a Sonnet API bill would have been. They optimize $/token in-batch but ignore $/token-in-real-world.
+<strong>Fix:</strong> track <strong>total cost of ownership</strong>: API $ + infra $ + ops $ + engineering $, divided by tokens actually served. Recompute quarterly. The right architecture at 1M tokens/day is different from 100M tokens/day is different from 10B tokens/day.</li>
+</ul>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> Which cost lever typically has the highest impact on a chatbot serving a mix of simple and complex queries?
+A) Prompt caching
+B) Model routing (small model for simple, large for complex)
+C) Reducing max_tokens
+D) Self-hosting</p>
+<p><strong>Q2 (short):</strong> Walk through the math of prompt caching break-even. If cached tokens cost 10% of normal input tokens and cache-writing costs 25% more than normal, how many uses are needed before caching a prefix pays off?</p>
+<p><strong>Q3 (MC):</strong> Anthropic&#39;s Batch API typically offers:
+A) Same price, faster response
+B) ~50% price discount for asynchronous return within 24h
+C) Free calls under a quota
+D) Priority latency at higher cost</p>
+<p><strong>Q4 (short):</strong> You detect that one user has generated 12% of last week&#39;s API cost. Give three plausible causes and one action per cause.</p>
+<p><strong>Q5 (MC):</strong> Output token pricing is typically:
+A) The same as input token pricing
+B) Cheaper than input
+C) Roughly 3–5× more expensive than input
+D) Free once you pay for input</p>
+<p><strong>Q6 (short):</strong> Why does prompt caching require the cached content to be at the <em>start</em> of the prompt, byte-for-byte?</p>
+<p><strong>Q7 (MC):</strong> A &quot;$5/day per user&quot; cap is enforced most robustly by:
+A) A UI warning at $4.50
+B) A Redis-backed spend counter incremented at request time, refunded on cap-hit (Module 10 pattern)
+C) A monthly budget alert in AWS
+D) A prompt instruction telling the model to be efficient</p>
+<p><strong>Q8 (MC):</strong> Which is NOT a reasonable action when a single route is 80% of your LLM cost?
+A) Set a lower max_tokens for that route
+B) Route that intent to a smaller model
+C) Add prompt caching to the system prompt
+D) Delete the route</p>
+<p><strong>Q9 (short):</strong> At what scale does self-hosting an open model start beating managed API pricing? Give the rough token-volume threshold and three factors that shift it.</p>
+<p><strong>Q10 (MC):</strong> Cost should be treated as:
+A) A finance-team concern, not engineering
+B) A first-class SLI with dashboards and alerts, right alongside latency and error rate
+C) Reviewed quarterly
+D) Optimized only after all other work is done</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> Model routing typically dominates because the price gap between a small model (Haiku-class) and a large one (Opus-class) is often 5–20×. Even a modest routing rule — 60% simple requests to the small model — cuts cost by 40–60% instantly. Prompt caching (A) is a strong second (up to 90% off the cached portion, but only on repeated prefixes). max_tokens (C) helps but the ceiling is limited (typical output usage is well below max_tokens for most requests). Self-hosting (D) is the biggest lever <em>at scale</em> but only after ~1T tokens/month.</p>
+<p><strong>A2:</strong> Let <code>p_in</code> = normal input token price. Cache creation costs <code>1.25 × p_in</code>; cache reads cost <code>0.1 × p_in</code>. For a prefix of <code>T</code> tokens used <code>n</code> times:</p>
+<ul>
+<li>Without caching: <code>n × T × p_in</code></li>
+<li>With caching: <code>1.25 × T × p_in + (n−1) × T × 0.1 × p_in = T × p_in × (1.25 + 0.1(n−1))</code>
+Set them equal to find break-even:
+<code>n = 1.25 + 0.1(n−1)</code>
+<code>n − 0.1n = 1.15</code>
+<code>0.9n = 1.15</code>
+<code>n ≈ 1.28</code>
+So <strong>~1.3 uses pays off</strong>. In practice, if a prefix is used ≥ 2 times, cache it. This is why Anthropic recommends caching aggressively — the break-even is well under 2 uses under typical pricing.</li>
+</ul>
+<p><strong>A3: B.</strong> Batch API trades latency (async completion within 24h) for ~50% off. Ideal for nightly evals, embedding backfills, large-scale classification, non-urgent report generation. If it can wait, batch it.</p>
+<p><strong>A4:</strong> Three possible causes + action each:</p>
+<ol>
+<li><strong>Retry loop bug</strong> — the user&#39;s client is retrying on 200-OK responses; each intended interaction generates 10× the calls. <em>Action:</em> pull traces for that user; identify pattern; contact the user&#39;s integration owner; add server-side dedup for identical consecutive requests within N seconds.</li>
+<li><strong>Legitimate power user underpriced by your tier</strong> — they&#39;re using the feature exactly as designed but your pricing didn&#39;t account for this consumption level. <em>Action:</em> introduce a higher tier or overage pricing; discuss with product/sales; grandfather this user until change effective.</li>
+<li><strong>Abuse / automation</strong> — the user is scraping or resell-arbitraging your service. <em>Action:</em> apply per-user rate limit (Module 10), require captcha / MFA on high-volume, review ToS, potentially suspend and investigate.</li>
+<li>(Bonus) <strong>Bug in prompt design</strong> — a specific input pattern the user hits causes a 100k-token retrieval expansion. <em>Action:</em> trace, reproduce, fix the retrieval or the prompt template.</li>
+</ol>
+<p><strong>A5: C.</strong> Output tokens are typically 3–5× more expensive than input tokens across major providers (Anthropic, OpenAI, Google). This is because generating tokens autoregressively is more compute-intensive than processing input (which can be parallelized). Consequence: reducing output length or <code>max_tokens</code> has outsize cost impact vs reducing input length.</p>
+<p><strong>A6:</strong> The provider&#39;s cache key is a <strong>content hash of the prompt prefix</strong>. To reuse a cached KV-state, everything from token 0 up to the cache breakpoint must match byte-for-byte with the original cache entry — otherwise the cached internal state doesn&#39;t correspond to what the model is being asked to condition on. Change one character early → new hash → cache miss → full processing. Change something <em>after</em> the last cache breakpoint → still a hit for the cached portion. Design implication: put stable content (system prompt, tools, few-shot) at the top; put per-request content (user&#39;s current message, current chat turn) at the bottom.</p>
+<p><strong>A7: B.</strong> UI warnings (A) are user-facing hygiene, not enforcement. AWS budgets (C) are backstops (24h+ latency, coarse). Prompt instructions (D) are advisory to the model, not enforced. Only a server-side counter with hard-refuse-on-cap (B) actually prevents spend. Pattern in Module 10: <code>INCRBYFLOAT</code> estimate → check cap → refund on rejection → reconcile with actual cost post-response.</p>
+<p><strong>A8: D.</strong> Deleting the route removes cost but likely destroys the feature and user value. A, B, C are all reasonable <em>tuning</em> moves that keep the feature. The right response to a hot cost route is: instrument it (per-user cost, output length histogram, cache hit rate); then choose the smallest set of levers (routing to a cheaper model + max_tokens cap + prompt cache on system prompt + brevity instruction) that meets quality bar at target cost.</p>
+<p><strong>A9:</strong> Rough threshold: <strong>1T (10^12) tokens per month</strong> is where a well-run self-hosted stack tends to beat managed API pricing. Three factors that shift it:</p>
+<ol>
+<li><strong>Utilization</strong> — if your traffic is bursty (10% peak, 1% average), you pay for idle GPUs. Managed API wins until you can sustain 40–70% utilization.</li>
+<li><strong>Model size / hardware fit</strong> — small models on cheap GPUs (7B on L4/A10) shift break-even lower; huge models (70B+) needing H100s shift it higher.</li>
+<li><strong>Team capability</strong> — running vLLM at scale requires a platform team. If you don&#39;t have that skill in-house, you&#39;re eating engineering cost that offsets $ savings.
+Others: quantization aggressiveness (INT4 halves GPU need), spot-instance eligibility (up to 90% discount), and requiring one specific model your open ecosystem doesn&#39;t cover (forces managed).</li>
+</ol>
+<p><strong>A10: B.</strong> Cost is a user-visible attribute (via tier limits, latency of degraded modes) and a business survival attribute. Treating it like latency — SLIs, SLOs, dashboards, alerts, error budgets — is what mature FinOps looks like. (A) treats it as post-hoc; (C) is too infrequent for LLM cost&#39;s ability to spike hourly; (D) means it never gets attention until crisis.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/09-llm-observability.md</code> — where $ per span comes from</li>
+<li><code>learning/07-monitoring.md</code> — cost dashboards live here</li>
+<li><code>learning/10-rate-limiting.md</code> — cost caps and tier budgets</li>
+<li><code>learning/11-caching.md</code> — every layer in the cache stack is a cost lever</li>
+<li><code>learning/08-model-evaluation.md</code> — quality-per-dollar comparisons across models</li>
+<li><code>../llm-engineering/06-cost-latency-optimization.md</code> — Month 4&#39;s cost primer</li>
+<li><code>builds/01-production-hardening.md</code> — where these levers get applied</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Add <code>llm_cost_usd_total</code> counter to your last build (label by <code>model, route, tenant</code>). Build a Grafana panel &quot;$/hour&quot; and &quot;$/user top 10.&quot;</li>
+<li>Implement model routing: a Haiku-based intent classifier that dispatches to Haiku/Sonnet/Opus. Compare cost + quality on 200 test queries.</li>
+<li>Add Anthropic prompt caching to your longest system prompt. Measure <code>cache_read_input_tokens / (cache_read_input_tokens + cache_creation_input_tokens + input_tokens)</code>; that&#39;s your cache hit rate.</li>
+<li>Configure a 15-minute cost-anomaly alert (<code>rate(llm_cost_usd_total[15m])</code> &gt; 2× trailing 24h baseline). Trigger it deliberately to test.</li>
+<li>Estimate the break-even token volume for self-hosting Llama-3.1 8B on a single A10 GPU vs Anthropic Haiku; show your assumptions.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Cloud FinOps Foundation — <a href="https://www.finops.org/">https://www.finops.org/</a></li>
+<li>Anthropic pricing — <a href="https://www.anthropic.com/pricing">https://www.anthropic.com/pricing</a></li>
+<li>Anthropic Message Batches API docs</li>
+<li>vLLM project — dynamic batching, prefix caching</li>
+<li>Chip Huyen — <em>AI Engineering</em> Ch. 10 (Production)</li>
+<li>Simon Willison&#39;s LLM pricing tracker</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-13-security.html"><span>← Previous</span><b>learning 13 security</b></a>
+      <a class="next" href="./self-assessment.html"><span>Next →</span><b>self assessment</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

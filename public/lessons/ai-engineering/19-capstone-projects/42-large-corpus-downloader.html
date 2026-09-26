@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Large Corpus Downloader — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/42-large-corpus-downloader/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns">Production Patterns</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Large Corpus Downloader</h1>
+    <p class="lesson-sub">Training a language model begins long before the first forward pass. The corpus has to land on disk, decompressed, deduplicated, and addressable, with the resume story already worked out before the network drops at 4 percent. This lesson builds a streaming downloader that pulls compressed shards, decompresses on the fly with Zstandard, fingerprints near-duplicates via MinHash plus locality-sensitive hashing, and writes a shard manifest the rest of the pipeline can trust.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 42">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="12.6" y="117.0" width="25.7" height="25.7" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(128 25.4 129.8)"/>
+        <circle cx="20.0" cy="124.9" r="12.2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.6" cy="120.0" r="11.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">42</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Large Corpus</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Downloader</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Stream remote shards with <code>urllib</code> and decompress with <code>zstandard</code> without buffering the whole file in memory.</li>
+<li>Resume partial downloads by issuing HTTP <code>Range</code> requests against a verified byte offset.</li>
+<li>Build a MinHash signature per document and bucket it with LSH so near-duplicates collide.</li>
+<li>Emit a shard manifest with content hash, byte size, document count, and dedup verdict.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The first time you train on a 200 GB corpus the network drops at percent 41 and the script exits with a <code>urllib</code> exception. The second time it drops at percent 78. By percent 99 you have rewritten the loop three times. The two failures you have to design for from minute one are partial-download resume and duplicate document removal. Both have well-known solutions; both are routinely skipped because the pipeline begins as a one-line <code>requests.get</code> call that grew teeth.</p>
+<p>Resume is an HTTP problem. The server has to honour <code>Range</code>, the client has to track verified offset against an on-disk record, and the verified offset has to survive process death. If the offset and the file diverge by even one byte the resumed download writes garbage and the corpus is corrupted in a way that only shows up during tokenization.</p>
+<p>Deduplication is a signature problem. Exact-hash dedup misses near-duplicates: the same Wikipedia article shows up with three different boilerplate footers, the same code file with a different license header, the same blog post with a tracking parameter on every link. MinHash plus LSH catches these at sub-linear cost. The cost is one signature per document and one bucket lookup per signature.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Source[Remote shard URLs] --&gt; Plan[Plan manifest entries]
+  Plan --&gt; Download[Streaming GET with Range]
+  Download --&gt; Verify[Hash partial bytes]
+  Verify --&gt;|mismatch| Resume[Issue Range request]
+  Verify --&gt;|match| Decompress[Stream through zstd]
+  Decompress --&gt; Iterate[Iterate JSONL documents]
+  Iterate --&gt; Sig[MinHash signature]
+  Sig --&gt; Bucket[LSH bucket lookup]
+  Bucket --&gt;|new| Keep[Append to shard]
+  Bucket --&gt;|near-duplicate| Drop[Drop with verdict]
+  Keep --&gt; Manifest[Update manifest entry]
+  Drop --&gt; Manifest
+  Manifest --&gt; Done[Shard manifest emitted]</pre></div><h3 id="streaming-with-urllib"><a class="anchor" href="#streaming-with-urllib">#</a> Streaming with <code>urllib</code></h3>
+<p>The standard-library <code>urllib.request.urlopen</code> returns a file-like object. Wrap it in a <code>zstandard.ZstdDecompressor().stream_reader</code> and the bytes flow from the network through the decompressor into the document iterator without ever materialising the compressed shard or the decompressed shard in memory. The only memory cost is the line buffer, the MinHash signature for the current document, and the LSH index.</p>
+<h3 id="resume-with-range"><a class="anchor" href="#resume-with-range">#</a> Resume with <code>Range</code></h3>
+<p>The downloader writes two files per shard: the shard itself and a <code>.partial.json</code> checkpoint. The checkpoint records <code>verified_bytes</code>, <code>expected_size</code>, <code>sha256_prefix</code> (computed over the first <code>verified_bytes</code> bytes), and the source URL. On startup the downloader reads the checkpoint, recomputes <code>sha256_prefix</code> over the on-disk bytes, and only resumes if the recomputed hash matches. If the hash is wrong the partial is discarded and the download restarts from byte zero. Silent corruption is impossible because the verified bytes are checked, not assumed.</p>
+<h3 id="minhash-plus-lsh"><a class="anchor" href="#minhash-plus-lsh">#</a> MinHash plus LSH</h3>
+<p>MinHash estimates the Jaccard similarity of two sets in fixed space. For a document the set is the shingles (overlapping n-grams) of its text. The signature is <code>k</code> minimum hash values, one per independent hash function. Two documents with Jaccard similarity <code>s</code> have a probability <code>s</code> of agreeing on any single component of the signature.</p>
+<p>LSH then groups the <code>k</code> components into <code>b</code> bands of <code>r</code> rows each, where <code>k = b * r</code>. Two documents collide in at least one band with probability <code>1 - (1 - s^r)^b</code>, which is a sharp threshold around the value of <code>s</code> you tune <code>(b, r)</code> to. The threshold for typical corpus dedup is <code>s = 0.8</code>, which the LSH research literature reaches with <code>k = 128</code>, <code>b = 32</code>, <code>r = 4</code>.</p>
+<h3 id="shard-manifest-as-a-contract"><a class="anchor" href="#shard-manifest-as-a-contract">#</a> Shard manifest as a contract</h3>
+<p>The downloader&#39;s only durable output is the manifest. The manifest holds, per shard, the URL, the decompressed byte count, the document count, the unique document count after dedup, and the sha256 of the final shard file. Downstream tokenization reads the manifest, not the directory listing. If a shard is missing or its sha256 is wrong, the manifest tells the next stage to refuse to start. The manifest is the deciding edge between &quot;the data is downloaded&quot; and &quot;the data is downloaded and verifiable&quot;.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-corpus-downloader</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>ShardPlanner</code> - reads a list of shard URLs and produces planned manifest entries.</li>
+<li><code>StreamingDownloader</code> - opens a <code>urllib</code> stream with optional <code>Range</code>, writes to a temporary file, updates the <code>.partial.json</code> checkpoint on every chunk, and verifies the sha256 prefix on resume.</li>
+<li><code>ZstdDocIterator</code> - wraps the file-like stream in <code>zstandard.ZstdDecompressor</code> and yields one document per line.</li>
+<li><code>MinHasher</code> - produces a <code>k</code>-component signature for a string using a fixed family of hash seeds.</li>
+<li><code>LSHIndex</code> - buckets signatures by band and reports collisions.</li>
+<li><code>Dedup</code> - combines hasher and index to label each document <code>keep</code> or <code>near_duplicate</code> along with the matching shard id.</li>
+<li><code>ManifestWriter</code> - collects per-shard stats and writes <code>manifest.json</code>.</li>
+</ul>
+<p>A demo at the bottom of the file builds a small synthetic corpus on disk, compresses it with <code>zstandard</code>, downloads it through a <code>file://</code> URL, deduplicates, and prints the manifest.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script exits zero and prints a manifest summary.</p>
+<h2 id="production-patterns"><a class="anchor" href="#production-patterns">#</a> Production Patterns</h2>
+<p>Four patterns scale this lesson to real corpora.</p>
+<p><strong>Checkpoint before write.</strong> The <code>.partial.json</code> must be <code>fsync</code>-ed before the bytes are appended to the shard. Otherwise a power loss reverses the order: shard bytes on disk, checkpoint without them, next resume believes it has fewer verified bytes than it does, the duplicated suffix bytes corrupt the file. Checkpoint first, then write. This is the same discipline as a write-ahead log.</p>
+<p><strong>Sharded LSH index.</strong> A single LSH index over the whole corpus does not fit in RAM at the 200 GB scale. Partition the LSH index by the first band hash, store partitions on disk, and consult only the partition a new signature would land in. The cost is one extra disk read per document; the benefit is that the LSH index is no longer a hard memory ceiling.</p>
+<p><strong>Tombstone, not delete.</strong> Dropped duplicates are recorded in the manifest with verdict <code>near_duplicate</code> and the shard id of the document they collided with. Deleting them loses the link between the duplicate and its keeper. Tombstoning preserves the audit trail and lets a downstream pass change its mind about the threshold.</p>
+<p><strong>Per-shard sha256 in the manifest, plus a manifest sha256.</strong> The manifest itself gets a content hash. Downstream stages verify the manifest hash before they trust the per-shard entries. Without this the manifest is the silent attack surface: an attacker who can edit a single file can corrupt the whole pipeline.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Resume on every CI run.</strong> CI runners are ephemeral. The downloader has to assume a fresh disk on every run and recover from cache or remote. <code>--cache-dir</code> is a first-class flag.</li>
+<li><strong>Dedup before tokenization.</strong> Tokenization is expensive. Running it twice on the same document is twice the cost for the same loss curve. Dedup is upstream of tokenization, not downstream.</li>
+<li><strong>Manifest as merge gate.</strong> The training run reads the manifest sha256 from a pinned commit. A new dataset version requires a new manifest commit. The link between code and data is git, not folklore.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-corpus-downloader.md</code> would, on a real project, describe which URLs feed the downloader, how the checkpoint directory is laid out, what shingle width and <code>(k, b, r)</code> triple the dedup uses, and where the manifest lives in version control. This lesson ships the engine.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a <code>--shingle-width</code> flag and measure how the dedup verdict changes at widths 3, 5, 9. Defend the chosen default.</li>
+<li>Add gzip support next to zstd by sniffing the magic bytes. The downloader should not require the caller to specify the codec.</li>
+<li>Add a <code>--resume-only</code> mode that refuses to start a fresh download if no checkpoint is found. Useful in CI to keep one run from accidentally re-pulling 200 GB.</li>
+<li>Move the LSH index to a shelf or sqlite file and measure throughput vs the in-memory variant.</li>
+<li>Add a manifest sha256 check on startup. The downloader should fail closed if the manifest on disk disagrees with the manifest hash in <code>manifest.lock</code>.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Shard</td>
+<td>&quot;A file&quot;</td>
+<td>A self-contained slice of the corpus with its own sha256, used as the unit of resume and dedup</td>
+</tr>
+<tr>
+<td>MinHash signature</td>
+<td>&quot;Fingerprint&quot;</td>
+<td>A <code>k</code>-component sketch of a set, where each component is the minimum of one independent hash over the set</td>
+</tr>
+<tr>
+<td>LSH band</td>
+<td>&quot;Bucket&quot;</td>
+<td>A group of <code>r</code> signature components used as a single bucket key for collision detection</td>
+</tr>
+<tr>
+<td>Verified bytes</td>
+<td>&quot;Resume offset&quot;</td>
+<td>Bytes on disk whose sha256 prefix matches the checkpoint; the only safe offset to resume from</td>
+</tr>
+<tr>
+<td>Manifest</td>
+<td>&quot;The index&quot;</td>
+<td>The single durable record of what the downloader produced, including content hashes</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://datatracker.ietf.org/doc/html/rfc7233">RFC 7233</a> - HTTP Range requests, the resume protocol</li>
+<li><a href="https://datatracker.ietf.org/doc/html/rfc8478">Zstandard format specification</a> - frame format that makes streaming decompression safe</li>
+<li><a href="https://en.wikipedia.org/wiki/MinHash">MinHash</a> - the signature family this lesson uses</li>
+<li><a href="https://en.wikipedia.org/wiki/Locality-sensitive_hashing">Locality-sensitive hashing</a> - the banding scheme behind the dedup threshold</li>
+<li>Phase 19 · 43 - the HDF5 tokenized corpus the downloader feeds</li>
+<li>Phase 19 · 44 - the cosine schedule that trains on the corpus</li>
+<li>Phase 19 · 45 - the AMP loop that consumes the schedule</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./41-eval-pipeline.html"><span>← Previous</span><b>eval pipeline</b></a>
+      <a class="next" href="./43-hdf5-tokenized-corpus.html"><span>Next →</span><b>hdf5 tokenized corpus</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

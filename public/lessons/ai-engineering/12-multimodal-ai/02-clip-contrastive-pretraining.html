@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLIP and Contrastive Vision-Language Pretraining — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/02-clip-contrastive-pretraining/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">CLIP and Contrastive Vision-Language Pretraining</h1>
+    <p class="lesson-sub">OpenAI&#39;s CLIP (2021) proved a single idea big enough to power the next five years: align an image encoder and a text encoder in the same vector space using only noisy web image-caption pairs and a contrastive loss. Zero supervised labels. 400M pairs. The resulting embedding space does zero-shot classification, image-text retrieval, and plugs into every 2026 VLM as its vision tower. SigLIP 2 (2025) replaced softmax with sigmoid and scaled past CLIP at lower cost. This lesson walks the math from InfoNCE to sigmoid pairwise loss and builds the training step in stdlib Python.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, InfoNCE + sigmoid loss implementations)</b></div><div><span>Prerequisites</span><b>Phase 12 · 01 (ViT patches), Phase 7 (Transformers)</b></div><div><span>Time</span><b>~180 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="12.9" y="117.2" width="25.7" height="25.7" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(128 25.7 130.1)"/>
+        <circle cx="20.3" cy="125.2" r="12.2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.9" cy="120.2" r="11.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">CLIP and Contrastive</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Vision-Language…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Derive InfoNCE loss from mutual information and implement a numerically-stable vectorized version.</li>
+<li>Explain why sigmoid pairwise loss (SigLIP) scales to batch 32768+ without the all-gather overhead softmax demands.</li>
+<li>Run zero-shot ImageNet classification by constructing text templates (<code>a photo of a {class}</code>) and taking argmax over cosine similarity.</li>
+<li>Name the four levers CLIP / SigLIP pretraining gives you: batch size, temperature, prompt template, data quality.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Pre-CLIP vision was supervised. Collect labeled datasets (ImageNet: 1.2M images, 1000 classes), train a CNN, ship it. Labels are expensive, labels bias to what labelers can agree on, and labels do not transfer to new tasks without finetuning.</p>
+<p>The image-caption web has one billion-plus loosely-labeled pairs for free. A picture of a golden retriever with alt text &quot;my dog Max in the park&quot; carries a supervisory signal — the text describes the image. The question: can you turn this into useful training?</p>
+<p>CLIP&#39;s answer: treat image-caption pairs as a matching task. Given a batch of N images and N captions, learn to match each image to its own caption against N-1 distractors. The supervision is &quot;these two things belong together; these N-1 do not.&quot; No class labels. No human annotation. Just a contrastive loss.</p>
+<p>The resulting embedding space does more than CLIP was trained for. ImageNet zero-shot works because &quot;a photo of a cat&quot; embeds near pictures of cats that were never explicitly labeled cats. This is the bet that spawned every 2026 VLM.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-dual-encoder"><a class="anchor" href="#the-dual-encoder">#</a> The dual encoder</h3>
+<p>CLIP has two towers:</p>
+<ul>
+<li>Image encoder <code>f</code>: ViT or ResNet, outputs a D-dim vector per image.</li>
+<li>Text encoder <code>g</code>: small transformer, outputs a D-dim vector per caption.</li>
+</ul>
+<p>Both towers normalize their outputs to unit length. Similarity is <code>cos(f(x), g(y)) = f(x)^T g(y)</code> since both are unit-norm.</p>
+<p>For a batch of N (image, caption) pairs, build the similarity matrix <code>S</code> of shape <code>(N, N)</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">S[i, j] = cos(f(x_i), g(y_j)) / tau</code></pre>
+      </div>
+    <p>where <code>tau</code> is a learned temperature (CLIP initializes to 0.07; learned in log-space).</p>
+<h3 id="infonce-loss"><a class="anchor" href="#infonce-loss">#</a> InfoNCE loss</h3>
+<p>CLIP uses a symmetric cross-entropy over rows and columns:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">loss_i2t = CE(S, labels=identity)     # each image&#39;s positive is its own caption
+loss_t2i = CE(S^T, labels=identity)   # each caption&#39;s positive is its own image
+loss = (loss_i2t + loss_t2i) / 2</code></pre>
+      </div>
+    <p>This is InfoNCE. The softmax in CE forces each image to match its caption more than every other caption in the batch. The &quot;negatives&quot; are all other batch items. Bigger batches = more negatives = stronger signal. CLIP trained at batch 32k; scale matters.</p>
+<h3 id="temperature"><a class="anchor" href="#temperature">#</a> Temperature</h3>
+<p><code>tau</code> controls the sharpness of the softmax. Low tau → sharp distribution, hard negative mining effect. High tau → soft, all samples contribute. CLIP learns log(1/tau), clipped to prevent collapse. SigLIP 2 fixes the initial tau and uses a learned bias instead.</p>
+<h3 id="why-sigmoid-scales-better-siglip"><a class="anchor" href="#why-sigmoid-scales-better-siglip">#</a> Why sigmoid scales better (SigLIP)</h3>
+<p>Softmax needs the whole similarity matrix in sync. In distributed training you must all-gather every embedding to every replica, then do the softmax. This is quadratic in world size for communication.</p>
+<p>SigLIP replaces softmax with element-wise sigmoid: for each pair <code>(i, j)</code>, the loss is a binary classification of &quot;are these the matching pair?&quot; positive class labels are the diagonal, everything else is negative. The loss is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L = -1/N sum over (i, j) [ y_ij log sigmoid(S[i,j]) + (1-y_ij) log sigmoid(-S[i,j]) ]</code></pre>
+      </div>
+    <p><code>y_ij = 1</code> if <code>i == j</code>, else 0. Each pair&#39;s loss is independent. No all-gather needed. Each GPU computes its local block and sums. SigLIP 2 scales to batch 32k-512k cheaply where CLIP would need proportionally more communication.</p>
+<h3 id="zero-shot-classification"><a class="anchor" href="#zero-shot-classification">#</a> Zero-shot classification</h3>
+<p>Given N class names, for each class build a text template:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;a photo of a {class}&quot;</code></pre>
+      </div>
+    <p>Embed each template with the text encoder. Embed your image with the image encoder. Argmax cosine similarity = predicted class. No training on the target classes.</p>
+<p>Prompt templates matter. CLIP&#39;s original paper used 80 templates per class (plain, artistic, photo, painting, etc.) and averaged the embeddings. +3 ImageNet points. Modern usage typically picks one or two templates.</p>
+<h3 id="linear-probes-and-finetuning"><a class="anchor" href="#linear-probes-and-finetuning">#</a> Linear probes and finetuning</h3>
+<p>Zero-shot is a baseline. A linear probe (train one linear layer on top of frozen CLIP features for your target classes) beats zero-shot on in-domain tasks. Full finetuning beats linear probe on in-domain but can hurt zero-shot transfer. Three regimes with three trade-offs.</p>
+<h3 id="siglip-2-naflex-and-dense-features"><a class="anchor" href="#siglip-2-naflex-and-dense-features">#</a> SigLIP 2: NaFlex and dense features</h3>
+<p>SigLIP 2 (2025) adds:</p>
+<ul>
+<li>NaFlex: single model handles variable aspect ratios and resolutions.</li>
+<li>Better dense features for segmentation and depth estimation, targeting use as a frozen backbone in VLMs.</li>
+<li>Multilingual: trained on 100+ languages where CLIP was English-only.</li>
+<li>1B param scale where CLIP topped out at 400M.</li>
+</ul>
+<p>In 2026 open VLMs, SigLIP 2 SO400m/14 is the default vision tower. CLIP remains the default for pure image-text retrieval where the specific LAION-2B training distribution matches your query pattern.</p>
+<h3 id="align-basic-openclip-eva-clip"><a class="anchor" href="#align-basic-openclip-eva-clip">#</a> ALIGN, BASIC, OpenCLIP, EVA-CLIP</h3>
+<p>ALIGN (Google, 2021): same idea as CLIP, 1.8B pair scale, 90% noisy. Proved noisy data scales. OpenCLIP (LAION): open reproduction of CLIP on LAION-400M / 2B, multiple scales, the go-to open checkpoint. EVA-CLIP: initializes from masked image modeling; strong backbone for VLMs. BASIC: Google&#39;s CLIP+ALIGN hybrid. All the same family, different data and tuning.</p>
+<h3 id="the-zero-shot-ceiling"><a class="anchor" href="#the-zero-shot-ceiling">#</a> The zero-shot ceiling</h3>
+<p>CLIP-class models cap around 76% ImageNet zero-shot (CLIP-G, OpenCLIP-G). Beyond requires either much larger data (SigLIP 2 gets 80%+) or architecture changes (supervised heads, more parameters). The benchmark is saturating; the real value is the embedding space that downstream VLMs consume.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">multimodal-fusion</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ol>
+<li>A toy dual encoder (hash-based image features, text char features) so you can see the InfoNCE shape without numpy.</li>
+<li>InfoNCE loss in pure Python (numerical stability via log-sum-exp).</li>
+<li>Sigmoid pairwise loss for comparison.</li>
+<li>A zero-shot classification routine: compute cosine similarity against a set of text prompts, argmax for prediction.</li>
+</ol>
+<p>Run it and watch the loss curve. The absolute numbers are toy; the shape matches what a real CLIP trainer emits.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-clip-zero-shot.md</code>. Given a set of images (via path) and a list of target classes, it builds text prompts with the CLIP template, embeds both sides with a stated checkpoint (e.g., <code>openai/clip-vit-large-patch14</code>), and returns top-1 / top-5 predictions with similarity scores. The skill refuses to make claims about classes not in the prompt list.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Implement InfoNCE for a batch of 4 pairs by hand. Construct the 4x4 similarity matrix, run softmax, pick out the diagonal, compute cross-entropy. Verify your Python implementation against this hand calculation.</p>
+</li>
+<li><p>SigLIP uses a bias parameter <code>b</code> in addition to temperature: <code>S&#39;[i,j] = S[i,j]/tau + b</code>. What role does <code>b</code> play when the batch has a large class imbalance (many more negatives than positives per row)? Read SigLIP Section 3 (arXiv:2303.15343).</p>
+</li>
+<li><p>Build a zero-shot classifier for cats vs dogs. Try two prompt templates: <code>a photo of a {class}</code> and <code>a picture of a {class}</code>. Measure accuracy on 100 test images. Does the ensemble of templates beat single?</p>
+</li>
+<li><p>Compute the communication cost of softmax InfoNCE vs sigmoid pairwise for a 512-GPU run at batch 32k. Which scales as O(N), which as O(N^2)? Cite SigLIP Section 4.</p>
+</li>
+<li><p>Read the OpenCLIP scaling-laws paper (arXiv:2212.07143, Cherti et al.). Reproduce their conclusion for data scaling from the figures: at fixed model size, what is the log-linear relationship between ImageNet zero-shot accuracy and training data size?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>InfoNCE</td>
+<td>&quot;Contrastive loss&quot;</td>
+<td>Cross-entropy over a batch&#39;s similarity matrix; each item&#39;s positive is its paired item, negatives are everything else</td>
+</tr>
+<tr>
+<td>Sigmoid loss</td>
+<td>&quot;SigLIP loss&quot;</td>
+<td>Per-pair binary cross-entropy; no softmax, no all-gather, scales cheaply in distributed training</td>
+</tr>
+<tr>
+<td>Temperature</td>
+<td>&quot;tau&quot;</td>
+<td>Scalar that scales logits before softmax/sigmoid; controls sharpness of the distribution</td>
+</tr>
+<tr>
+<td>Zero-shot</td>
+<td>&quot;no-finetune classification&quot;</td>
+<td>Use text prompts to construct class embeddings and classify by cosine similarity; no training on target classes</td>
+</tr>
+<tr>
+<td>Prompt template</td>
+<td>&quot;a photo of a ...&quot;</td>
+<td>Text scaffold around a class name; affects zero-shot accuracy by 1-5 points</td>
+</tr>
+<tr>
+<td>Dual encoder</td>
+<td>&quot;Two-tower&quot;</td>
+<td>One image encoder + one text encoder, outputs in shared D-dim space</td>
+</tr>
+<tr>
+<td>Hard negative</td>
+<td>&quot;Tough distractor&quot;</td>
+<td>A negative similar enough to the positive that the model has to work to separate them</td>
+</tr>
+<tr>
+<td>Linear probe</td>
+<td>&quot;Frozen + one layer&quot;</td>
+<td>Train only a linear classifier on top of frozen features; measures feature quality</td>
+</tr>
+<tr>
+<td>NaFlex</td>
+<td>&quot;Native flexible resolution&quot;</td>
+<td>SigLIP 2 capability to ingest images at any aspect ratio and resolution without resizing</td>
+</tr>
+<tr>
+<td>Temperature scaling</td>
+<td>&quot;log-parametrized tau&quot;</td>
+<td>CLIP parametrizes <code>log(1/tau)</code> so gradients behave; clips to prevent collapse to near-zero tau</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2103.00020">Radford et al. — Learning Transferable Visual Models From Natural Language Supervision (arXiv:2103.00020)</a> — the CLIP paper.</li>
+<li><a href="https://arxiv.org/abs/2303.15343">Zhai et al. — Sigmoid Loss for Language Image Pre-Training (arXiv:2303.15343)</a> — SigLIP.</li>
+<li><a href="https://arxiv.org/abs/2502.14786">Tschannen et al. — SigLIP 2 (arXiv:2502.14786)</a> — multilingual + NaFlex.</li>
+<li><a href="https://arxiv.org/abs/2102.05918">Jia et al. — ALIGN (arXiv:2102.05918)</a> — scale with noisy web data.</li>
+<li><a href="https://arxiv.org/abs/2212.07143">Cherti et al. — Reproducible scaling laws for contrastive language-image learning (arXiv:2212.07143)</a> — OpenCLIP scaling laws.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-vision-transformer-patch-tokens.html"><span>← Previous</span><b>vision transformer patch tokens</b></a>
+      <a class="next" href="./03-blip2-qformer-bridge.html"><span>Next →</span><b>blip2 qformer bridge</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

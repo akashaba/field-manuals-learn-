@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RAG Evaluation: Precision, Recall, MRR, nDCG, Faithfulness, Answer Relevance — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/68-rag-eval-precision-recall/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#the-fixture-qrels">The fixture qrels</a></li><li><a href="#build-it">Build It</a></li><li><a href="#reading-the-metrics-to-diagnose-failures">Reading the metrics to diagnose failures</a></li><li><a href="#failure-modes-the-demo-will-hide">Failure modes the demo will hide</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">RAG Evaluation: Precision, Recall, MRR, nDCG, Faithfulness, Answer Relevance</h1>
+    <p class="lesson-sub">If you cannot grade your retrieval and your answer at the same time, you cannot ship the system. The two are not the same metric and the same prompt fails on different axes.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 lessons 06 (RAG), 10 (evaluation); Phase 19 Track B foundations (lessons 20-29); Phase 19 lessons 64, 65, 66, 67</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 68">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="16.0" cy="121.2" r="11.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.5" cy="116.3" r="11.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="115.1" cy="111.4" r="10.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.7" cy="106.4" r="9.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.3" cy="101.5" r="9.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.8" cy="96.6" r="8.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">68</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">RAG Evaluation:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Precision, Recall…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compute four retrieval metrics from gold qrels: precision@k, recall@k, MRR (mean reciprocal rank), and nDCG@k.</li>
+<li>Compute two answer-grade metrics: faithfulness (every claim grounded in retrieved context) and answer relevance (the answer addresses the question).</li>
+<li>Build a fixture qrels file (queries, gold doc ids, gold answer text) that the eval reads end to end.</li>
+<li>Read the metric values to diagnose where a pipeline is failing: retrieval, ranking, generation, or grounding.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A RAG system has at least four moving parts: chunker, retriever, reranker, generator. Any of them can be the cause of a wrong answer. Without per-stage metrics you are flying blind.</p>
+<p>A user reports a wrong answer. Is it because the chunker cut the answer span? Is it because the retriever did not include the chunk in top-k? Is it because the reranker pushed the right chunk past position one? Is it because the generator ignored the chunk and made something up? You cannot tell from the answer alone. You need:</p>
+<ul>
+<li>Retrieval metrics to grade what came out of the retriever.</li>
+<li>Ranking metrics to grade where the right chunk sat in the order.</li>
+<li>Faithfulness to grade whether the generator stayed inside the retrieved context.</li>
+<li>Answer relevance to grade whether the answer addresses the question at all.</li>
+</ul>
+<p>This lesson builds all six on top of a fixture qrels file. The eval is offline and deterministic; in production you swap the mock LLM-as-judge for a real one.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Qrels[Qrels: query + gold docs + gold answer] --&gt; Retriever[Retriever]
+  Retriever --&gt; Top[Top-K Docs]
+  Top --&gt; Retrieval[Precision/Recall/MRR/nDCG]
+  Qrels --&gt; Gen[Answer Generator]
+  Top --&gt; Gen
+  Gen --&gt; Answer[Generated Answer]
+  Answer --&gt; Faithful[Faithfulness]
+  Top --&gt; Faithful
+  Answer --&gt; Relevant[Answer Relevance]
+  Qrels --&gt; Relevant</pre></div><h3 id="precisionk"><a class="anchor" href="#precisionk">#</a> Precision@k</h3>
+<p>Of the top-k documents the retriever returned, what fraction are in the gold set? If gold has three documents and the top-3 returns two of them and one wrong one, precision@3 is 2 / 3. Use precision when the cost of an irrelevant retrieved chunk is high (the generator wastes tokens on it, or the chunk poisons the answer).</p>
+<h3 id="recallk"><a class="anchor" href="#recallk">#</a> Recall@k</h3>
+<p>Of the gold documents, what fraction are in the top-k? If gold has three documents and the top-5 contains all three, recall@5 is 1.0. Use recall when the cost of a missed answer is high (you would rather see one extra wrong chunk than miss the answer chunk entirely).</p>
+<p>In production RAG the metric people usually quote is recall@k. Generation can drop irrelevant chunks easily; it cannot invent an answer from a chunk it never saw.</p>
+<h3 id="mrr-mean-reciprocal-rank"><a class="anchor" href="#mrr-mean-reciprocal-rank">#</a> MRR (Mean Reciprocal Rank)</h3>
+<p>For each query, find the position of the first relevant document in the ranked list. The reciprocal rank is 1 / position. Mean across the query set. MRR is a single-number summary of how well the retriever puts the best answer at the top.</p>
+<p>MRR weights position-1 heavily. A query where the gold doc is at rank 1 contributes 1.0. Rank 2 contributes 0.5. Rank 10 contributes 0.1. The metric is dominated by the top of the list.</p>
+<h3 id="ndcgk"><a class="anchor" href="#ndcgk">#</a> nDCG@k</h3>
+<p>Normalized Discounted Cumulative Gain. The full formula assigns a gain to each retrieved document (often 1 for relevant, 0 for not), discounts by the log of the position, sums, and divides by the ideal DCG (the DCG you would have if you ranked perfectly). Range 0 to 1.</p>
+<p>nDCG accommodates graded relevance: the gold can say &quot;doc A is 3, doc B is 2, doc C is 1&quot;. MRR and recall@k flatten everything to binary. Use nDCG when the corpus has multiple partially-relevant documents per query.</p>
+<h3 id="faithfulness"><a class="anchor" href="#faithfulness">#</a> Faithfulness</h3>
+<p>For each claim in the generated answer, check whether the claim is supported by the retrieved context. The standard implementation uses an LLM-as-judge prompt that takes (claim, context) and returns yes or no. The metric is the fraction of claims that pass.</p>
+<p>Faithfulness catches the generator failure mode where the model invents content. Even if the retriever returned the right chunks, a generator that hallucinates is broken. Faithfulness is also called groundedness, support, attribution.</p>
+<p>This lesson implements faithfulness with a deterministic mock judge that checks whether each claim&#39;s tokens overlap the retrieved context by a threshold. In production you swap to a real model call. The shape of the metric is the same.</p>
+<h3 id="answer-relevance"><a class="anchor" href="#answer-relevance">#</a> Answer relevance</h3>
+<p>Does the answer actually address the question? Faithfulness asks &quot;is the answer grounded in the context?&quot;. Answer relevance asks &quot;is the answer grounded in the question?&quot;. A faithful but off-topic answer scores high on faithfulness and low on relevance. A short, on-topic answer that ignores the context scores high on relevance and low on faithfulness.</p>
+<p>The standard implementation also uses LLM-as-judge: take (question, answer) and ask whether the answer addresses the question. This lesson implements a token-overlap-plus-judge stand-in.</p>
+<h2 id="the-fixture-qrels"><a class="anchor" href="#the-fixture-qrels">#</a> The fixture qrels</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">{
+  &quot;qid&quot;: &quot;q1&quot;,
+  &quot;query&quot;: &quot;what is the abort threshold for multipart uploads&quot;,
+  &quot;gold_doc_ids&quot;: [&quot;d1&quot;, &quot;d3&quot;],
+  &quot;gold_answer_substring&quot;: &quot;three failed parts&quot;,
+  &quot;graded_relevance&quot;: {&quot;d1&quot;: 3, &quot;d3&quot;: 2},
+}</code></pre>
+      </div>
+    <p>Each query carries:</p>
+<ul>
+<li>the query string,</li>
+<li>a set of gold doc ids (for precision / recall / MRR),</li>
+<li>a graded relevance dict (for nDCG),</li>
+<li>the gold answer substring (kept as reference metadata on each qrel; faithfulness in this lesson is computed by judging extracted claims against the retrieved context, not against this substring).</li>
+</ul>
+<p>In production you label these. This lesson ships a hand-built fixture so the eval runs out of the box.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ci-rag-metric-ladder</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>precision_at_k(retrieved, gold, k)</code> - the literal definition.</li>
+<li><code>recall_at_k(retrieved, gold, k)</code> - the literal definition.</li>
+<li><code>mean_reciprocal_rank(retrieved_list_of_lists, gold_list)</code> - the mean over queries.</li>
+<li><code>ndcg_at_k(retrieved, graded_relevance, k)</code> - DCG / IDCG with binary or graded gains.</li>
+<li><code>extract_claims(answer)</code> - splits an answer into sentence-shaped claims.</li>
+<li><code>faithfulness(claims, context_texts, judge)</code> - fraction of claims judged supported.</li>
+<li><code>answer_relevance(question, answer, judge)</code> - judge on whether the answer addresses the question.</li>
+<li><code>MockJudge</code> - deterministic token-overlap judge so the eval runs offline.</li>
+<li><code>evaluate_pipeline(pipeline_fn, qrels, ks)</code> - the orchestrator that runs every metric.</li>
+<li>A demo that runs three pipeline variants (chunker baseline, hybrid retrieval, hybrid + rerank) against the qrels and prints a metrics table.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The output shows precision@k, recall@k, MRR, nDCG@k, faithfulness, and answer relevance for each variant in a single metrics table. The hybrid retrieval row beats the chunker baseline on recall; the rerank row beats hybrid on MRR.</p>
+<h2 id="reading-the-metrics-to-diagnose-failures"><a class="anchor" href="#reading-the-metrics-to-diagnose-failures">#</a> Reading the metrics to diagnose failures</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>What to fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Low recall@k, low precision@k</td>
+<td>Chunker cut the answer or retriever cannot find it</td>
+<td>Chunker boundaries (lesson 64) or retriever modality (lesson 65)</td>
+</tr>
+<tr>
+<td>Decent recall@k, low MRR</td>
+<td>Right chunk is in top-k but not at position 1</td>
+<td>Reranker (lesson 66)</td>
+</tr>
+<tr>
+<td>High MRR, low faithfulness</td>
+<td>Generator invents content despite right context</td>
+<td>Generation prompt; force-cite-or-refuse</td>
+</tr>
+<tr>
+<td>High faithfulness, low relevance</td>
+<td>Answer is grounded but off-topic</td>
+<td>Query rewriter (lesson 67) or generation prompt</td>
+</tr>
+<tr>
+<td>All four high, users still complain</td>
+<td>Eval set is unrepresentative</td>
+<td>Expand qrels with real user queries</td>
+</tr>
+</tbody></table>
+<h2 id="failure-modes-the-demo-will-hide"><a class="anchor" href="#failure-modes-the-demo-will-hide">#</a> Failure modes the demo will hide</h2>
+<p><strong>LLM-as-judge bias.</strong> A model judges its own outputs as more faithful than they are. Use a different model family for the judge than the generator, or hand-grade a sample.</p>
+<p><strong>Qrels rot.</strong> The gold answers drift as the corpus changes. A doc that was gold for q1 in January 2024 is no longer the right answer in October 2024 because the team renamed the function. Schedule a quarterly qrels review.</p>
+<p><strong>Faithfulness micro-checks miss macro-claims.</strong> Per-sentence faithfulness can pass while the overall answer&#39;s structure misleads. Add a sample-level qualitative review on top of the automated metric.</p>
+<p><strong>Recall@k masks per-query failures.</strong> A 90% average recall can hide that one query class always misses. Slice the qrels by query class (literal, paraphrased, multi-topic) and report per-slice.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li>Run the eval on every retriever or generator change. Treat a recall@k regression like a test failure.</li>
+<li>Persist the metric trace per query. When a user complains, look up the qrels entry that matches and see whether it would have been caught.</li>
+<li>Tier the qrels: a smoke set of 20 queries that runs in CI; a regression set of 200 that runs nightly; a deep set of 2000 that runs weekly.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Lesson 69 wires the entire pipeline (chunker, retriever, reranker, generator) and runs this eval against the end-to-end system.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a fifth retrieval metric: hit-rate@k. Compare it against recall@k. Explain when they differ.</li>
+<li>Implement a graded faithfulness: 0 (unsupported), 1 (partially supported), 2 (fully supported). Update the metric accordingly.</li>
+<li>Replace the mock judge with a real model call. Measure the disagreement between the mock and the real judge on the fixture.</li>
+<li>Add a query-class slice (&quot;literal&quot;, &quot;paraphrased&quot;, &quot;multi-topic&quot;). Report per-slice metrics.</li>
+<li>Add an &quot;answer length&quot; metric and correlate it with faithfulness. Plot the curve.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Precision@k</td>
+<td>&quot;Hit rate over retrieved&quot;</td>
+<td>Fraction of top-k that are gold</td>
+</tr>
+<tr>
+<td>Recall@k</td>
+<td>&quot;Hit rate over gold&quot;</td>
+<td>Fraction of gold in top-k</td>
+</tr>
+<tr>
+<td>MRR</td>
+<td>&quot;First-hit position&quot;</td>
+<td>Mean of 1 / rank of first relevant document</td>
+</tr>
+<tr>
+<td>nDCG@k</td>
+<td>&quot;Graded ranking quality&quot;</td>
+<td>DCG over the top-k divided by ideal DCG</td>
+</tr>
+<tr>
+<td>Faithfulness</td>
+<td>&quot;Groundedness&quot;</td>
+<td>Fraction of answer claims supported by retrieved context</td>
+</tr>
+<tr>
+<td>Answer relevance</td>
+<td>&quot;Did it address the question?&quot;</td>
+<td>Whether the answer matches the question&#39;s intent</td>
+</tr>
+<tr>
+<td>Qrels</td>
+<td>&quot;Gold labels&quot;</td>
+<td>The labeled set of queries and their gold documents and answers</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Buckley, Voorhees, &quot;Evaluating Evaluation Measure Stability&quot;, SIGIR 2000 - the canonical paper on ranking metrics</li>
+<li>Jarvelin, Kekalainen, &quot;Cumulated Gain-based Evaluation of IR Techniques&quot; - the nDCG paper</li>
+<li><a href="https://docs.ragas.io">Ragas: Automated Evaluation of RAG Pipelines</a></li>
+<li><a href="https://www.anthropic.com/news/evaluating-rag">Anthropic, Evaluating RAG</a></li>
+<li>Phase 11 lesson 10 - evaluation framework foundations</li>
+<li>Phase 19 lessons 64-67 - components evaluated here</li>
+<li>Phase 19 lesson 69 - the end-to-end pipeline this eval grades</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./67-query-rewriting-hyde.html"><span>← Previous</span><b>query rewriting hyde</b></a>
+      <a class="next" href="./69-end-to-end-rag-system.html"><span>Next →</span><b>end to end rag system</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

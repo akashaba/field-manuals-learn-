@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Time Series Fundamentals — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/02-ml-fundamentals/15-time-series/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">ML Fundamentals</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · ML Fundamentals</div>
+    <h1 class="lesson-title">Time Series Fundamentals</h1>
+    <p class="lesson-sub">Past performance does predict future results -- if you check for stationarity first.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 2, Lessons 01-09</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — ML Fundamentals 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="34.5" y="36.7" width="31.5" height="31.5" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.3 52.5)"/>
+        <rect x="29.8" y="32.4" width="30.3" height="30.3" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(191 44.9 47.5)"/>
+        <rect x="25.0" y="128.1" width="29.0" height="29.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(173 39.5 142.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">ML FUNDAMENTALS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Time Series</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Fundamentals</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Decompose a time series into trend, seasonality, and residual components and test for stationarity</li>
+<li>Implement lag features and rolling statistics to convert a time series into a supervised learning problem</li>
+<li>Build a walk-forward validation framework that prevents future data from leaking into training</li>
+<li>Explain why random train/test splits are invalid for time series and demonstrate the performance gap versus proper temporal splits</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have data ordered by time. Daily sales, hourly temperature, per-minute CPU usage, weekly stock prices. You want to predict the next value, the next week, the next quarter.</p>
+<p>You reach for your standard ML toolkit: random train/test split, cross-validation, feature matrix in, prediction out. Every step is wrong.</p>
+<p>Time series breaks the assumptions that standard ML relies on. Samples are not independent -- today&#39;s temperature depends on yesterday&#39;s. Random splits leak future information into the past. Features that look great in backtest fail in production because they rely on patterns that shift over time.</p>
+<p>A model that gets 95% accuracy with random cross-validation might get 55% with proper time-based evaluation. The difference is not a technicality. It is the difference between a model that works on paper and one that works in production.</p>
+<p>This lesson covers the fundamentals: what makes time data different, how to evaluate models honestly, and how to turn a time series into features that standard ML models can consume.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-makes-time-series-different"><a class="anchor" href="#what-makes-time-series-different">#</a> What Makes Time Series Different</h3>
+<p>Standard ML assumes i.i.d. -- independent and identically distributed. Each sample is drawn from the same distribution, independently of other samples. Time series violates both:</p>
+<ul>
+<li><strong>Not independent.</strong> Today&#39;s stock price depends on yesterday&#39;s. This week&#39;s sales correlate with last week&#39;s.</li>
+<li><strong>Not identically distributed.</strong> The distribution shifts over time. Sales in December look different from sales in March.</li>
+</ul>
+<p>These violations are not minor. They change how you build features, how you evaluate models, and which algorithms work.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph IID[&quot;Standard ML (i.i.d.)&quot;]
+        direction TB
+        S1[Sample 1] ~~~ S2[Sample 2]
+        S2 ~~~ S3[Sample 3]
+    end
+    subgraph TS[&quot;Time Series (not i.i.d.)&quot;]
+        direction LR
+        T1[t=1] --&gt; T2[t=2]
+        T2 --&gt; T3[t=3]
+        T3 --&gt; T4[t=4]
+    end
+
+    style S1 fill:#dfd
+    style S2 fill:#dfd
+    style S3 fill:#dfd
+    style T1 fill:#ffd
+    style T2 fill:#ffd
+    style T3 fill:#ffd
+    style T4 fill:#ffd</pre></div><p>In standard ML, samples are interchangeable. Shuffling them changes nothing. In time series, order is everything. Shuffling destroys the signal.</p>
+<h3 id="components-of-a-time-series"><a class="anchor" href="#components-of-a-time-series">#</a> Components of a Time Series</h3>
+<p>Every time series is a combination of:</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[Observed Time Series] --&gt; B[Trend]
+    A --&gt; C[Seasonality]
+    A --&gt; D[Residual/Noise]
+
+    B --&gt; E[Long-term direction: up, down, flat]
+    C --&gt; F[Repeating patterns: daily, weekly, yearly]
+    D --&gt; G[Random variation after removing trend and seasonality]</pre></div><ul>
+<li><strong>Trend</strong>: The long-term direction. Revenue growing 10% per year. Global temperature rising.</li>
+<li><strong>Seasonality</strong>: Repeating patterns at fixed intervals. Retail sales spike in December. Air conditioning usage peaks in July.</li>
+<li><strong>Residual</strong>: Whatever is left after removing trend and seasonality. If the residual looks like white noise, the decomposition captured the signal.</li>
+</ul>
+<h3 id="stationarity"><a class="anchor" href="#stationarity">#</a> Stationarity</h3>
+<p>A time series is stationary if its statistical properties (mean, variance, autocorrelation) do not change over time. Most forecasting methods assume stationarity.</p>
+<p><strong>Why it matters:</strong> A non-stationary series has a mean that drifts. A model trained on data from January has learned a different mean than what February will show. It will be systematically wrong.</p>
+<p><strong>How to check:</strong> Compute rolling mean and rolling standard deviation over windows. If they drift, the series is non-stationary.</p>
+<p><strong>How to fix:</strong> Differencing. Instead of modeling the raw values, model the change between consecutive values:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">diff[t] = value[t] - value[t-1]</code></pre>
+      </div>
+    <p>If one round of differencing does not make the series stationary, apply it again (second-order differencing). Most real-world series need at most two rounds.</p>
+<p><strong>Example:</strong></p>
+<p>Original series: [100, 102, 106, 112, 120]
+First difference:  [2, 4, 6, 8] (still trending upward)
+Second difference:  [2, 2, 2] (constant -- stationary)</p>
+<p>The original series had a quadratic trend. First differencing turned it into a linear trend. Second differencing made it flat. In practice, you rarely need more than two rounds.</p>
+<p><strong>Formal test:</strong> The Augmented Dickey-Fuller (ADF) test is the standard statistical test for stationarity. The null hypothesis is &quot;the series is non-stationary.&quot; A p-value below 0.05 means you can reject the null and conclude stationarity. We do not implement ADF from scratch (it requires asymptotic distribution tables), but the rolling statistics approach in our code gives a practical visual check.</p>
+<h3 id="autocorrelation"><a class="anchor" href="#autocorrelation">#</a> Autocorrelation</h3>
+<p>Autocorrelation measures how much a value at time t correlates with the value at time t-k (k steps in the past). The autocorrelation function (ACF) plots this correlation for each lag k.</p>
+<p><strong>ACF tells you:</strong></p>
+<ul>
+<li>How far back the series remembers. If ACF drops to zero after lag 5, values more than 5 steps ago are irrelevant.</li>
+<li>Whether seasonality exists. If ACF spikes at lag 12 (monthly data), there is yearly seasonality.</li>
+<li>How many lag features to create. Use lags up to where ACF becomes negligible.</li>
+</ul>
+<p><strong>PACF (Partial Autocorrelation Function)</strong> removes indirect correlations. If today correlates with 3 days ago only because both correlate with yesterday, PACF at lag 3 will be zero while ACF at lag 3 will not.</p>
+<h3 id="lag-features-turning-time-series-into-supervised-learning"><a class="anchor" href="#lag-features-turning-time-series-into-supervised-learning">#</a> Lag Features: Turning Time Series into Supervised Learning</h3>
+<p>Standard ML models need a feature matrix X and a target y. Time series gives you a single column of values. The bridge is lag features.</p>
+<p>Take the series [10, 12, 14, 13, 15] and create lag-1 and lag-2 features:</p>
+<table>
+<thead>
+<tr>
+<th>lag_2</th>
+<th>lag_1</th>
+<th>target</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>10</td>
+<td>12</td>
+<td>14</td>
+</tr>
+<tr>
+<td>12</td>
+<td>14</td>
+<td>13</td>
+</tr>
+<tr>
+<td>14</td>
+<td>13</td>
+<td>15</td>
+</tr>
+</tbody></table>
+<p>Now you have a standard regression problem. Any ML model (linear regression, random forest, gradient boosting) can predict the target from the lags.</p>
+<p>Additional features you can engineer:</p>
+<ul>
+<li><strong>Rolling statistics:</strong> mean, std, min, max over the last k values</li>
+<li><strong>Calendar features:</strong> day of week, month, is_holiday, is_weekend</li>
+<li><strong>Differenced values:</strong> change from previous step</li>
+<li><strong>Expanding statistics:</strong> cumulative mean, cumulative sum</li>
+<li><strong>Ratio features:</strong> current value / rolling mean (how far from recent average)</li>
+<li><strong>Interaction features:</strong> lag_1 * day_of_week (weekday effects on momentum)</li>
+</ul>
+<p><strong>How many lags?</strong> Use the autocorrelation function. If ACF is significant up to lag 10, use at least 10 lags. If there is weekly seasonality, include lag 7 (and possibly 14). More lags give the model more history but also more features to fit, increasing the risk of overfitting.</p>
+<p><strong>The target alignment trap.</strong> When creating lag features, the target must be the value at time t, and all features must use values at time t-1 or earlier. If you accidentally include the value at time t as a feature, you have a perfect predictor -- and a completely useless model. This is the most common bug in time series feature engineering.</p>
+<h3 id="walk-forward-validation"><a class="anchor" href="#walk-forward-validation">#</a> Walk-Forward Validation</h3>
+<p>This is the most important concept in this lesson. Standard k-fold cross-validation randomly assigns samples to train and test. For time series, this leaks future information.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    subgraph WRONG[&quot;Random Split (WRONG)&quot;]
+        direction LR
+        W1[Jan] --&gt; W2[Mar]
+        W2 --&gt; W3[Feb]
+        W3 --&gt; W4[May]
+        W4 --&gt; W5[Apr]
+        style W1 fill:#fdd
+        style W3 fill:#fdd
+        style W5 fill:#fdd
+        style W2 fill:#dfd
+        style W4 fill:#dfd
+    end
+
+    subgraph RIGHT[&quot;Walk-Forward (CORRECT)&quot;]
+        direction LR
+        R1[&quot;Train: Jan-Mar&quot;] --&gt; R2[&quot;Test: Apr&quot;]
+        R3[&quot;Train: Jan-Apr&quot;] --&gt; R4[&quot;Test: May&quot;]
+        R5[&quot;Train: Jan-May&quot;] --&gt; R6[&quot;Test: Jun&quot;]
+        style R1 fill:#dfd
+        style R2 fill:#fdd
+        style R3 fill:#dfd
+        style R4 fill:#fdd
+        style R5 fill:#dfd
+        style R6 fill:#fdd
+    end</pre></div><p>Walk-forward validation:</p>
+<ol>
+<li>Train on data up to time t</li>
+<li>Predict at time t+1 (or t+1 to t+k for multi-step)</li>
+<li>Slide the window forward</li>
+<li>Repeat</li>
+</ol>
+<p>Each test fold only contains data that comes after all training data. No future leakage. This gives you an honest estimate of how the model will perform when deployed.</p>
+<p><strong>Expanding window</strong> uses all historical data for training (window grows). <strong>Sliding window</strong> uses a fixed-size training window (window slides). Use expanding when you believe older data is still relevant. Use sliding when the world changes and old data hurts.</p>
+<h3 id="arima-intuition"><a class="anchor" href="#arima-intuition">#</a> ARIMA Intuition</h3>
+<p>ARIMA is the classical time series model. It has three components:</p>
+<ul>
+<li><strong>AR (Autoregressive):</strong> Predict from past values. AR(p) uses the last p values.</li>
+<li><strong>I (Integrated):</strong> Differencing to achieve stationarity. I(d) applies d rounds of differencing.</li>
+<li><strong>MA (Moving Average):</strong> Predict from past forecast errors. MA(q) uses the last q errors.</li>
+</ul>
+<p>ARIMA(p, d, q) combines all three. You choose p, d, q based on ACF/PACF analysis or automated search (auto-ARIMA).</p>
+<p>We will not implement ARIMA from scratch -- it requires numerical optimization that is beyond the scope of this lesson. The key insight is understanding what each component does so you can interpret ARIMA results and know when to use it.</p>
+<h3 id="when-to-use-what"><a class="anchor" href="#when-to-use-what">#</a> When to Use What</h3>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Best For</th>
+<th>Handles Seasonality</th>
+<th>Handles External Features</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Lag features + ML</td>
+<td>Tabular with many external features</td>
+<td>With calendar features</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>ARIMA</td>
+<td>Single univariate series, short-term</td>
+<td>SARIMA variant</td>
+<td>No (ARIMAX for limited)</td>
+</tr>
+<tr>
+<td>Exponential smoothing</td>
+<td>Simple trend + seasonality</td>
+<td>Yes (Holt-Winters)</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Prophet</td>
+<td>Business forecasting, holidays</td>
+<td>Yes (Fourier terms)</td>
+<td>Limited</td>
+</tr>
+<tr>
+<td>Neural networks (LSTM, Transformer)</td>
+<td>Long sequences, many series</td>
+<td>Learned</td>
+<td>Yes</td>
+</tr>
+</tbody></table>
+<p>For most practical problems, lag features + gradient boosting is the strongest starting point. It handles external features naturally, does not require stationarity, and is easy to debug.</p>
+<h3 id="forecasting-horizons-and-strategies"><a class="anchor" href="#forecasting-horizons-and-strategies">#</a> Forecasting Horizons and Strategies</h3>
+<p>Single-step forecasting predicts one time step ahead. Multi-step forecasting predicts multiple steps. There are three strategies:</p>
+<p><strong>Recursive (iterated):</strong> Predict one step ahead, use the prediction as input for the next step. Simple but errors accumulate -- each prediction uses the previous prediction, so mistakes compound.</p>
+<p><strong>Direct:</strong> Train a separate model for each horizon. Model-1 predicts t+1, Model-5 predicts t+5. No error accumulation, but each model has fewer training samples and they do not share information.</p>
+<p><strong>Multi-output:</strong> Train one model that outputs all horizons simultaneously. Shares information across horizons but requires a model that supports multiple outputs (or a custom loss function).</p>
+<p>For most practical problems, start with recursive for short horizons (1-5 steps) and direct for longer horizons.</p>
+<h3 id="common-mistakes-in-time-series"><a class="anchor" href="#common-mistakes-in-time-series">#</a> Common Mistakes in Time Series</h3>
+<table>
+<thead>
+<tr>
+<th>Mistake</th>
+<th>Why it happens</th>
+<th>How to fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Random train/test split</td>
+<td>Habit from standard ML</td>
+<td>Use walk-forward or temporal split</td>
+</tr>
+<tr>
+<td>Using future features</td>
+<td>Feature at time t included by mistake</td>
+<td>Audit every feature for temporal alignment</td>
+</tr>
+<tr>
+<td>Overfitting to seasonality</td>
+<td>Model memorizes calendar patterns</td>
+<td>Hold out a full seasonal cycle in the test set</td>
+</tr>
+<tr>
+<td>Ignoring scale changes</td>
+<td>Revenue doubles but patterns stay</td>
+<td>Model percentage change instead of absolute</td>
+</tr>
+<tr>
+<td>Too many lag features</td>
+<td>&quot;More history is better&quot;</td>
+<td>Use ACF to determine relevant lags</td>
+</tr>
+<tr>
+<td>Not differencing</td>
+<td>&quot;The model will figure it out&quot;</td>
+<td>Tree models handle trends; linear models need stationarity</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">f3-series-decompose</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The code in <code>code/time_series.py</code> implements the core building blocks from scratch.</p>
+<h3 id="lag-feature-creator"><a class="anchor" href="#lag-feature-creator">#</a> Lag Feature Creator</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def make_lag_features(series, n_lags):
+    n = len(series)
+    X = np.full((n, n_lags), np.nan)
+    for lag in range(1, n_lags + 1):
+        X[lag:, lag - 1] = series[:-lag]
+    valid = ~np.isnan(X).any(axis=1)
+    return X[valid], series[valid]</code></pre>
+      </div>
+    <p>This converts a 1D series into a feature matrix where each row has the last <code>n_lags</code> values as features, and the current value as the target.</p>
+<h3 id="walk-forward-cross-validation"><a class="anchor" href="#walk-forward-cross-validation">#</a> Walk-Forward Cross-Validation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def walk_forward_split(n_samples, n_splits=5, min_train=50):
+    assert min_train &lt; n_samples, &quot;min_train must be less than n_samples&quot;
+    step = max(1, (n_samples - min_train) // n_splits)
+    for i in range(n_splits):
+        train_end = min_train + i * step
+        test_end = min(train_end + step, n_samples)
+        if train_end &gt;= n_samples:
+            break
+        yield slice(0, train_end), slice(train_end, test_end)</code></pre>
+      </div>
+    <p>Each split ensures training data comes strictly before test data. The training window expands with each fold.</p>
+<h3 id="simple-autoregressive-model"><a class="anchor" href="#simple-autoregressive-model">#</a> Simple Autoregressive Model</h3>
+<p>A pure AR model is just linear regression on lag features:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SimpleAR:
+    def __init__(self, n_lags=5):
+        self.n_lags = n_lags
+        self.weights = None
+        self.bias = None
+
+    def fit(self, series):
+        X, y = make_lag_features(series, self.n_lags)
+        # Solve via normal equations
+        X_b = np.column_stack([np.ones(len(X)), X])
+        theta = np.linalg.lstsq(X_b, y, rcond=None)[0]
+        self.bias = theta[0]
+        self.weights = theta[1:]
+        return self</code></pre>
+      </div>
+    <p>This is conceptually identical to linear regression from Lesson 02, but applied to time-lagged versions of the same variable.</p>
+<h3 id="stationarity-check"><a class="anchor" href="#stationarity-check">#</a> Stationarity Check</h3>
+<p>The code computes rolling statistics to visually and numerically assess stationarity:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def check_stationarity(series, window=50):
+    rolling_mean = np.array([
+        series[max(0, i - window):i].mean()
+        for i in range(1, len(series) + 1)
+    ])
+    rolling_std = np.array([
+        series[max(0, i - window):i].std()
+        for i in range(1, len(series) + 1)
+    ])
+    return rolling_mean, rolling_std</code></pre>
+      </div>
+    <p>If the rolling mean drifts or the rolling std changes, the series is non-stationary. Apply differencing and check again.</p>
+<p>The code also checks stationarity by comparing the first half and second half of the series. If the means differ by more than half a standard deviation or the variance ratio exceeds 2x, the series is flagged as non-stationary.</p>
+<h3 id="autocorrelation"><a class="anchor" href="#autocorrelation">#</a> Autocorrelation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def autocorrelation(series, max_lag=20):
+    n = len(series)
+    mean = series.mean()
+    var = series.var()
+    acf = np.zeros(max_lag + 1)
+    for k in range(max_lag + 1):
+        cov = np.mean((series[:n-k] - mean) * (series[k:] - mean))
+        acf[k] = cov / var if var &gt; 0 else 0
+    return acf</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>With sklearn, you use lag features directly with any regressor:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
+
+X, y = make_lag_features(series, n_lags=10)
+
+for train_idx, test_idx in walk_forward_split(len(X)):
+    model = Ridge(alpha=1.0)
+    model.fit(X[train_idx], y[train_idx])
+    predictions = model.predict(X[test_idx])</code></pre>
+      </div>
+    <p>For ARIMA, use statsmodels:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from statsmodels.tsa.arima.model import ARIMA
+
+model = ARIMA(train_series, order=(5, 1, 2))
+fitted = model.fit()
+forecast = fitted.forecast(steps=30)</code></pre>
+      </div>
+    <p>The code in <code>time_series.py</code> demonstrates both approaches and compares them using walk-forward validation.</p>
+<h3 id="sklearn-timeseriessplit"><a class="anchor" href="#sklearn-timeseriessplit">#</a> sklearn TimeSeriesSplit</h3>
+<p>sklearn provides <code>TimeSeriesSplit</code> which implements walk-forward validation:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import TimeSeriesSplit
+
+tscv = TimeSeriesSplit(n_splits=5)
+for train_index, test_index in tscv.split(X):
+    X_train, X_test = X[train_index], X[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+    model.fit(X_train, y_train)
+    score = model.score(X_test, y_test)</code></pre>
+      </div>
+    <p>This is equivalent to our from-scratch <code>walk_forward_split</code> but integrated into sklearn&#39;s cross-validation framework. You can use it with <code>cross_val_score</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import cross_val_score
+
+scores = cross_val_score(model, X, y, cv=TimeSeriesSplit(n_splits=5))
+print(f&quot;Mean score: {scores.mean():.4f} +/- {scores.std():.4f}&quot;)</code></pre>
+      </div>
+    <h3 id="evaluation-metrics"><a class="anchor" href="#evaluation-metrics">#</a> Evaluation Metrics</h3>
+<p>Time series forecasting uses regression metrics, but with time-aware context:</p>
+<ul>
+<li><strong>MAE (Mean Absolute Error):</strong> Average of |y_true - y_pred|. Easy to interpret in original units. &quot;On average, predictions are off by 3.2 degrees.&quot;</li>
+<li><strong>RMSE (Root Mean Squared Error):</strong> Square root of mean squared error. Penalizes large errors more than MAE. Use when big errors are worse than many small errors.</li>
+<li><strong>MAPE (Mean Absolute Percentage Error):</strong> Average of |error / true_value| * 100. Scale-independent, useful for comparing across different series. But undefined when true values are zero.</li>
+<li><strong>Naive baseline comparison:</strong> Always compare against simple baselines. The seasonal naive baseline predicts the value from one period ago (yesterday, last week). If your model cannot beat naive, something is wrong.</li>
+</ul>
+<h3 id="rolling-features"><a class="anchor" href="#rolling-features">#</a> Rolling Features</h3>
+<p>The code demonstrates adding rolling statistics (mean, std, min, max over windows of 7 and 14 days) to lag features. These give the model information about recent trends and volatility that lag features alone do not capture.</p>
+<p>For example, if the rolling mean is rising, it suggests an upward trend. If the rolling std is increasing, it suggests growing volatility. These are the kinds of patterns that tree-based models can learn from but linear models cannot.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-time-series-advisor.md</code> -- a prompt for framing time series problems</li>
+<li><code>code/time_series.py</code> -- lag features, walk-forward validation, AR model, stationarity checks</li>
+</ul>
+<h3 id="baselines-you-must-beat"><a class="anchor" href="#baselines-you-must-beat">#</a> Baselines You Must Beat</h3>
+<p>Before building any model, establish baselines:</p>
+<ol>
+<li><strong>Last value (persistence).</strong> Predict that tomorrow will be the same as today. For many series, this is surprisingly hard to beat.</li>
+<li><strong>Seasonal naive.</strong> Predict that today will be the same as the same day last week (or last year). If your model cannot beat this, it has not learned any useful pattern beyond seasonality.</li>
+<li><strong>Moving average.</strong> Predict the average of the last k values. Smooths noise but cannot capture sudden changes.</li>
+</ol>
+<p>If your fancy ML model loses to the seasonal naive baseline, you have a bug. Most commonly: future leakage in features, wrong evaluation method, or the series is truly random and unpredictable.</p>
+<h3 id="practical-tips"><a class="anchor" href="#practical-tips">#</a> Practical Tips</h3>
+<ol>
+<li><p><strong>Start with plotting.</strong> Before any modeling, plot the raw series. Look for trends, seasonality, outliers, structural breaks (sudden changes in behavior). A 30-second visual inspection often tells you more than an hour of automated analysis.</p>
+</li>
+<li><p><strong>Difference first, model second.</strong> If the series has a clear trend, difference it before creating lag features. Tree-based models can handle trends, but linear models cannot, and differencing never hurts.</p>
+</li>
+<li><p><strong>Hold out at least one full seasonal cycle.</strong> If you have weekly seasonality, your test set needs at least one full week. If monthly, at least one full month. Otherwise you cannot evaluate whether the model captured the seasonal pattern.</p>
+</li>
+<li><p><strong>Monitor in production.</strong> Time series models degrade over time as the world changes. Track prediction errors on a rolling basis. When errors start increasing, retrain the model on recent data.</p>
+</li>
+<li><p><strong>Beware of regime changes.</strong> A model trained on pre-pandemic data will not predict post-pandemic behavior. Include indicators of known regime changes as features, or use a sliding window that forgets old data.</p>
+</li>
+<li><p><strong>Log-transform skewed series.</strong> Revenue, prices, and counts are often right-skewed. Taking the log stabilizes variance and makes multiplicative patterns additive, which linear models can handle. Forecast in log space, then exponentiate to get back to original units.</p>
+</li>
+</ol>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p><strong>Stationarity experiment.</strong> Generate a series with a linear trend. Check stationarity with rolling statistics. Apply first differencing. Check again. How many rounds of differencing does it take for a quadratic trend?</p>
+</li>
+<li><p><strong>Lag selection.</strong> Compute ACF on a seasonal series (period=7). Which lags have the highest autocorrelation? Create lag features using only those lags (not consecutive lags). Does accuracy improve compared to using lags 1 through 7?</p>
+</li>
+<li><p><strong>Walk-forward vs random split.</strong> Train a Ridge regression on lag features. Evaluate with random 80/20 split and with walk-forward validation. How much does the random split overestimate performance?</p>
+</li>
+<li><p><strong>Feature engineering.</strong> Add rolling mean (window=7), rolling std (window=7), and day-of-week features to the lag features. Compare accuracy with and without these extras using walk-forward validation.</p>
+</li>
+<li><p><strong>Multi-step forecasting.</strong> Modify the AR model to predict 5 steps ahead instead of 1. Compare two strategies: (a) predict one step, use the prediction as input for the next step (recursive), and (b) train separate models for each horizon (direct). Which is more accurate?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Stationarity</td>
+<td>&quot;The stats don&#39;t change over time&quot;</td>
+<td>A series whose mean, variance, and autocorrelation structure are constant over time</td>
+</tr>
+<tr>
+<td>Differencing</td>
+<td>&quot;Subtract consecutive values&quot;</td>
+<td>Computing y[t] - y[t-1] to remove trends and achieve stationarity</td>
+</tr>
+<tr>
+<td>Autocorrelation (ACF)</td>
+<td>&quot;How a series correlates with itself&quot;</td>
+<td>The correlation between a time series and a lagged copy of itself, as a function of the lag</td>
+</tr>
+<tr>
+<td>Partial autocorrelation (PACF)</td>
+<td>&quot;Direct correlation only&quot;</td>
+<td>Autocorrelation at lag k after removing the effect of all shorter lags</td>
+</tr>
+<tr>
+<td>Lag features</td>
+<td>&quot;Past values as inputs&quot;</td>
+<td>Using y[t-1], y[t-2], ..., y[t-k] as features to predict y[t]</td>
+</tr>
+<tr>
+<td>Walk-forward validation</td>
+<td>&quot;Time-respecting cross-validation&quot;</td>
+<td>Evaluation where training data always precedes test data chronologically</td>
+</tr>
+<tr>
+<td>ARIMA</td>
+<td>&quot;The classic time series model&quot;</td>
+<td>AutoRegressive Integrated Moving Average: combines past values (AR), differencing (I), and past errors (MA)</td>
+</tr>
+<tr>
+<td>Seasonality</td>
+<td>&quot;Repeating calendar patterns&quot;</td>
+<td>Regular, predictable cycles in a time series tied to calendar periods (daily, weekly, yearly)</td>
+</tr>
+<tr>
+<td>Trend</td>
+<td>&quot;The long-term direction&quot;</td>
+<td>A persistent increase or decrease in the series level over time</td>
+</tr>
+<tr>
+<td>Expanding window</td>
+<td>&quot;Use all history&quot;</td>
+<td>Walk-forward validation where the training set grows with each fold</td>
+</tr>
+<tr>
+<td>Sliding window</td>
+<td>&quot;Fixed-size history&quot;</td>
+<td>Walk-forward validation where the training set is a fixed-length window that slides forward</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://otexts.com/fpp3/">Hyndman and Athanasopoulos, Forecasting: Principles and Practice (3rd ed.)</a> -- the best free textbook on time series forecasting</li>
+<li><a href="https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html">scikit-learn Time Series Split</a> -- sklearn&#39;s walk-forward splitter</li>
+<li><a href="https://www.statsmodels.org/stable/generated/statsmodels.tsa.arima.model.ARIMA.html">statsmodels ARIMA docs</a> -- ARIMA implementation with diagnostics</li>
+<li><a href="https://www.sciencedirect.com/science/article/pii/S0169207021001874">Makridakis et al., The M5 Competition (2022)</a> -- large-scale forecasting competition showing ML methods vs statistical methods</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-naive-bayes.html"><span>← Previous</span><b>naive bayes</b></a>
+      <a class="next" href="./16-anomaly-detection.html"><span>Next →</span><b>anomaly detection</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

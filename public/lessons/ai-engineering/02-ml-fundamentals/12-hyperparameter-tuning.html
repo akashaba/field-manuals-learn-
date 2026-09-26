@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hyperparameter Tuning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/02-ml-fundamentals/12-hyperparameter-tuning/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">ML Fundamentals</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · ML Fundamentals</div>
+    <h1 class="lesson-title">Hyperparameter Tuning</h1>
+    <p class="lesson-sub">Hyperparameters are the knobs you turn before training starts. Turning them well is the difference between a mediocre model and a great one.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 2, Lesson 11 (Ensemble Methods)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — ML Fundamentals 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="105.1" cy="102.3" r="9.2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="99.7" cy="97.3" r="8.6" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.3,97.2 L94.3,85.2 L102.2,97.2 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M81.5,91.9 L88.8,80.9 L96.1,91.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M76.7,86.6 L83.4,76.5 L90.1,86.6 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">ML FUNDAMENTALS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hyperparameter</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Tuning</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement grid search, random search, and Bayesian optimization from scratch and compare their sample efficiency</li>
+<li>Explain why random search outperforms grid search when most hyperparameters have low effective dimensionality</li>
+<li>Build a Bayesian optimization loop using a surrogate model and acquisition function to guide the search</li>
+<li>Design a hyperparameter tuning strategy that avoids overfitting the validation set through proper cross-validation</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your gradient boosting model has a learning rate, number of trees, max depth, min samples per leaf, subsample ratio, and column sample ratio. That is six hyperparameters. If each has 5 reasonable values, the grid has 5^6 = 15,625 combinations. Training each takes 10 seconds. That is 43 hours of compute to try them all.</p>
+<p>Grid search is the obvious approach and the worst one at scale. Random search does better with less compute. Bayesian optimization does even better by learning from past evaluations. Knowing which strategy to use, and which hyperparameters actually matter, saves days of wasted GPU time.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="parameters-vs-hyperparameters"><a class="anchor" href="#parameters-vs-hyperparameters">#</a> Parameters vs Hyperparameters</h3>
+<p>Parameters are learned during training (weights, biases, split thresholds). Hyperparameters are set before training starts and control how learning happens.</p>
+<table>
+<thead>
+<tr>
+<th>Hyperparameter</th>
+<th>What it controls</th>
+<th>Typical range</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Learning rate</td>
+<td>Step size per update</td>
+<td>0.001 to 1.0</td>
+</tr>
+<tr>
+<td>Number of trees/epochs</td>
+<td>How long to train</td>
+<td>10 to 10,000</td>
+</tr>
+<tr>
+<td>Max depth</td>
+<td>Model complexity</td>
+<td>1 to 30</td>
+</tr>
+<tr>
+<td>Regularization (lambda)</td>
+<td>Overfitting prevention</td>
+<td>0.0001 to 100</td>
+</tr>
+<tr>
+<td>Batch size</td>
+<td>Gradient estimation noise</td>
+<td>16 to 512</td>
+</tr>
+<tr>
+<td>Dropout rate</td>
+<td>Fraction of neurons dropped</td>
+<td>0.0 to 0.5</td>
+</tr>
+</tbody></table>
+<h3 id="grid-search"><a class="anchor" href="#grid-search">#</a> Grid Search</h3>
+<p>Grid search evaluates every combination of specified values. It is exhaustive and easy to understand, but scales exponentially with the number of hyperparameters.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Grid for 2 hyperparameters:
+
+  learning_rate: [0.01, 0.1, 1.0]
+  max_depth:     [3, 5, 7]
+
+  Evaluations: 3 x 3 = 9 combinations
+
+  (0.01, 3)  (0.01, 5)  (0.01, 7)
+  (0.1,  3)  (0.1,  5)  (0.1,  7)
+  (1.0,  3)  (1.0,  5)  (1.0,  7)</code></pre>
+      </div>
+    <p>Grid search has a fundamental flaw: if one hyperparameter matters and the other does not, most evaluations are wasted. You get only 3 unique values of the important parameter from 9 evaluations.</p>
+<h3 id="random-search"><a class="anchor" href="#random-search">#</a> Random Search</h3>
+<p>Random search samples hyperparameters from distributions instead of a grid. With the same budget of 9 evaluations, you get 9 unique values of each hyperparameter.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph Grid Search
+        G1[3 unique learning rates]
+        G2[3 unique max depths]
+        G3[9 total evaluations]
+    end
+
+    subgraph Random Search
+        R1[9 unique learning rates]
+        R2[9 unique max depths]
+        R3[9 total evaluations]
+    end</pre></div><p>Why random beats grid (Bergstra &amp; Bengio, 2012):</p>
+<ul>
+<li>Most hyperparameters have low effective dimensionality. Only 1-2 of 6 hyperparameters usually matter for a given problem.</li>
+<li>Grid search wastes evaluations on unimportant dimensions.</li>
+<li>Random search covers the important dimensions more densely for the same budget.</li>
+<li>At 60 random trials, you have a 95% chance of finding a point within 5% of the optimum (if one exists in the search space).</li>
+</ul>
+<h3 id="bayesian-optimization"><a class="anchor" href="#bayesian-optimization">#</a> Bayesian Optimization</h3>
+<p>Random search ignores results. It does not learn that high learning rates cause divergence or that depth 3 consistently outperforms depth 10. Bayesian optimization uses past evaluations to decide where to search next.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[Define search space] --&gt; B[Evaluate initial random points]
+    B --&gt; C[Fit surrogate model to results]
+    C --&gt; D[Use acquisition function to pick next point]
+    D --&gt; E[Evaluate the model at that point]
+    E --&gt; F{Budget exhausted?}
+    F --&gt;|No| C
+    F --&gt;|Yes| G[Return best hyperparameters found]</pre></div><p>The two key components:</p>
+<p><strong>Surrogate model:</strong> A cheap-to-evaluate model (usually a Gaussian process) that approximates the expensive objective function. It gives both a prediction and an uncertainty estimate at any point in the search space.</p>
+<p><strong>Acquisition function:</strong> Decides where to evaluate next by balancing exploitation (search near known good points) and exploration (search where uncertainty is high). Common choices:</p>
+<ul>
+<li><strong>Expected Improvement (EI):</strong> How much improvement over the current best do we expect at this point?</li>
+<li><strong>Upper Confidence Bound (UCB):</strong> Prediction plus a multiple of uncertainty. Higher UCB means either promising or unexplored.</li>
+<li><strong>Probability of Improvement (PI):</strong> What is the probability this point beats the current best?</li>
+</ul>
+<p>Bayesian optimization typically finds better hyperparameters than random search with 2-5x fewer evaluations. The overhead of fitting the surrogate model is negligible compared to training the actual model.</p>
+<h3 id="early-stopping"><a class="anchor" href="#early-stopping">#</a> Early Stopping</h3>
+<p>Not every training run needs to finish. If a configuration is clearly bad after 10 epochs, stop it and move on. This is early stopping in the context of hyperparameter search.</p>
+<p>Strategies:</p>
+<ul>
+<li><strong>Patience-based:</strong> Stop if validation loss has not improved for N consecutive epochs</li>
+<li><strong>Median pruning:</strong> Stop if the trial&#39;s intermediate result is worse than the median of completed trials at the same step</li>
+<li><strong>Hyperband:</strong> Allocate small budgets to many configurations, then progressively increase budget for the best ones</li>
+</ul>
+<p>Hyperband is particularly effective. It starts 81 configurations with 1 epoch each, keeps the top third, gives them 3 epochs, keeps the top third, and so on. This finds good configurations 10-50x faster than evaluating all configs for the full budget.</p>
+<h3 id="learning-rate-schedulers"><a class="anchor" href="#learning-rate-schedulers">#</a> Learning Rate Schedulers</h3>
+<p>The learning rate is almost always the most important hyperparameter. Rather than keeping it fixed, schedulers adjust it during training.</p>
+<table>
+<thead>
+<tr>
+<th>Scheduler</th>
+<th>Formula</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Step decay</td>
+<td>Multiply by 0.1 every N epochs</td>
+<td>Classic CNN training</td>
+</tr>
+<tr>
+<td>Cosine annealing</td>
+<td>lr * 0.5 * (1 + cos(pi * t / T))</td>
+<td>Modern default</td>
+</tr>
+<tr>
+<td>Warmup + decay</td>
+<td>Linear increase then cosine decay</td>
+<td>Transformers</td>
+</tr>
+<tr>
+<td>One-cycle</td>
+<td>Increase then decrease over one cycle</td>
+<td>Fast convergence</td>
+</tr>
+<tr>
+<td>Reduce on plateau</td>
+<td>Reduce by factor when metric stalls</td>
+<td>Safe default</td>
+</tr>
+</tbody></table>
+<h3 id="hyperparameter-importance"><a class="anchor" href="#hyperparameter-importance">#</a> Hyperparameter Importance</h3>
+<p>Not all hyperparameters matter equally. Research on random forests (Probst et al., 2019) and gradient boosting shows consistent patterns:</p>
+<p><strong>High importance:</strong></p>
+<ul>
+<li>Learning rate (always tune first)</li>
+<li>Number of estimators / epochs (use early stopping instead of tuning)</li>
+<li>Regularization strength</li>
+</ul>
+<p><strong>Medium importance:</strong></p>
+<ul>
+<li>Max depth / number of layers</li>
+<li>Min samples per leaf / weight decay</li>
+<li>Subsample ratio</li>
+</ul>
+<p><strong>Low importance:</strong></p>
+<ul>
+<li>Max features (for random forests)</li>
+<li>Specific activation function choice</li>
+<li>Batch size (within reasonable range)</li>
+</ul>
+<p>Tune the important ones first, leave the rest at defaults.</p>
+<h3 id="practical-strategy"><a class="anchor" href="#practical-strategy">#</a> Practical Strategy</h3>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[Start with defaults] --&gt; B[Coarse random search: 20-50 trials]
+    B --&gt; C[Identify important hyperparameters]
+    C --&gt; D[Fine random or Bayesian search: 50-100 trials in narrowed space]
+    D --&gt; E[Final model with best hyperparameters]
+    E --&gt; F[Retrain on full training data]</pre></div><p>The concrete workflow:</p>
+<ol>
+<li><strong>Start with library defaults.</strong> They are chosen by experienced practitioners and are often 80% of the way there.</li>
+<li><strong>Coarse random search.</strong> Wide ranges, 20-50 trials. Use early stopping to kill bad runs fast.</li>
+<li><strong>Analyze results.</strong> Which hyperparameters correlate with performance? Narrow the search space.</li>
+<li><strong>Fine search.</strong> Bayesian optimization or focused random search in the narrowed space. 50-100 trials.</li>
+<li><strong>Retrain on all training data</strong> with the best hyperparameters found.</li>
+</ol>
+<h3 id="cross-validation-integration"><a class="anchor" href="#cross-validation-integration">#</a> Cross-Validation Integration</h3>
+<p>Tuning hyperparameters on a single validation split is risky. The best hyperparameters might overfit to the specific validation fold. Nested cross-validation solves this by using two loops:</p>
+<ul>
+<li><strong>Outer loop</strong> (evaluation): splits data into train+val and test. Reports unbiased performance.</li>
+<li><strong>Inner loop</strong> (tuning): splits train+val into train and val. Finds best hyperparameters.</li>
+</ul>
+<div class="fig"><pre class="mermaid">flowchart TD
+    D[Full Dataset] --&gt; O1[Outer Fold 1: Test]
+    D --&gt; O2[Outer Fold 2: Test]
+    D --&gt; O3[Outer Fold 3: Test]
+    D --&gt; O4[Outer Fold 4: Test]
+    D --&gt; O5[Outer Fold 5: Test]
+
+    O1 --&gt; I1[Inner 5-fold CV on remaining data]
+    I1 --&gt; T1[Best hyperparams for fold 1]
+    T1 --&gt; E1[Evaluate on outer test fold 1]
+
+    O2 --&gt; I2[Inner 5-fold CV on remaining data]
+    I2 --&gt; T2[Best hyperparams for fold 2]
+    T2 --&gt; E2[Evaluate on outer test fold 2]</pre></div><p>Each outer fold finds its own best hyperparameters independently. The outer scores are an unbiased estimate of generalization performance.</p>
+<p>With sklearn:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import cross_val_score, GridSearchCV
+from sklearn.ensemble import GradientBoostingRegressor
+
+inner_cv = GridSearchCV(
+    GradientBoostingRegressor(),
+    param_grid={
+        &quot;learning_rate&quot;: [0.01, 0.05, 0.1],
+        &quot;max_depth&quot;: [2, 3, 5],
+        &quot;n_estimators&quot;: [50, 100, 200],
+    },
+    cv=5,
+    scoring=&quot;neg_mean_squared_error&quot;,
+)
+
+outer_scores = cross_val_score(
+    inner_cv, X, y, cv=5, scoring=&quot;neg_mean_squared_error&quot;
+)
+
+print(f&quot;Nested CV MSE: {-outer_scores.mean():.4f} +/- {outer_scores.std():.4f}&quot;)</code></pre>
+      </div>
+    <p>This is expensive (5 outer folds x 5 inner folds x 27 grid points = 675 model fits), but it gives you a trustworthy performance estimate. Use it when reporting final results in papers or when the stake of the decision is high.</p>
+<h3 id="practical-tips"><a class="anchor" href="#practical-tips">#</a> Practical Tips</h3>
+<p><strong>Start with the learning rate.</strong> It is always the most important hyperparameter for gradient-based methods. A bad learning rate makes everything else irrelevant. Fix other hyperparameters at defaults and sweep learning rate first.</p>
+<p><strong>Use log-uniform distributions for learning rate and regularization.</strong> The difference between 0.001 and 0.01 matters as much as the difference between 0.1 and 1.0. Searching linearly wastes budget on the large end.</p>
+<p><strong>Use early stopping instead of tuning n_estimators.</strong> For boosting and neural networks, set n_estimators or epochs high and let early stopping decide when to stop. This removes one hyperparameter from the search.</p>
+<p><strong>Budget allocation.</strong> Spend 60% of your tuning budget on the top 2 most important hyperparameters. Spend the remaining 40% on everything else. The top 2 account for most of the performance variation.</p>
+<p><strong>Scale matters.</strong> Never search batch size on a log scale (16, 32, 64 are fine). Always search learning rate on a log scale. Match the search distribution to how the hyperparameter affects the model.</p>
+<table>
+<thead>
+<tr>
+<th>Model Type</th>
+<th>Top Hyperparameters</th>
+<th>Recommended Search</th>
+<th>Budget</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Random Forest</td>
+<td>n_estimators, max_depth, min_samples_leaf</td>
+<td>Random search, 50 trials</td>
+<td>Low (fast training)</td>
+</tr>
+<tr>
+<td>Gradient Boosting</td>
+<td>learning_rate, n_estimators, max_depth</td>
+<td>Bayesian, 100 trials + early stopping</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>Neural Network</td>
+<td>learning_rate, weight_decay, batch_size</td>
+<td>Bayesian or random, 100+ trials</td>
+<td>High (slow training)</td>
+</tr>
+<tr>
+<td>SVM</td>
+<td>C, gamma (RBF kernel)</td>
+<td>Grid on log scale, 25-50 trials</td>
+<td>Low (2 params)</td>
+</tr>
+<tr>
+<td>Lasso/Ridge</td>
+<td>alpha</td>
+<td>1D search on log scale, 20 trials</td>
+<td>Very low</td>
+</tr>
+<tr>
+<td>XGBoost</td>
+<td>learning_rate, max_depth, subsample, colsample</td>
+<td>Bayesian, 100-200 trials + early stopping</td>
+<td>Medium</td>
+</tr>
+</tbody></table>
+<p><strong>When in doubt:</strong> random search with 2x the number of hyperparameters as trials (e.g., 6 hyperparameters = 12+ trials minimum). You will be surprised how often random search with 50 trials beats carefully designed grid search.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">k-fold-cv</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-grid-search-from-scratch"><a class="anchor" href="#step-1-grid-search-from-scratch">#</a> Step 1: Grid Search from Scratch</h3>
+<p>The code in <code>code/tuning.py</code> implements grid search, random search, and a simple Bayesian optimizer from scratch.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def grid_search(model_fn, param_grid, X_train, y_train, X_val, y_val):
+    keys = list(param_grid.keys())
+    values = list(param_grid.values())
+    best_score = -float(&quot;inf&quot;)
+    best_params = None
+    n_evals = 0
+
+    for combo in itertools.product(*values):
+        params = dict(zip(keys, combo))
+        model = model_fn(**params)
+        model.fit(X_train, y_train)
+        score = evaluate(model, X_val, y_val)
+        n_evals += 1
+
+        if score &gt; best_score:
+            best_score = score
+            best_params = params
+
+    return best_params, best_score, n_evals</code></pre>
+      </div>
+    <h3 id="step-2-random-search-from-scratch"><a class="anchor" href="#step-2-random-search-from-scratch">#</a> Step 2: Random Search from Scratch</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def random_search(model_fn, param_distributions, X_train, y_train,
+                  X_val, y_val, n_iter=50, seed=42):
+    rng = np.random.RandomState(seed)
+    best_score = -float(&quot;inf&quot;)
+    best_params = None
+
+    for _ in range(n_iter):
+        params = {k: sample(v, rng) for k, v in param_distributions.items()}
+        model = model_fn(**params)
+        model.fit(X_train, y_train)
+        score = evaluate(model, X_val, y_val)
+
+        if score &gt; best_score:
+            best_score = score
+            best_params = params
+
+    return best_params, best_score, n_iter</code></pre>
+      </div>
+    <h3 id="step-3-bayesian-optimization-simplified"><a class="anchor" href="#step-3-bayesian-optimization-simplified">#</a> Step 3: Bayesian Optimization (Simplified)</h3>
+<p>The core idea: fit a Gaussian process to observed (hyperparameter, score) pairs, then use an acquisition function to decide where to look next.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SimpleBayesianOptimizer:
+    def __init__(self, search_space, n_initial=5):
+        self.search_space = search_space
+        self.n_initial = n_initial
+        self.X_observed = []
+        self.y_observed = []
+
+    def _kernel(self, x1, x2, length_scale=1.0):
+        dists = np.sum((x1[:, None, :] - x2[None, :, :]) ** 2, axis=2)
+        return np.exp(-0.5 * dists / length_scale ** 2)
+
+    def _fit_gp(self, X_new):
+        X_obs = np.array(self.X_observed)
+        y_obs = np.array(self.y_observed)
+        y_mean = y_obs.mean()
+        y_centered = y_obs - y_mean
+
+        K = self._kernel(X_obs, X_obs) + 1e-4 * np.eye(len(X_obs))
+        K_star = self._kernel(X_new, X_obs)
+
+        L = np.linalg.cholesky(K)
+        alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_centered))
+        mu = K_star @ alpha + y_mean
+
+        v = np.linalg.solve(L, K_star.T)
+        var = 1.0 - np.sum(v ** 2, axis=0)
+        var = np.maximum(var, 1e-6)
+
+        return mu, var
+
+    def _expected_improvement(self, mu, var, best_y):
+        sigma = np.sqrt(var)
+        z = (mu - best_y) / (sigma + 1e-10)
+        ei = sigma * (z * norm_cdf(z) + norm_pdf(z))
+        return ei
+
+    def suggest(self):
+        if len(self.X_observed) &lt; self.n_initial:
+            return sample_random(self.search_space)
+
+        candidates = [sample_random(self.search_space) for _ in range(500)]
+        X_cand = np.array([to_vector(c) for c in candidates])
+        mu, var = self._fit_gp(X_cand)
+        ei = self._expected_improvement(mu, var, max(self.y_observed))
+        return candidates[np.argmax(ei)]
+
+    def observe(self, params, score):
+        self.X_observed.append(to_vector(params))
+        self.y_observed.append(score)</code></pre>
+      </div>
+    <p>The GP surrogate gives two things at each candidate point: a predicted score (mu) and an uncertainty (var). Expected Improvement balances these: it favors points where the model predicts high scores OR where uncertainty is high. Early on, most points have high uncertainty so the optimizer explores. Later, it focuses on the most promising region.</p>
+<h3 id="step-4-compare-all-methods"><a class="anchor" href="#step-4-compare-all-methods">#</a> Step 4: Compare All Methods</h3>
+<p>Run all three methods on the same synthetic objective and compare. This comparison uses a simplified wrapper that calls each optimizer with a direct objective function (no model training), so the API differs from the model-based implementations above:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def synthetic_objective(params):
+    lr = params[&quot;learning_rate&quot;]
+    depth = params[&quot;max_depth&quot;]
+    return -(np.log10(lr) + 2) ** 2 - (depth - 4) ** 2 + 10
+
+param_grid = {
+    &quot;learning_rate&quot;: [0.001, 0.01, 0.1, 1.0],
+    &quot;max_depth&quot;: [2, 3, 4, 5, 6, 7, 8],
+}
+
+grid_best = None
+grid_score = -float(&quot;inf&quot;)
+grid_history = []
+for combo in itertools.product(*param_grid.values()):
+    params = dict(zip(param_grid.keys(), combo))
+    score = synthetic_objective(params)
+    grid_history.append((params, score))
+    if score &gt; grid_score:
+        grid_score = score
+        grid_best = params
+
+param_dist = {
+    &quot;learning_rate&quot;: (&quot;log_float&quot;, 0.001, 1.0),
+    &quot;max_depth&quot;: (&quot;int&quot;, 2, 8),
+}
+
+rand_best = None
+rand_score = -float(&quot;inf&quot;)
+rand_history = []
+rng = np.random.RandomState(42)
+for _ in range(28):
+    params = {k: sample(v, rng) for k, v in param_dist.items()}
+    score = synthetic_objective(params)
+    rand_history.append((params, score))
+    if score &gt; rand_score:
+        rand_score = score
+        rand_best = params
+
+optimizer = SimpleBayesianOptimizer(param_dist, n_initial=5)
+bayes_history = []
+for _ in range(28):
+    params = optimizer.suggest()
+    score = synthetic_objective(params)
+    optimizer.observe(params, score)
+    bayes_history.append((params, score))
+bayes_score = max(s for _, s in bayes_history)
+
+print(f&quot;{&#39;Method&#39;:&lt;20} {&#39;Best Score&#39;:&gt;12} {&#39;Evaluations&#39;:&gt;12}&quot;)
+print(&quot;-&quot; * 50)
+print(f&quot;{&#39;Grid Search&#39;:&lt;20} {grid_score:&gt;12.4f} {len(grid_history):&gt;12}&quot;)
+print(f&quot;{&#39;Random Search&#39;:&lt;20} {rand_score:&gt;12.4f} {len(rand_history):&gt;12}&quot;)
+print(f&quot;{&#39;Bayesian Opt&#39;:&lt;20} {bayes_score:&gt;12.4f} {len(bayes_history):&gt;12}&quot;)</code></pre>
+      </div>
+    <p>With the same budget, Bayesian optimization usually finds the best score fastest because it does not waste evaluations in clearly bad regions. Random search covers more ground than grid search. Grid search only wins when you have very few hyperparameters and can afford to be exhaustive.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="optuna-in-practice"><a class="anchor" href="#optuna-in-practice">#</a> Optuna in Practice</h3>
+<p>Optuna is the recommended library for serious hyperparameter tuning. It supports pruning, distributed search, and visualization out of the box.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import optuna
+
+def objective(trial):
+    lr = trial.suggest_float(&quot;learning_rate&quot;, 1e-4, 1e-1, log=True)
+    n_est = trial.suggest_int(&quot;n_estimators&quot;, 50, 500)
+    max_depth = trial.suggest_int(&quot;max_depth&quot;, 2, 10)
+
+    model = GradientBoostingRegressor(
+        learning_rate=lr,
+        n_estimators=n_est,
+        max_depth=max_depth,
+    )
+    model.fit(X_train, y_train)
+    return mean_squared_error(y_val, model.predict(X_val))
+
+study = optuna.create_study(direction=&quot;minimize&quot;)
+study.optimize(objective, n_trials=100)
+
+print(f&quot;Best params: {study.best_params}&quot;)
+print(f&quot;Best MSE: {study.best_value:.4f}&quot;)</code></pre>
+      </div>
+    <p>Key Optuna features:</p>
+<ul>
+<li><code>suggest_float(..., log=True)</code> for parameters best searched on log scale (learning rate, regularization)</li>
+<li><code>suggest_int</code> for integer parameters</li>
+<li><code>suggest_categorical</code> for discrete choices</li>
+<li>Built-in MedianPruner for early stopping of bad trials</li>
+<li><code>study.trials_dataframe()</code> for analysis</li>
+</ul>
+<h3 id="optuna-with-pruning"><a class="anchor" href="#optuna-with-pruning">#</a> Optuna with Pruning</h3>
+<p>Pruning stops unpromising trials early, saving massive compute. Here is the pattern:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import optuna
+from sklearn.model_selection import cross_val_score
+
+def objective(trial):
+    params = {
+        &quot;learning_rate&quot;: trial.suggest_float(&quot;lr&quot;, 1e-4, 0.5, log=True),
+        &quot;max_depth&quot;: trial.suggest_int(&quot;max_depth&quot;, 2, 10),
+        &quot;n_estimators&quot;: trial.suggest_int(&quot;n_estimators&quot;, 50, 500),
+        &quot;subsample&quot;: trial.suggest_float(&quot;subsample&quot;, 0.5, 1.0),
+    }
+
+    model = GradientBoostingRegressor(**params)
+    scores = cross_val_score(model, X_train, y_train, cv=3,
+                             scoring=&quot;neg_mean_squared_error&quot;)
+    mean_score = -scores.mean()
+
+    trial.report(mean_score, step=0)
+    if trial.should_prune():
+        raise optuna.TrialPruned()
+
+    return mean_score
+
+pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+study = optuna.create_study(direction=&quot;minimize&quot;, pruner=pruner)
+study.optimize(objective, n_trials=200)</code></pre>
+      </div>
+    <p>The <code>MedianPruner</code> stops a trial if its intermediate value is worse than the median of all completed trials at the same step. Pruning requires calling <code>trial.report()</code> to report intermediate metrics and <code>trial.should_prune()</code> to check whether the trial should be stopped. The <code>n_startup_trials=10</code> ensures at least 10 trials complete fully before pruning kicks in. This typically saves 40-60% of total compute.</p>
+<h3 id="sklearns-built-in-tuners"><a class="anchor" href="#sklearns-built-in-tuners">#</a> sklearn&#39;s Built-in Tuners</h3>
+<p>For quick experiments, sklearn provides <code>GridSearchCV</code>, <code>RandomizedSearchCV</code>, and <code>HalvingRandomSearchCV</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import loguniform, randint
+
+param_dist = {
+    &quot;learning_rate&quot;: loguniform(1e-4, 0.5),
+    &quot;max_depth&quot;: randint(2, 10),
+    &quot;n_estimators&quot;: randint(50, 500),
+}
+
+search = RandomizedSearchCV(
+    GradientBoostingRegressor(),
+    param_dist,
+    n_iter=100,
+    cv=5,
+    scoring=&quot;neg_mean_squared_error&quot;,
+    random_state=42,
+    n_jobs=-1,
+)
+search.fit(X_train, y_train)
+print(f&quot;Best params: {search.best_params_}&quot;)
+print(f&quot;Best CV MSE: {-search.best_score_:.4f}&quot;)</code></pre>
+      </div>
+    <p>Use <code>loguniform</code> from scipy for learning rate and regularization. Use <code>randint</code> for integer hyperparameters. The <code>n_jobs=-1</code> flag parallelizes across all CPU cores.</p>
+<h3 id="common-mistakes-in-hyperparameter-tuning"><a class="anchor" href="#common-mistakes-in-hyperparameter-tuning">#</a> Common Mistakes in Hyperparameter Tuning</h3>
+<p><strong>Data leakage through preprocessing.</strong> If you fit a scaler on the full dataset before cross-validation, information from the validation fold leaks into training. Always put preprocessing inside a <code>Pipeline</code> so it is fit only on the training fold.</p>
+<p><strong>Overfitting to the validation set.</strong> Running thousands of trials effectively trains on the validation set. Use nested cross-validation for final performance estimates, or hold out a separate test set that you never touch during tuning.</p>
+<p><strong>Searching too narrow a range.</strong> If your best value is at the boundary of your search space, you have not searched widely enough. The optimal value might be outside your range. Always check if the best parameters are at the edges.</p>
+<p><strong>Ignoring interaction effects.</strong> Learning rate and number of estimators interact strongly in boosting. A low learning rate needs more estimators. Tuning them independently gives worse results than tuning them together.</p>
+<p><strong>Not using early stopping for iterative models.</strong> For gradient boosting and neural networks, set n_estimators or epochs to a high value and use early stopping. This is strictly better than tuning the number of iterations as a hyperparameter.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run grid search and random search with the same total budget (e.g., 50 evaluations). Compare the best scores found. Run the experiment 10 times with different seeds. How often does random search win?</p>
+</li>
+<li><p>Implement Hyperband from scratch. Start with 81 configurations, each trained for 1 epoch. Keep the top 1/3 at each round and triple their budget. Compare total compute (sum of all epochs across all configs) to running 81 configs for the full budget.</p>
+</li>
+<li><p>Add a learning rate scheduler (cosine annealing) to the gradient boosting implementation from Lesson 11. Does it help compared to a fixed learning rate?</p>
+</li>
+<li><p>Use Optuna to tune a RandomForestClassifier on a real dataset (e.g., sklearn&#39;s breast cancer dataset). Use <code>optuna.visualization.plot_param_importances(study)</code> to see which hyperparameters matter most. Does it match the importance ranking from this lesson?</p>
+</li>
+<li><p>Implement a simple acquisition function (Expected Improvement) and demonstrate exploration vs exploitation. Plot the surrogate model&#39;s mean and uncertainty, and show where EI chooses to evaluate next.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Hyperparameter</td>
+<td>&quot;A setting you choose&quot;</td>
+<td>A value set before training that controls the learning process, not learned from data</td>
+</tr>
+<tr>
+<td>Grid search</td>
+<td>&quot;Try every combination&quot;</td>
+<td>Exhaustive search over a specified parameter grid. Exponential cost.</td>
+</tr>
+<tr>
+<td>Random search</td>
+<td>&quot;Just sample randomly&quot;</td>
+<td>Sample hyperparameters from distributions. Covers important dimensions better than grid search.</td>
+</tr>
+<tr>
+<td>Bayesian optimization</td>
+<td>&quot;Smart search&quot;</td>
+<td>Uses a surrogate model of the objective to decide where to evaluate next, balancing exploration and exploitation</td>
+</tr>
+<tr>
+<td>Surrogate model</td>
+<td>&quot;A cheap approximation&quot;</td>
+<td>A model (usually Gaussian process) that approximates the expensive objective function from observed evaluations</td>
+</tr>
+<tr>
+<td>Acquisition function</td>
+<td>&quot;Where to look next&quot;</td>
+<td>Scores candidate points by balancing expected improvement with uncertainty. EI and UCB are common choices.</td>
+</tr>
+<tr>
+<td>Early stopping</td>
+<td>&quot;Stop wasting time&quot;</td>
+<td>Terminate training early when validation performance stops improving</td>
+</tr>
+<tr>
+<td>Hyperband</td>
+<td>&quot;Tournament bracket for configs&quot;</td>
+<td>Adaptive resource allocation: start many configs with small budgets, keep the best and increase their budgets</td>
+</tr>
+<tr>
+<td>Learning rate scheduler</td>
+<td>&quot;Change lr during training&quot;</td>
+<td>A function that adjusts the learning rate over the course of training for better convergence</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://jmlr.org/papers/v13/bergstra12a.html">Bergstra &amp; Bengio: Random Search for Hyper-Parameter Optimization (2012)</a> -- the paper that showed random beats grid</li>
+<li><a href="https://arxiv.org/abs/1206.2944">Snoek et al., Practical Bayesian Optimization of Machine Learning Algorithms (2012)</a> -- Bayesian optimization for ML</li>
+<li><a href="https://jmlr.org/papers/v18/16-558.html">Li et al., Hyperband: A Novel Bandit-Based Approach (2018)</a> -- the Hyperband paper</li>
+<li><a href="https://arxiv.org/abs/1907.10902">Optuna: A Next-generation Hyperparameter Optimization Framework</a> -- the Optuna paper</li>
+<li><a href="https://jmlr.org/papers/v20/18-444.html">Probst et al., Tunability: Importance of Hyperparameters (2019)</a> -- which hyperparameters matter</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-ensemble-methods.html"><span>← Previous</span><b>ensemble methods</b></a>
+      <a class="next" href="./13-ml-pipelines.html"><span>Next →</span><b>ml pipelines</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

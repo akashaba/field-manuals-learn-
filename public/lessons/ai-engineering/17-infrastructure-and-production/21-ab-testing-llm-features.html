@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A/B Testing LLM Features — GrowthBook, Statsig, and the Vibes Problem — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/21-ab-testing-llm-features/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">A/B Testing LLM Features — GrowthBook, Statsig, and the Vibes Problem</h1>
+    <p class="lesson-sub">Traditional A/B testing was not built for non-deterministic LLMs. The critical distinction: evals answer &quot;can the model do the job?&quot; A/B tests answer &quot;do users care?&quot; Both are required; shipping on vibe checks is over. What to test in 2026: prompt engineering (wording), model selection (GPT-4 vs GPT-3.5 vs OSS; accuracy vs cost vs latency), generation parameters (temperature, top-p). Real cases: a chatbot reward-model variant delivered +70% conversation length and +30% retention; Nextdoor AI subject-line experiments delivered +1% CTR after reward-function refinement; Khan Academy Khanmigo iterated on a latency-vs-math-accuracy axis. Platform split: **Statsig** (acquired by OpenAI for $1.1B in September 2025) — sequential testing, CUPED, all-in-one. **GrowthBook** — open-source, warehouse-native, Bayesian + Frequentist + Sequential engines, CUPED, SRM checks, Benjamini-Hochberg + Bonferroni corrections. You pick based on warehouse-SQL preference and whether &quot;acquired by OpenAI&quot; matters to your organization.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy sequential test simulator)</b></div><div><span>Prerequisites</span><b>Phase 17 · 13 (Observability), Phase 17 · 20 (Progressive Deployment)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 21">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="21.9" y="125.4" width="28.1" height="28.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(162 36.0 139.4)"/>
+        <rect x="17.1" y="121.1" width="26.9" height="26.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(144 30.6 134.5)"/>
+        <rect x="12.4" y="116.8" width="25.6" height="25.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(127 25.2 129.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">21</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">A/B Testing LLM</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Features —…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish evals (&quot;can the model do the job&quot;) from A/B tests (&quot;do users care&quot;).</li>
+<li>Enumerate three testable axes (prompt, model, parameters) and pick the metric for each.</li>
+<li>Explain CUPED, sequential testing, and Benjamini-Hochberg multiple-comparison corrections.</li>
+<li>Pick Statsig or GrowthBook based on warehouse-SQL posture and corporate acquisition stance.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You hand-tuned a system prompt. It feels better. You ship it. Conversion changes by noise. You blame the metric. Or you shipped a new model and conversion didn&#39;t move — did the model degrade or was the change too small to detect? You don&#39;t know, because you shipped without an A/B.</p>
+<p>Evals answer whether the model can do a task on a labeled set. They do not answer whether users prefer the output. Only a controlled online experiment answers that, and only if the experiment has enough power, controls for non-determinism, and corrects for multiple comparisons.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="evals-vs-ab-tests"><a class="anchor" href="#evals-vs-ab-tests">#</a> Evals vs A/B tests</h3>
+<p><strong>Evals</strong> — offline, labeled set, judge (rubric or LLM-as-judge or human). Answer: &quot;Is the output correct / helpful / safe on this fixed distribution?&quot;</p>
+<p><strong>A/B test</strong> — online, live users, randomized. Answer: &quot;Does the new variant move the user-level metric that matters?&quot;</p>
+<p>Both required. Evals catch regressions before exposure; A/B confirms product impact after.</p>
+<h3 id="what-to-test"><a class="anchor" href="#what-to-test">#</a> What to test</h3>
+<ol>
+<li><strong>Prompt engineering</strong> — wording, system-prompt structure, examples. Metric: task success, user retention, cost/request.</li>
+<li><strong>Model selection</strong> — GPT-4 vs GPT-3.5-Turbo vs Llama-OSS. Metric: accuracy (task) + cost/request + latency P99. Multi-objective.</li>
+<li><strong>Generation parameters</strong> — temperature, top-p, max_tokens. Metric: task-specific (output diversity vs determinism).</li>
+</ol>
+<h3 id="cuped-variance-reduction"><a class="anchor" href="#cuped-variance-reduction">#</a> CUPED — variance reduction</h3>
+<p>Controlled-experiments Using Pre-Experiment Data. Regress out pre-period variance before comparing post-period. Typical variance reduction: 30-70%. Effective sample size goes up for free.</p>
+<p>Implementation: both Statsig and GrowthBook implement.</p>
+<h3 id="sequential-testing"><a class="anchor" href="#sequential-testing">#</a> Sequential testing</h3>
+<p>Classical A/B assumes fixed sample size. Sequential tests (&quot;peek-and-decide&quot;) control false-positive rate under repeated looks. Always-valid sequential procedures (mSPRT, Howard&#39;s confidence sequences) let you stop early on clear winners.</p>
+<h3 id="multiple-comparison-corrections"><a class="anchor" href="#multiple-comparison-corrections">#</a> Multiple-comparison corrections</h3>
+<p>Running 20 A/B tests at 95% confidence produces one false positive by chance. Bonferroni correction tightens α per-test; Benjamini-Hochberg controls false-discovery rate. GrowthBook implements both.</p>
+<h3 id="srm-sample-ratio-mismatch"><a class="anchor" href="#srm-sample-ratio-mismatch">#</a> SRM — sample ratio mismatch</h3>
+<p>Assignment hash randomizes users to variants. If 50/50 split delivers 47/53, something is broken — SRM check flags it. Both platforms implement.</p>
+<h3 id="statsig-vs-growthbook"><a class="anchor" href="#statsig-vs-growthbook">#</a> Statsig vs GrowthBook</h3>
+<p><strong>Statsig</strong>:</p>
+<ul>
+<li>Acquired by OpenAI for $1.1B (September 2025). Hosted, SaaS.</li>
+<li>Sequential testing, CUPED, held-out populations.</li>
+<li>All-in-one: feature flags + experimentation + observability.</li>
+<li>Best fit: team already wants a bundled product, doesn&#39;t care about OpenAI ownership.</li>
+</ul>
+<p><strong>GrowthBook</strong>:</p>
+<ul>
+<li>Open-source (MIT); warehouse-native (reads from Snowflake/BigQuery/Redshift directly).</li>
+<li>Multiple engines: Bayesian, Frequentist, Sequential.</li>
+<li>CUPED, SRM, Bonferroni, BH corrections.</li>
+<li>Self-host or managed cloud.</li>
+<li>Best fit: warehouse-SQL shop, data team controls the metric layer, wants OSS.</li>
+</ul>
+<h3 id="non-determinism-complicates-power"><a class="anchor" href="#non-determinism-complicates-power">#</a> Non-determinism complicates power</h3>
+<p>Same prompt produces varying outputs. Traditional power calculations assume IID observations. With LLM non-determinism, effective sample size is lower than nominal. Multiply required sample size by ~1.3-1.5x as a safety margin.</p>
+<h3 id="real-case-outcomes"><a class="anchor" href="#real-case-outcomes">#</a> Real case outcomes</h3>
+<ul>
+<li>Chatbot reward model variant: +70% conversation length, +30% retention.</li>
+<li>Nextdoor subject lines: +1% CTR after reward-function refinement.</li>
+<li>Khan Academy Khanmigo: iterative latency-vs-math-accuracy trade.</li>
+</ul>
+<h3 id="the-anti-pattern-shipping-on-vibes"><a class="anchor" href="#the-anti-pattern-shipping-on-vibes">#</a> The anti-pattern: shipping on vibes</h3>
+<p>Every senior engineer can name a feature that was shipped because &quot;it feels better&quot; with no A/B. Most of them regressed product metrics the team didn&#39;t notice for months. A/B is the forcing function.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>Statsig acquired by OpenAI: $1.1B, September 2025.</li>
+<li>GrowthBook: open-source MIT; Bayesian + Frequentist + Sequential.</li>
+<li>CUPED variance reduction: 30-70%.</li>
+<li>LLM non-determinism → +30-50% sample-size buffer.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mx-sequential-test</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a sequential A/B test with fixed and sequential boundaries. Shows how sequential lets you stop early.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-ab-plan.md</code>. Given feature change, workload, baseline, picks platform, gates, sample size.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. For an expected 5% lift with baseline 3% conversion, what sample size to 80% power?</li>
+<li>Pick Statsig or GrowthBook for a healthcare-regulated on-prem customer.</li>
+<li>Design an A/B that tests GPT-4 vs GPT-3.5 on cost-per-resolved-ticket. What&#39;s the primary metric, guardrail metric, secondary?</li>
+<li>Your canary passes but A/B shows -1.2% conversion. Do you ship? Write the escalation criteria.</li>
+<li>Apply CUPED to a pre-period with 60% of the variance of post. Compute the effective-sample-size boost.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Eval</td>
+<td>&quot;offline test&quot;</td>
+<td>Labeled-set evaluation of model capability</td>
+</tr>
+<tr>
+<td>A/B test</td>
+<td>&quot;experiment&quot;</td>
+<td>Live randomized comparison on users</td>
+</tr>
+<tr>
+<td>CUPED</td>
+<td>&quot;variance reduction&quot;</td>
+<td>Pre-period regression to reduce variance</td>
+</tr>
+<tr>
+<td>Sequential test</td>
+<td>&quot;peek-ok test&quot;</td>
+<td>Always-valid procedure allowing early stop</td>
+</tr>
+<tr>
+<td>Multiple comparison</td>
+<td>&quot;the family error&quot;</td>
+<td>Running many tests inflates false positives</td>
+</tr>
+<tr>
+<td>Bonferroni</td>
+<td>&quot;tight correction&quot;</td>
+<td>Divide α by number of tests</td>
+</tr>
+<tr>
+<td>Benjamini-Hochberg</td>
+<td>&quot;BH FDR&quot;</td>
+<td>False-discovery-rate control, less conservative</td>
+</tr>
+<tr>
+<td>SRM</td>
+<td>&quot;bad split&quot;</td>
+<td>Sample ratio mismatch; assignment bug</td>
+</tr>
+<tr>
+<td>Statsig</td>
+<td>&quot;OpenAI owned&quot;</td>
+<td>Commercial all-in-one, acquired 2025</td>
+</tr>
+<tr>
+<td>GrowthBook</td>
+<td>&quot;the OSS one&quot;</td>
+<td>MIT warehouse-native platform</td>
+</tr>
+<tr>
+<td>mSPRT</td>
+<td>&quot;sequential probability ratio test&quot;</td>
+<td>Classical sequential procedure</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://blog.growthbook.io/how-to-a-b-test-ai-a-practical-guide/">GrowthBook — How to A/B Test AI</a></li>
+<li><a href="https://www.statsig.com/blog/llm-optimization-online-experimentation">Statsig — Beyond Prompts: Data-Driven LLM Optimization</a></li>
+<li><a href="https://www.statsig.com/perspectives/ab-testing-feature-flags-comparison-tools">Statsig vs GrowthBook comparison</a></li>
+<li><a href="https://www.exp-platform.com/Documents/2013-02-CUPED-ImprovingSensitivityOfControlledExperiments.pdf">Deng et al. — CUPED</a></li>
+<li><a href="https://arxiv.org/abs/1810.08240">Howard — Confidence Sequences</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./20-shadow-canary-progressive.html"><span>← Previous</span><b>shadow canary progressive</b></a>
+      <a class="next" href="./22-load-testing-llm-apis.html"><span>Next →</span><b>load testing llm apis</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

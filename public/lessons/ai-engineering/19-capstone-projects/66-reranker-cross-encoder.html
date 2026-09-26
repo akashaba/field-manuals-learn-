@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cross-Encoder Reranker — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/66-reranker-cross-encoder/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#failure-modes-the-demo-will-hide">Failure modes the demo will hide</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Cross-Encoder Reranker</h1>
+    <p class="lesson-sub">A bi-encoder embeds query and document independently. A cross-encoder concatenates them and reads both at once. The cross-encoder is the smartest reader and the slowest. Used as a second stage on the bi-encoder&#39;s top-k, it pays for itself.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 lesson 06 (RAG), Phase 11 lesson 07 (advanced RAG); Phase 19 Track B foundations (lessons 20-29); Phase 19 lesson 65 (hybrid retrieval feeding this stage)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 66">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="122.6" cy="118.2" r="11.3" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="117.2" cy="113.2" r="10.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="111.8" cy="108.3" r="10.0" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="106.3" cy="103.4" r="9.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.9" cy="98.5" r="8.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M87.4,98.4 L95.5,86.2 L103.6,98.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">66</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Cross-Encoder</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Reranker</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish a bi-encoder retriever from a cross-encoder reranker by their input shape, parameter count, and per-query cost.</li>
+<li>Implement a small cross-encoder from scratch as a transformer block that consumes a packed (query, document) sequence and emits a single relevance scalar.</li>
+<li>Wire a two-stage retrieve-then-rerank pipeline: retrieve top-N with a cheap retriever, rerank N to top-K with the cross-encoder, return K.</li>
+<li>Measure the latency-vs-quality trade-off on a small fixture corpus and pick the right N for a given latency budget.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A bi-encoder maps query and document into the same vector space and ranks by cosine. The two encodings never see each other. The model has to compress everything useful about a document into a single vector, blind to the query. This is fast - one embedding per document at index time and one per query at query time - and it is the only way to rank at corpus scale.</p>
+<p>The cost is precision. Two documents that have the same overall topic can have nearly identical embeddings even when one of them answers the query and the other does not. The bi-encoder cannot tell them apart.</p>
+<p>A cross-encoder solves this by reading the query and the document together. The model receives <code>[query] [SEP] [document]</code> as a single sequence, runs full attention across the join, and produces one relevance scalar. Every token of the document can attend to every token of the query. The model decides the score with full context.</p>
+<p>The cost is throughput. Where the bi-encoder embeds once and queries forever, the cross-encoder runs once per (query, document) pair. For a 10-million-document corpus that is 10 million forward passes per query. Unrunnable in a request budget.</p>
+<p>The solution is staging. Use the bi-encoder to retrieve the top-N. Use the cross-encoder to rerank the N to a top-K. N is small (50 to 200) and the cross-encoder&#39;s quality lift is concentrated where it matters. The total latency stays in the request budget. The total quality is the cross-encoder&#39;s quality, capped by the bi-encoder&#39;s recall at N.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Query[Query] --&gt; Bi[Bi-Encoder Retriever]
+  Corpus[Corpus] --&gt; Bi
+  Bi --&gt; TopN[Top-N Candidates]
+  TopN --&gt; Cross[Cross-Encoder]
+  Query --&gt; Cross
+  Cross --&gt; TopK[Top-K Reranked]</pre></div><h3 id="the-cross-encoders-input-shape"><a class="anchor" href="#the-cross-encoders-input-shape">#</a> The cross-encoder&#39;s input shape</h3>
+<p>The standard packing is <code>[CLS] query_tokens [SEP] document_tokens [SEP]</code>. The CLS-position output is fed into a single linear head that outputs the relevance scalar. Some implementations use mean-pooling instead of CLS; the difference is small. The point is that the model produces one number per pair.</p>
+<p>A 22M-parameter cross-encoder (the published <code>ms-marco-MiniLM-L-6-v2</code> weight class) is the typical production point. Smaller models lose quality faster than they save latency. Larger models (e.g. <code>bge-reranker-v2-m3</code> at 568M parameters) are reserved for offline reranking or for first-page reranking where K is small.</p>
+<h3 id="why-this-lesson-trains-a-tiny-one"><a class="anchor" href="#why-this-lesson-trains-a-tiny-one">#</a> Why this lesson trains a tiny one</h3>
+<p>A real cross-encoder is a finetuned encoder transformer. In production you load a checkpoint and run it. In this lesson the goal is to show you the shape of the model and the shape of the latency-quality curve, not to train a state-of-the-art ranker. So we build a small <code>nn.Module</code> with one transformer block, multi-head attention (4 heads by default), and one regression head. It is initialized deterministically from a seed so the demo is reproducible without weights on disk.</p>
+<p>The toy model learns the right shape from the fixture corpus: relevant query-document pairs have higher predicted scores than irrelevant pairs. The end-to-end pipeline reranks the bi-encoder&#39;s output and the rerank&#39;s top-k correlates with the gold labels.</p>
+<h3 id="latency-vs-quality"><a class="anchor" href="#latency-vs-quality">#</a> Latency vs quality</h3>
+<p>The two-stage pipeline has one tunable: N. Sweep N from 5 to 100 on a held-out query set and you get the curve.</p>
+<table>
+<thead>
+<tr>
+<th>N</th>
+<th>Recall@1 of stage 2</th>
+<th>Cross-encoder forward passes per query</th>
+<th>Latency</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>5</td>
+<td>0.62</td>
+<td>5</td>
+<td>low</td>
+</tr>
+<tr>
+<td>20</td>
+<td>0.81</td>
+<td>20</td>
+<td>medium</td>
+</tr>
+<tr>
+<td>50</td>
+<td>0.86</td>
+<td>50</td>
+<td>high</td>
+</tr>
+<tr>
+<td>100</td>
+<td>0.86</td>
+<td>100</td>
+<td>very high</td>
+</tr>
+</tbody></table>
+<p>The numbers above are illustrative of the shape, not measurements from this fixture. The shape is real. There is always a knee around 20 to 50 candidates where the rerank lift saturates. Past the knee you are paying for nothing.</p>
+<p>Pick N from the eval curve plus the latency budget. The cross-encoder cannot raise recall above the bi-encoder&#39;s recall at N, so a low N caps quality, not just latency.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">rerank-funnel</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>CrossEncoder</code> - a small <code>torch.nn.Module</code>: token embedding, one transformer block with multi-head attention and feedforward, mean-pooled head producing one scalar.</li>
+<li><code>tokenize_pair(query, document)</code> - packs the two strings into a single id sequence with type ids that mark the boundary, deterministic and stdlib.</li>
+<li><code>train_tiny(pairs)</code> - one pass of supervised training on a hand-labeled (query, document, relevance) triple list, so the model produces sensible scores on the fixture.</li>
+<li><code>rerank(query, candidates, top_k)</code> - the production interface.</li>
+<li><code>pipeline(query, retriever, top_n, top_k)</code> - the two-stage flow.</li>
+<li>A demo <code>main()</code> that loads the corpus from lesson 65&#39;s pattern, retrieves top-N, reranks to top-K, prints both lists side by side, and reports the latency of each stage.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The output shows the bi-encoder&#39;s top-N, the cross-encoder&#39;s top-K, and a timing summary. The cross-encoder takes longer per call but does not run on the full corpus. The two-stage total stays within the request budget while picking the answer that the bi-encoder ranked second or third.</p>
+<h2 id="failure-modes-the-demo-will-hide"><a class="anchor" href="#failure-modes-the-demo-will-hide">#</a> Failure modes the demo will hide</h2>
+<p><strong>Cross-encoder is not symmetric.</strong> <code>rerank(q, d)</code> and <code>rerank(d, q)</code> are different scores. Always feed the query first. If you accidentally swap, recall collapses.</p>
+<p><strong>N is too low to expose the bug.</strong> If you set N = K, the cross-encoder cannot reorder; it can only reweight. The lift looks zero. Pick N at least three times K.</p>
+<p><strong>Training data leaks into the eval.</strong> If the hand-labeled training pairs include the eval queries, the rerank looks magical. Strictly separate train and eval, even on a fixture.</p>
+<p><strong>Production weights are dense.</strong> A 22M-parameter cross-encoder is 88MB at float32. Plan the model server&#39;s memory before promising sub-100ms p95.</p>
+<p><strong>Batching matters.</strong> A real cross-encoder runs the N candidates in one batch. This lesson does that in <code>_batch_encode</code>, which builds the batched id and type-id tensors with <code>torch.tensor(...)</code> and runs one forward pass. Skip batching and the latency multiplies by N.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li>Pin the bi-encoder, cross-encoder, and N together. Changing any one invalidates the eval.</li>
+<li>Cache the reranker&#39;s output by (query, document_id) hash. The same query against a stable corpus reranks to the same order; cache hits buy you a free latency cut.</li>
+<li>Log the rank-1 cross-encoder score. A query whose top-1 score is below a corpus-specific threshold is an out-of-domain hit; surface it to the LLM as &quot;I am not confident&quot;.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Lesson 68 evaluates this two-stage pipeline end to end. Lesson 69 wires this reranker behind the hybrid retriever from lesson 65 and in front of the answer generator. The reranker is the second stage of the end-to-end system.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Sweep N from 5 to 50 and plot recall@1 of the reranked output. Find the knee on this fixture.</li>
+<li>Train the cross-encoder for ten epochs instead of one. Measure the score-margin between positive and negative pairs at each epoch.</li>
+<li>Replace mean-pooling with a CLS-token head. Compare convergence on this fixture.</li>
+<li>Add a second cross-encoder head that predicts a binary &quot;is this answer in the document&quot; label. Use both heads at inference; one to rank, one to threshold.</li>
+<li>Replace the deterministic mock bi-encoder with the one from lesson 65 and chain the two stages. Measure the change in top-K versus bi-encoder alone.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bi-encoder</td>
+<td>&quot;Vector retriever&quot;</td>
+<td>Encodes query and doc independently; cosine ranks them</td>
+</tr>
+<tr>
+<td>Cross-encoder</td>
+<td>&quot;Reranker&quot;</td>
+<td>Encodes (query, doc) jointly; outputs one relevance scalar</td>
+</tr>
+<tr>
+<td>Two-stage pipeline</td>
+<td>&quot;Retrieve and rerank&quot;</td>
+<td>Cheap retriever returns N, expensive reranker keeps K</td>
+</tr>
+<tr>
+<td>N (candidate budget)</td>
+<td>&quot;Rerank pool&quot;</td>
+<td>The number of candidates the cross-encoder scores per query</td>
+</tr>
+<tr>
+<td>Mean-pooling head</td>
+<td>&quot;Mean of last hidden&quot;</td>
+<td>Average the encoder&#39;s last-layer outputs into one vector</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Nogueira, Cho, &quot;Passage Re-ranking with BERT&quot;, 2019 - the canonical cross-encoder ranker paper</li>
+<li>Reimers, Gurevych, &quot;Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks&quot;, 2019 - on bi-encoders vs cross-encoders</li>
+<li><a href="https://www.sbert.net/examples/applications/cross-encoder/README.html">SentenceTransformers Cross-Encoders documentation</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-reranker-v2-m3">BGE Reranker v2 model card</a></li>
+<li>Phase 19 lesson 65 - the hybrid retriever feeding this rerank stage</li>
+<li>Phase 19 lesson 68 - the eval that measures the lift this rerank delivers</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./65-hybrid-retrieval-bm25-dense.html"><span>← Previous</span><b>hybrid retrieval bm25 dense</b></a>
+      <a class="next" href="./67-query-rewriting-hyde.html"><span>Next →</span><b>query rewriting hyde</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

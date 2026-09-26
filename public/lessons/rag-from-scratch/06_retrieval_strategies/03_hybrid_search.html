@@ -1,0 +1,2267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hybrid Search — RAG from Scratch</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#c05621;--accent-2:#8a3d17;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/rag-from-scratch"><b>RAG from Scratch</b></a>
+  <nav>
+    <a href="/rag-from-scratch">Index</a>
+    <a href="https://github.com/pguso/rag-from-scratch/blob/main/examples/06_retrieval_strategies/03_hybrid_search/CONCEPT.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/rag-from-scratch">RAG from Scratch</a>
+    </div>
+    <div class="phase-label">Retrieval Strategies</div>
+    <ol class="toc"><li><a href="#what-is-hybrid-search">What is Hybrid Search?</a></li><li><a href="#the-real-problem-nobody-talks-about">The Real Problem Nobody Talks About</a></li><li><a href="#how-to-build-hybrid-search-that-actually-works">How to Build Hybrid Search That Actually Works</a></li><li><a href="#two-combination-methods-weighted-vs-rrf">Two Combination Methods: Weighted vs RRF</a></li><li><a href="#real-world-examples">Real-World Examples</a></li><li><a href="#combining-with-filters">Combining with Filters</a></li><li><a href="#understanding-bm25">Understanding BM25</a></li><li><a href="#common-patterns-and-tips">Common Patterns and Tips</a></li><li><a href="#when-hybrid-search-really-shines">When Hybrid Search Really Shines</a></li><li><a href="#quick-reference">Quick Reference</a></li><li><a href="#code-walkthrough">Code walkthrough</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">RAG from Scratch · Retrieval Strategies</div>
+    <h1 class="lesson-title">Hybrid Search</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RAG from Scratch — Retrieval Strategies 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M81.5,91.9 L88.8,80.9 L96.1,91.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M76.7,86.5 L83.4,76.5 L90.1,86.5 Z" fill="none" stroke="#8a3d17" stroke-width="1.1" opacity="0.55"/>
+        <path d="M71.9,81.2 L78.0,72.2 L84.0,81.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M67.2,75.9 L72.6,67.8 L77.9,75.9 Z" fill="none" stroke="#8a3d17" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.4,78.4 L67.1,51.8 L84.9,78.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="128" lengthAdjust="spacingAndGlyphs">RAG FROM SCRATCH</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">RETRIEVAL STRATEGIES</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hybrid Search</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="what-is-hybrid-search"><a class="anchor" href="#what-is-hybrid-search">#</a> What is Hybrid Search?</h2>
+<h3 id="the-simple-answer"><a class="anchor" href="#the-simple-answer">#</a> The Simple Answer</h3>
+<p>Hybrid search is like having <strong>two search engines working together</strong>:</p>
+<ol>
+<li><strong>One that understands meaning</strong> (semantic search)</li>
+<li><strong>One that finds exact words</strong> (keyword search)</li>
+</ol>
+<p>By combining both, you get better results than using either one alone.</p>
+<h3 id="a-real-world-analogy"><a class="anchor" href="#a-real-world-analogy">#</a> A Real-World Analogy</h3>
+<p>Imagine you&#39;re looking for a restaurant:</p>
+<p><strong>Friend #1</strong> (Semantic searcher):</p>
+<ul>
+<li>Understands: &quot;I want Italian food&quot; = pizza, pasta, risotto</li>
+<li>Good at: Finding things by concept and meaning</li>
+<li>Weakness: Might miss if you say &quot;I want Alfredo&#39;s Pizza&quot; (specific name)</li>
+</ul>
+<p><strong>Friend #2</strong> (Keyword searcher):</p>
+<ul>
+<li>Searches for: Exact words like &quot;Alfredo&#39;s Pizza&quot;</li>
+<li>Good at: Finding specific names and terms</li>
+<li>Weakness: If you say &quot;Italian food,&quot; won&#39;t connect it to pizza places</li>
+</ul>
+<p><strong>Both friends together</strong> (Hybrid search):</p>
+<ul>
+<li>Friend #1 finds Italian restaurants (concept)</li>
+<li>Friend #2 finds &quot;Alfredo&#39;s Pizza&quot; (exact name)</li>
+<li>You get the best of both!</li>
+</ul>
+<hr>
+<h2 id="the-real-problem-nobody-talks-about"><a class="anchor" href="#the-real-problem-nobody-talks-about">#</a> The Real Problem Nobody Talks About</h2>
+<p>Most tutorials tell you &quot;combine vector search with keyword search&quot; and show you a 0.5/0.5 weight split. That&#39;s it. But when you build this with real product data, you immediately hit these problems:</p>
+<h3 id="problem-1-sku-codes-break-vector-search"><a class="anchor" href="#problem-1-sku-codes-break-vector-search">#</a> Problem #1: SKU Codes Break Vector Search</h3>
+<p><strong>The scenario:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;MBP-M3MAX-32-1TB&quot;
+Vector search returns: Generic laptop descriptions ✗
+Keyword search returns: Exact product match ✓
+
+Why? Vector embeddings don&#39;t understand alphanumeric codes!</code></pre>
+      </div>
+    <p><strong>Real example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Product in your catalog:
+  Title: &quot;Apple MacBook Pro 16-inch M3 Max&quot;
+  SKU: &quot;MBP-M3MAX-32-1TB&quot;
+  Description: &quot;Powerful laptop with advanced M3 Max chip...&quot;
+
+Vector Search Result (similarity: 0.3):
+  → &quot;Dell Inspiron laptop with Intel processor...&quot; ✗ WRONG
+  
+Keyword Search Result (BM25 score: 45.2):
+  → &quot;Apple MacBook Pro 16-inch M3 Max&quot; ✓ CORRECT</code></pre>
+      </div>
+    <p>This is why a fixed 0.5/0.5 split fails catastrophically for product searches.</p>
+<h3 id="problem-2-score-ranges-dont-match"><a class="anchor" href="#problem-2-score-ranges-dont-match">#</a> Problem #2: Score Ranges Don&#39;t Match</h3>
+<p><strong>The mismatch:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Vector similarity scores: 0.3 to 0.4 (small range)
+BM25 keyword scores: 15 to 50 (large range)
+
+If you just add them together, BM25 dominates everything!</code></pre>
+      </div>
+    <p><strong>Concrete example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Document A:
+  Vector: 0.35
+  BM25: 18.5
+  Naive sum: 18.85 ← BM25 score dominates
+
+Document B:
+  Vector: 0.42  ← Actually a better semantic match!
+  BM25: 15.0
+  Naive sum: 15.42 ← Ranks LOWER despite better meaning
+
+Result: Your vector search becomes completely useless!</code></pre>
+      </div>
+    <p><strong>You MUST normalize scores before combining. This is not optional.</strong></p>
+<h3 id="problem-3-different-queries-need-different-weights"><a class="anchor" href="#problem-3-different-queries-need-different-weights">#</a> Problem #3: Different Queries Need Different Weights</h3>
+<p><strong>Why 0.5/0.5 fails:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query 1: &quot;MBP-M3MAX-32-1TB&quot;
+What it needs: Keyword-heavy (0.2 vector / 0.8 keyword)
+Why: It&#39;s a product code, semantic search is useless here
+
+Query 2: &quot;What&#39;s the best laptop for video editing?&quot;
+What it needs: Vector-heavy (0.8 vector / 0.2 keyword)
+Why: Natural language question needs understanding
+
+Query 3: &quot;Sony headphones&quot;
+What it needs: Balanced (0.5 / 0.5)
+Why: Brand name + product category, both matter
+
+One weight setting cannot possibly work for all three!</code></pre>
+      </div>
+    <hr>
+<h2 id="how-to-build-hybrid-search-that-actually-works"><a class="anchor" href="#how-to-build-hybrid-search-that-actually-works">#</a> How to Build Hybrid Search That Actually Works</h2>
+<h3 id="step-1-score-normalization-critical"><a class="anchor" href="#step-1-score-normalization-critical">#</a> Step 1: Score Normalization (CRITICAL)</h3>
+<p>You have three options. Here&#39;s when to use each:</p>
+<h4 id="option-1-min-max-normalization"><a class="anchor" href="#option-1-min-max-normalization">#</a> Option 1: Min-Max Normalization</h4>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">normalized_score = (score - min_score) / (max_score - min_score)</code></pre>
+      </div>
+    <p><strong>Example with BM25 scores:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Raw scores: [15, 25, 50]
+Min: 15, Max: 50, Range: 35
+
+Normalized:
+  15 → (15-15)/35 = 0.0
+  25 → (25-15)/35 = 0.286
+  50 → (50-15)/35 = 1.0</code></pre>
+      </div>
+    <p><strong>Pros:</strong> Simple, always gives 0-1 range<br><strong>Cons:</strong> Sensitive to outliers (one extreme score skews everything)<br><strong>Use when:</strong> Quick prototyping, well-behaved data</p>
+<h4 id="option-2-z-score-normalization"><a class="anchor" href="#option-2-z-score-normalization">#</a> Option 2: Z-Score Normalization</h4>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">normalized_score = (score - mean) / standard_deviation</code></pre>
+      </div>
+    <p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Raw scores: [15, 25, 50]
+Mean: 30, Std Dev: 14.79
+
+Normalized:
+  15 → (15-30)/14.79 = -1.01
+  25 → (25-30)/14.79 = -0.34
+  50 → (50-30)/14.79 = 1.35</code></pre>
+      </div>
+    <p><strong>Pros:</strong> Preserves distribution shape<br><strong>Cons:</strong> Can give negative values, needs additional scaling<br><strong>Use when:</strong> Statistical analysis matters</p>
+<h4 id="option-3-rank-based-normalization-recommended"><a class="anchor" href="#option-3-rank-based-normalization-recommended">#</a> Option 3: Rank-Based Normalization (RECOMMENDED)</h4>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">normalized_score = rank_position / total_results</code></pre>
+      </div>
+    <p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Sorted results:
+  1st place (score 50) → 1/3 = 0.33
+  2nd place (score 25) → 2/3 = 0.67
+  3rd place (score 15) → 3/3 = 1.0</code></pre>
+      </div>
+    <p><strong>Pros:</strong> Most robust, handles any score scale, used by RRF<br><strong>Cons:</strong> Loses exact score magnitude<br><strong>Use when:</strong> Production systems (this is what actually works)</p>
+<p><strong>Decision guide:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Score scales vastly different? → Rank-Based (safest choice)
+Need exact precision? → Min-Max
+Statistical analysis? → Z-Score
+Not sure? → Rank-Based (production default)</code></pre>
+      </div>
+    <hr>
+<h3 id="step-2-dynamic-weight-selection"><a class="anchor" href="#step-2-dynamic-weight-selection">#</a> Step 2: Dynamic Weight Selection</h3>
+<p><strong>Stop hardcoding weights. Auto-detect query patterns instead.</strong></p>
+<p>You have two approaches: <strong>rule-based</strong> (fast, predictable) or <strong>LLM-based</strong> (smart, flexible).</p>
+<h4 id="approach-a-rule-based-pattern-detection-fast"><a class="anchor" href="#approach-a-rule-based-pattern-detection-fast">#</a> Approach A: Rule-Based Pattern Detection (Fast)</h4>
+<p><strong>Best for:</strong> Production systems, low latency requirements, predictable patterns</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function analyzeQuery(query) {
+    const upperCount = (query.match(/[A-Z]/g) || []).length;
+    const digitCount = (query.match(/\d/g) || []).length;
+    const hyphenCount = (query.match(/-/g) || []).length;
+    
+    // SKU/Product code pattern
+    // Examples: &quot;MBP-M3MAX-32-1TB&quot;, &quot;PROD-12345-XL&quot;
+    if (hyphenCount &gt;= 2 || (upperCount &gt; 3 &amp;&amp; digitCount &gt; 0)) {
+        return { vector: 0.2, text: 0.8 }; // keyword-heavy
+    }
+    
+    // Natural language question
+    // Examples: &quot;What laptop is best?&quot;, &quot;How do I...?&quot;
+    if (/^(what|how|which|why|when|where)/i.test(query)) {
+        return { vector: 0.8, text: 0.2 }; // vector-heavy
+    }
+    
+    // Brand + product (2 words, one capitalized)
+    // Examples: &quot;Sony headphones&quot;, &quot;Apple laptop&quot;
+    const words = query.split(&#39; &#39;);
+    if (words.length === 2 &amp;&amp; upperCount &gt; 0) {
+        return { vector: 0.5, text: 0.5 }; // balanced
+    }
+    
+    // Default to balanced
+    return { vector: 0.5, text: 0.5 };
+}</code></pre>
+      </div>
+    <p><strong>Pros:</strong></p>
+<ul>
+<li>Fast (&lt; 1ms)</li>
+<li>Predictable</li>
+<li>No API costs</li>
+<li>Easy to debug</li>
+</ul>
+<p><strong>Cons:</strong></p>
+<ul>
+<li>Limited to patterns you define</li>
+<li>Can&#39;t handle nuanced queries</li>
+<li>Requires manual tuning</li>
+</ul>
+<h4 id="approach-b-llm-based-query-classification-smart"><a class="anchor" href="#approach-b-llm-based-query-classification-smart">#</a> Approach B: LLM-Based Query Classification (Smart)</h4>
+<p><strong>Best for:</strong> Complex queries, when you need reasoning, high-quality search experiences</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function analyzeQueryWithLLM(query) {
+    const prompt = `Analyze this search query and classify it to determine optimal search weights.
+
+Query: &quot;${query}&quot;
+
+Classify into ONE of these categories:
+
+1. PRODUCT_CODE: Contains SKU, product code, or alphanumeric identifier
+   Examples: &quot;MBP-M3MAX-32-1TB&quot;, &quot;SKU-12345&quot;, &quot;PROD-001-XL&quot;
+   Weights: vector=0.2, keyword=0.8
+
+2. NATURAL_QUESTION: Conversational question seeking recommendations
+   Examples: &quot;What&#39;s the best laptop?&quot;, &quot;How do I choose headphones?&quot;
+   Weights: vector=0.8, keyword=0.2
+
+3. BRAND_CATEGORY: Brand name + product category
+   Examples: &quot;Sony headphones&quot;, &quot;Apple laptop&quot;, &quot;Dell monitor&quot;
+   Weights: vector=0.5, keyword=0.5
+
+4. TECHNICAL_TERM: Technical jargon, acronyms, specific terminology
+   Examples: &quot;PostgreSQL ACID&quot;, &quot;CNN architecture&quot;, &quot;GraphQL schema&quot;
+   Weights: vector=0.3, keyword=0.7
+
+5. FEATURE_SEARCH: Describes features or attributes
+   Examples: &quot;wireless noise canceling&quot;, &quot;16GB RAM laptop&quot;, &quot;4K monitor&quot;
+   Weights: vector=0.6, keyword=0.4
+
+Respond ONLY with JSON:
+{
+  &quot;category&quot;: &quot;CATEGORY_NAME&quot;,
+  &quot;reasoning&quot;: &quot;brief explanation&quot;,
+  &quot;weights&quot;: { &quot;vector&quot;: 0.X, &quot;keyword&quot;: 0.X }
+}`;
+
+    const response = await llm.complete(prompt);
+    const result = JSON.parse(response);
+    
+    return {
+        vector: result.weights.vector,
+        text: result.weights.keyword,
+        reasoning: result.reasoning
+    };
+}</code></pre>
+      </div>
+    <p><strong>Example LLM responses:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">Query: &quot;MBP-M3MAX-32-1TB&quot;
+Response: {
+    &quot;category&quot;: &quot;PRODUCT_CODE&quot;,
+    &quot;reasoning&quot;: &quot;Contains alphanumeric code with hyphens typical of SKU&quot;,
+    &quot;weights&quot;: { &quot;vector&quot;: 0.2, &quot;keyword&quot;: 0.8 }
+  }
+
+Query: &quot;laptop for machine learning under $2000&quot;
+Response: {
+    &quot;category&quot;: &quot;FEATURE_SEARCH&quot;,
+    &quot;reasoning&quot;: &quot;Describes use case (ML) and constraint (price)&quot;,
+    &quot;weights&quot;: { &quot;vector&quot;: 0.6, &quot;keyword&quot;: 0.4 }
+  }
+
+Query: &quot;how do Sony headphones compare to Bose&quot;
+Response: {
+    &quot;category&quot;: &quot;NATURAL_QUESTION&quot;,
+    &quot;reasoning&quot;: &quot;Comparative question needing conceptual understanding&quot;,
+    &quot;weights&quot;: { &quot;vector&quot;: 0.8, &quot;keyword&quot;: 0.2 }
+  }</code></pre>
+      </div>
+    <p><strong>Pros:</strong></p>
+<ul>
+<li>Handles complex/nuanced queries</li>
+<li>Can reason about edge cases</li>
+<li>Adapts to new patterns without code changes</li>
+<li>Can explain its decisions</li>
+</ul>
+<p><strong>Cons:</strong></p>
+<ul>
+<li>Slower (100-500ms)</li>
+<li>Costs per query</li>
+<li>Needs fallback if LLM fails</li>
+<li>Less predictable</li>
+</ul>
+<h4 id="approach-c-hybrid-best-of-both"><a class="anchor" href="#approach-c-hybrid-best-of-both">#</a> Approach C: Hybrid (Best of Both)</h4>
+<p>Use rule-based with LLM fallback for complex queries:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function analyzeQueryHybrid(query) {
+    // Fast path: Simple patterns
+    const ruleBasedResult = analyzeQueryRuleBased(query);
+    
+    // If confident, return immediately
+    if (ruleBasedResult.confidence &gt; 0.8) {
+        return ruleBasedResult;
+    }
+    
+    // Slow path: LLM for complex queries
+    try {
+        const llmResult = await analyzeQueryWithLLM(query);
+        return llmResult;
+    } catch (error) {
+        // Fallback to rule-based
+        console.log(&quot;LLM failed, using rules&quot;);
+        return ruleBasedResult;
+    }
+}
+
+function analyzeQueryRuleBased(query) {
+    const upperCount = (query.match(/[A-Z]/g) || []).length;
+    const digitCount = (query.match(/\d/g) || []).length;
+    const hyphenCount = (query.match(/-/g) || []).length;
+    
+    // High confidence patterns
+    if (hyphenCount &gt;= 2 || (upperCount &gt; 3 &amp;&amp; digitCount &gt; 0)) {
+        return { 
+            vector: 0.2, 
+            text: 0.8, 
+            confidence: 0.95,
+            method: &#39;rule&#39; 
+        };
+    }
+    
+    if (/^(what|how|which|why)/i.test(query)) {
+        return { 
+            vector: 0.8, 
+            text: 0.2, 
+            confidence: 0.85,
+            method: &#39;rule&#39;
+        };
+    }
+    
+    // Low confidence - let LLM decide
+    return { 
+        vector: 0.5, 
+        text: 0.5, 
+        confidence: 0.5,
+        method: &#39;rule&#39;
+    };
+}</code></pre>
+      </div>
+    <h4 id="when-to-use-which-approach"><a class="anchor" href="#when-to-use-which-approach">#</a> When to Use Which Approach?</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌───────────────────────────────────────────────────────────┐
+│              QUERY CLASSIFICATION DECISION                │
+├───────────────────────────────────────────────────────────┤
+│                                                           │
+│ Simple, predictable queries (SKUs, brands)?               │
+│   → Rule-Based (Approach A)                               │
+│                                                           │
+│ Complex, nuanced queries (comparisons, multi-intent)?     │
+│   → LLM-Based (Approach B)                                │
+│                                                           │
+│ Mixed traffic, want best of both?                         │
+│   → Hybrid (Approach C)                                   │
+│                                                           │
+│ Ultra-low latency required (&lt; 10ms)?                      │
+│   → Rule-Based only                                       │
+│                                                           │
+│ Cost is primary concern?                                  │
+│   → Rule-Based (free)                                     │
+│                                                           │
+│ Quality is primary concern?                               │
+│   → LLM-Based (best results)                              │
+│                                                           │
+└───────────────────────────────────────────────────────────┘</code></pre>
+      </div>
+    <h4 id="real-world-performance-comparison"><a class="anchor" href="#real-world-performance-comparison">#</a> Real-World Performance Comparison</h4>
+<p>Test queries and results:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;MBP-M3MAX-32-1TB&quot;
+├─ Rule-Based: ✓ 0.2/0.8 (correct) - 0.5ms
+└─ LLM-Based:  ✓ 0.2/0.8 (correct) - 180ms
+
+Query: &quot;Sony headphones&quot;  
+├─ Rule-Based: ✓ 0.5/0.5 (correct) - 0.3ms
+└─ LLM-Based:  ✓ 0.5/0.5 (correct) - 150ms
+
+Query: &quot;laptop for machine learning under $2000 with good battery&quot;
+├─ Rule-Based: ~ 0.5/0.5 (generic fallback) - 0.4ms
+└─ LLM-Based:  ✓ 0.6/0.4 (optimal feature search) - 220ms
+
+Query: &quot;compare Sony WH-1000XM5 to Bose QC45 for travel&quot;
+├─ Rule-Based: ~ 0.5/0.5 (generic fallback) - 0.3ms  
+└─ LLM-Based:  ✓ 0.7/0.3 (comparison question) - 200ms</code></pre>
+      </div>
+    <p><strong>Key insight:</strong> Rule-based handles ~70% of queries perfectly. LLM improves the remaining 30% of complex queries.</p>
+<h4 id="production-recommendation"><a class="anchor" href="#production-recommendation">#</a> Production Recommendation</h4>
+<p>Start with rule-based, add LLM later:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Phase 1: Launch with rules (week 1)
+const weights = analyzeQueryRuleBased(query);
+
+// Phase 2: Add LLM for complex queries (week 4)
+const weights = await analyzeQueryHybrid(query);
+
+// Phase 3: Optimize with caching (week 8)
+const weights = await analyzeQueryHybridCached(query);</code></pre>
+      </div>
+    <p><strong>Why this order?</strong></p>
+<ol>
+<li>Rules get you 80% of the way with zero cost</li>
+<li>Monitor which queries fail</li>
+<li>Add LLM only for those patterns</li>
+<li>Cache LLM results for repeated queries</li>
+</ol>
+<h4 id="query-pattern-examples"><a class="anchor" href="#query-pattern-examples">#</a> Query Pattern Examples</h4>
+<p><strong>Pattern 1: Product Codes → Keyword-Heavy (0.2/0.8)</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;MBP-M3MAX-32-1TB&quot;
+&quot;SKU-99887-V2&quot;
+&quot;PROD-001-XL-BLK&quot;
+
+Detection: Multiple hyphens + uppercase + digits
+Why keyword-heavy: Vector embeddings fail on codes</code></pre>
+      </div>
+    <p><strong>Pattern 2: Questions → Vector-Heavy (0.8/0.2)</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;What&#39;s the best laptop for video editing?&quot;
+&quot;How do wireless headphones compare?&quot;
+&quot;Which monitor is good for gaming?&quot;
+
+Detection: Starts with question words
+Why vector-heavy: Need conceptual understanding</code></pre>
+      </div>
+    <p><strong>Pattern 3: Brand + Category → Balanced (0.5/0.5)</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;Sony headphones&quot;
+&quot;Apple laptop&quot;
+&quot;Dell monitor&quot;
+
+Detection: Two words, one capitalized
+Why balanced: Both brand name and concept matter</code></pre>
+      </div>
+    <hr>
+<h3 id="step-3-multi-field-indexing"><a class="anchor" href="#step-3-multi-field-indexing">#</a> Step 3: Multi-Field Indexing</h3>
+<p>For product search, single-field indexing fails. You MUST index multiple fields.</p>
+<h4 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Product data:
+  Title: &quot;MacBook Pro 16-inch M3 Max&quot;
+  Brand: &quot;Apple&quot;
+  SKU: &quot;MBP-M3MAX-32-1TB&quot;
+  Description: &quot;Powerful laptop with advanced chip...&quot;
+  Attributes: &quot;M3 Max, 32GB RAM, 1TB SSD&quot;
+
+Query: &quot;Apple wireless keyboard&quot;
+
+With single-field (description only):
+  ✗ Misses &quot;Apple&quot; in brand field
+  ✗ Misses exact title match
+  ✗ Only searches description text
+  Result: Poor results</code></pre>
+      </div>
+    <h4 id="the-solution"><a class="anchor" href="#the-solution">#</a> The Solution</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Index ALL relevant fields
+await vectorStore.setFullTextIndexedFields(namespace, [
+    &#39;content&#39;,    // Full product description (semantic)
+    &#39;title&#39;,      // Product name (keyword + semantic)
+    &#39;brand&#39;,      // Apple, Dell, Sony (exact match)
+    &#39;sku&#39;,        // Product codes (exact match)
+    &#39;attributes&#39;  // Technical specs (mixed)
+]);</code></pre>
+      </div>
+    <h4 id="how-it-works"><a class="anchor" href="#how-it-works">#</a> How It Works</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;Apple wireless keyboard&quot;
+
+Brand field matches:
+  &quot;Apple&quot; → Exact brand match (high keyword score)
+
+Title field matches:
+  &quot;Magic Keyboard&quot; → Contains &quot;keyboard&quot; (medium score)
+
+Description matches:
+  &quot;Wireless connectivity...&quot; → Semantic match (medium score)
+
+Combined result: Product surfaces because multiple fields contribute!</code></pre>
+      </div>
+    <h4 id="product-catalog-structure"><a class="anchor" href="#product-catalog-structure">#</a> Product Catalog Structure</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Structure your products like this:
+new Document(
+    &quot;Apple MacBook Pro 16-inch with M3 Max chip, featuring...&quot;, 
+    {
+        id: &quot;PROD-001&quot;,
+        title: &quot;MacBook Pro 16-inch M3 Max&quot;,
+        brand: &quot;Apple&quot;,
+        category: &quot;laptops&quot;,
+        price: 3499,
+        sku: &quot;MBP-M3MAX-32-1TB&quot;,
+        attributes: &quot;M3 Max, 32GB RAM, 1TB SSD, 16-inch Liquid Retina XDR&quot;
+    }
+)</code></pre>
+      </div>
+    <p><strong>Why each field matters:</strong></p>
+<ul>
+<li><code>brand</code>: Exact brand searches (&quot;Apple&quot;)</li>
+<li><code>sku</code>: Product code searches (&quot;MBP-M3MAX-32-1TB&quot;)</li>
+<li><code>title</code>: Product name searches (&quot;MacBook Pro&quot;)</li>
+<li><code>attributes</code>: Feature searches (&quot;32GB RAM&quot;)</li>
+<li><code>content</code>: Natural language searches (&quot;best laptop for coding&quot;)</li>
+</ul>
+<hr>
+<h3 id="step-4-fallback-strategies"><a class="anchor" href="#step-4-fallback-strategies">#</a> Step 4: Fallback Strategies</h3>
+<p>Never show empty results when similar products exist.</p>
+<h4 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User searches: &quot;Microsoft laptop&quot;
+Your catalog: Only Apple, Dell, HP laptops
+
+Keyword search: 0 results (no &quot;Microsoft&quot; products)
+Vector search: Finds similar laptops
+
+Without fallback: User sees &quot;No results found&quot; (terrible UX!)</code></pre>
+      </div>
+    <h4 id="the-solution"><a class="anchor" href="#the-solution">#</a> The Solution</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function searchWithFallback(query) {
+    // Attempt 1: Balanced search
+    let results = await hybridSearch(query, { 
+        vector: 0.5, 
+        text: 0.5,
+        limit: 10
+    });
+    
+    // Attempt 2: If few results, go vector-heavy
+    if (results.length &lt; 3) {
+        console.log(&quot;Few results, expanding search...&quot;);
+        results = await hybridSearch(query, { 
+            vector: 0.8, 
+            text: 0.2,
+            limit: 10
+        });
+    }
+    
+    // Attempt 3: Pure semantic if still nothing
+    if (results.length === 0) {
+        console.log(&quot;No exact matches, finding similar...&quot;);
+        results = await hybridSearch(query, { 
+            vector: 1.0, 
+            text: 0.0,
+            limit: 10
+        });
+    }
+    
+    return results;
+}</code></pre>
+      </div>
+    <h4 id="user-experience"><a class="anchor" href="#user-experience">#</a> User Experience</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;Microsoft laptop&quot;
+
+Step 1 (Balanced 0.5/0.5):
+  → 0 results (no Microsoft in catalog)
+
+Step 2 (Vector-heavy 0.8/0.2):
+  → 3 results found!
+     - Dell Inspiron 15 (similar specs)
+     - HP Pavilion (similar price)
+     - Apple MacBook (similar category)
+
+Display message:
+  &quot;No Microsoft laptops found. Here are similar options:&quot;</code></pre>
+      </div>
+    <hr>
+<h2 id="two-combination-methods-weighted-vs-rrf"><a class="anchor" href="#two-combination-methods-weighted-vs-rrf">#</a> Two Combination Methods: Weighted vs RRF</h2>
+<h3 id="method-1-weighted-combination-score-based"><a class="anchor" href="#method-1-weighted-combination-score-based">#</a> Method 1: Weighted Combination (Score-Based)</h3>
+<p><strong>How it works:</strong> Uses actual scores with adjustable weights</p>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">final_score = (vector_score × vector_weight) + (keyword_score × keyword_weight)</code></pre>
+      </div>
+    <p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Document A:
+  Vector score: 0.8 (after normalization)
+  Keyword score: 0.3 (after normalization)
+  Weights: 0.7 vector / 0.3 keyword
+  
+Final: (0.8 × 0.7) + (0.3 × 0.3) = 0.56 + 0.09 = 0.65</code></pre>
+      </div>
+    <p><strong>Pros:</strong></p>
+<ul>
+<li>Simple and intuitive</li>
+<li>Easy to tune weights</li>
+<li>Full control over semantic/keyword balance</li>
+</ul>
+<p><strong>Cons:</strong></p>
+<ul>
+<li>Requires good normalization</li>
+<li>Sensitive to score distributions</li>
+</ul>
+<p><strong>When to use:</strong> Default choice, especially when you want control</p>
+<h3 id="method-2-reciprocal-rank-fusion-rrf"><a class="anchor" href="#method-2-reciprocal-rank-fusion-rrf">#</a> Method 2: Reciprocal Rank Fusion (RRF)</h3>
+<p><strong>How it works:</strong> Uses position/rank instead of scores</p>
+<p><strong>Formula:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">RRF_score = 1 / (k + rank)
+where k is a constant (typically 60)</code></pre>
+      </div>
+    <p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Semantic results:          Keyword results:
+1. Doc A (rank 1)         1. Doc C (rank 1)
+2. Doc B (rank 2)         2. Doc A (rank 2)
+3. Doc C (rank 3)         3. Doc D (rank 3)
+
+RRF Scores (k=60):
+Doc A: 1/(60+1) + 1/(60+2) = 0.0164 + 0.0161 = 0.0325 ← Highest!
+Doc C: 1/(60+3) + 1/(60+1) = 0.0159 + 0.0164 = 0.0323
+Doc B: 1/(60+2) + 0        = 0.0161
+Doc D: 0        + 1/(60+3) = 0.0159</code></pre>
+      </div>
+    <p><strong>Pros:</strong></p>
+<ul>
+<li>No normalization needed</li>
+<li>Very stable across queries</li>
+<li>Less sensitive to score scale issues</li>
+</ul>
+<p><strong>Cons:</strong></p>
+<ul>
+<li>Can&#39;t easily adjust semantic/keyword balance</li>
+<li>Slightly less intuitive</li>
+</ul>
+<p><strong>When to use:</strong> Score scales vary wildly, want &quot;set and forget&quot;</p>
+<h3 id="which-should-you-use"><a class="anchor" href="#which-should-you-use">#</a> Which Should You Use?</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Use Weighted when:
+  ✓ You want fine control over weights
+  ✓ Scores are well-normalized
+  ✓ You understand your query patterns
+
+Use RRF when:
+  ✓ Score ranges are very different
+  ✓ You want maximum stability
+  ✓ Normalization is problematic</code></pre>
+      </div>
+    <hr>
+<h2 id="real-world-examples"><a class="anchor" href="#real-world-examples">#</a> Real-World Examples</h2>
+<h3 id="example-1-e-commerce-sku-search"><a class="anchor" href="#example-1-e-commerce-sku-search">#</a> Example 1: E-commerce SKU Search</h3>
+<p><strong>Query:</strong> <code>&quot;MBP-M3MAX-32-1TB&quot;</code></p>
+<p><strong>Auto-detected weights:</strong> Keyword-heavy (0.2/0.8)</p>
+<p><strong>What happens:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Vector search (20% weight):
+  Similarity: 0.4 → Finds MacBook Pro category
+  Normalized: 0.4
+  
+Keyword search (80% weight):
+  BM25: 45.2 → Exact SKU match!
+  Normalized: 0.95
+
+Combined: (0.4 × 0.2) + (0.95 × 0.8) = 0.08 + 0.76 = 0.84 ✓</code></pre>
+      </div>
+    <p><strong>Without dynamic weights (0.5/0.5):</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Combined: (0.4 × 0.5) + (0.95 × 0.5) = 0.20 + 0.475 = 0.675
+Generic products might rank higher! ✗</code></pre>
+      </div>
+    <h3 id="example-2-natural-language-question"><a class="anchor" href="#example-2-natural-language-question">#</a> Example 2: Natural Language Question</h3>
+<p><strong>Query:</strong> <code>&quot;What&#39;s the best laptop for video editing?&quot;</code></p>
+<p><strong>Auto-detected weights:</strong> Vector-heavy (0.8/0.2)</p>
+<p><strong>What happens:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Vector search (80% weight):
+  Understands: video editing = high performance, graphics, RAM
+  Finds: MacBook Pro M3 Max, Dell XPS 15, etc.
+  Normalized: 0.88
+
+Keyword search (20% weight):
+  Matches: &quot;laptop&quot;, &quot;video&quot;, &quot;editing&quot;
+  Normalized: 0.6
+
+Combined: (0.88 × 0.8) + (0.6 × 0.2) = 0.704 + 0.12 = 0.824 ✓</code></pre>
+      </div>
+    <h3 id="example-3-brand-category"><a class="anchor" href="#example-3-brand-category">#</a> Example 3: Brand + Category</h3>
+<p><strong>Query:</strong> <code>&quot;Sony headphones&quot;</code></p>
+<p><strong>Auto-detected weights:</strong> Balanced (0.5/0.5)</p>
+<p><strong>What happens:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Vector search (50% weight):
+  Finds: Audio products, similar Sony items
+  Normalized: 0.75
+
+Keyword search (50% weight):
+  Exact matches: &quot;Sony&quot; in brand + &quot;headphones&quot; in title
+  Normalized: 0.90
+
+Combined: (0.75 × 0.5) + (0.90 × 0.5) = 0.375 + 0.45 = 0.825 ✓</code></pre>
+      </div>
+    <h3 id="example-4-fallback-in-action"><a class="anchor" href="#example-4-fallback-in-action">#</a> Example 4: Fallback in Action</h3>
+<p><strong>Query:</strong> <code>&quot;Microsoft laptop&quot;</code><br><strong>Problem:</strong> No Microsoft products in catalog</p>
+<p><strong>Fallback sequence:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Attempt 1 (Balanced 0.5/0.5):
+  Keyword: 0 matches (no &quot;Microsoft&quot;)
+  Vector: 0.3 similarity (finds laptops generally)
+  Result: 0 strong matches
+
+Attempt 2 (Vector-heavy 0.8/0.2):
+  Vector: 0.8 similarity (finds similar laptops)
+  Results: Dell Inspiron, HP Pavilion, etc.
+  Display: &quot;No Microsoft laptops. Similar options:&quot;</code></pre>
+      </div>
+    <hr>
+<h2 id="combining-with-filters"><a class="anchor" href="#combining-with-filters">#</a> Combining with Filters</h2>
+<p>Hybrid search + metadata filters = production-ready search</p>
+<h3 id="implementation"><a class="anchor" href="#implementation">#</a> Implementation</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function searchProducts(query, filters = {}) {
+    // Step 1: Auto-detect query type
+    const weights = analyzeQuery(query);
+    
+    // Step 2: Perform hybrid search
+    let results = await hybridSearch(query, weights);
+    
+    // Step 3: Apply filters
+    if (filters.category) {
+        results = results.filter(r =&gt; 
+            r.metadata.category === filters.category
+        );
+    }
+    
+    if (filters.priceRange) {
+        const [min, max] = filters.priceRange;
+        results = results.filter(r =&gt; 
+            r.metadata.price &gt;= min &amp;&amp; r.metadata.price &lt;= max
+        );
+    }
+    
+    if (filters.brand) {
+        results = results.filter(r =&gt; 
+            r.metadata.brand === filters.brand
+        );
+    }
+    
+    return results;
+}</code></pre>
+      </div>
+    <h3 id="example-usage"><a class="anchor" href="#example-usage">#</a> Example Usage</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Natural language + price filter
+const results = await searchProducts(
+    &quot;best laptop for gaming&quot;,
+    {
+        category: &quot;laptops&quot;,
+        priceRange: [1000, 2000]
+    }
+);
+
+// Hybrid search: Finds relevant gaming laptops
+// Filters: Only those priced $1000-$2000</code></pre>
+      </div>
+    <hr>
+<h2 id="understanding-bm25"><a class="anchor" href="#understanding-bm25">#</a> Understanding BM25</h2>
+<p>BM25 is the keyword search algorithm. Here&#39;s what actually matters:</p>
+<h3 id="the-three-questions-bm25-asks"><a class="anchor" href="#the-three-questions-bm25-asks">#</a> The Three Questions BM25 Asks</h3>
+<p><strong>1. Does the document contain the search terms?</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Query: &quot;machine learning&quot;
+Doc A: Contains both terms ✓
+Doc B: Contains &quot;machine&quot; only
+Doc C: Contains neither ✗</code></pre>
+      </div>
+    <p><strong>2. How rare are the terms?</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;the&quot; appears in 90% of docs → Low importance
+&quot;GraphQL&quot; appears in 5% of docs → High importance
+
+Rare terms get higher scores!</code></pre>
+      </div>
+    <p><strong>3. How long is the document?</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Doc A: 100 words, &quot;machine learning&quot; appears 5 times (5% density)
+Doc B: 500 words, &quot;machine learning&quot; appears 5 times (1% density)
+
+Doc A scores higher (better density)!</code></pre>
+      </div>
+    <h3 id="the-two-bm25-parameters"><a class="anchor" href="#the-two-bm25-parameters">#</a> The Two BM25 Parameters</h3>
+<p><strong>k1 (Term Frequency Saturation):</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Low k1 (1.2): &quot;machine machine machine&quot; ≈ &quot;machine&quot;
+High k1 (2.0): More repetition = much higher score
+Default: 1.5 (balanced)</code></pre>
+      </div>
+    <p><strong>b (Length Normalization):</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">b = 0.0: No penalty for long documents
+b = 1.0: Strong penalty for long documents
+Default: 0.75 (mostly penalize length)</code></pre>
+      </div>
+    <p><strong>Pro tip:</strong> The defaults work well 99% of the time. Only tune if results seem off.</p>
+<hr>
+<h2 id="common-patterns-and-tips"><a class="anchor" href="#common-patterns-and-tips">#</a> Common Patterns and Tips</h2>
+<h3 id="pattern-1-start-simple-then-optimize"><a class="anchor" href="#pattern-1-start-simple-then-optimize">#</a> Pattern 1: Start Simple, Then Optimize</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Week 1: Use balanced (0.5/0.5) for everything
+Week 2: Track which queries work/fail
+Week 3: Identify patterns (SKUs, questions, brands)
+Week 4: Implement auto-detection</code></pre>
+      </div>
+    <h3 id="pattern-2-auto-detection-rules"><a class="anchor" href="#pattern-2-auto-detection-rules">#</a> Pattern 2: Auto-Detection Rules</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">SKU codes (hyphens + caps + digits) → 0.2/0.8
+Questions (what/how/why) → 0.8/0.2
+Brand names (2 words, capitalized) → 0.5/0.5
+Technical terms (multiple caps) → 0.3/0.7
+Everything else → 0.5/0.5</code></pre>
+      </div>
+    <h3 id="pattern-3-let-users-tune"><a class="anchor" href="#pattern-3-let-users-tune">#</a> Pattern 3: Let Users Tune</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Search bar with mode selector:
+○ Exact match (keyword-heavy)
+○ Similar results (semantic-heavy)
+○ Balanced (default)</code></pre>
+      </div>
+    <h3 id="pattern-4-monitor-and-iterate"><a class="anchor" href="#pattern-4-monitor-and-iterate">#</a> Pattern 4: Monitor and Iterate</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Log every search:
+  - Query text
+  - Detected weights
+  - Result count
+  - Click-through rate
+
+Analyze weekly:
+  - Which patterns work?
+  - Which fail?
+  - Adjust detection logic</code></pre>
+      </div>
+    <hr>
+<h2 id="when-hybrid-search-really-shines"><a class="anchor" href="#when-hybrid-search-really-shines">#</a> When Hybrid Search Really Shines</h2>
+<h3 id="scenario-1-e-commerce"><a class="anchor" href="#scenario-1-e-commerce">#</a> Scenario 1: E-commerce</h3>
+<p><strong>Why it&#39;s perfect:</strong></p>
+<ul>
+<li>SKU codes (keyword search)</li>
+<li>Product descriptions (semantic search)</li>
+<li>Brand names (exact matches)</li>
+<li>Feature searches (conceptual)</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;wireless headphones under $100&quot;
+→ Multi-field search across title, attributes, price
+→ Semantic understanding of &quot;wireless&quot;
+→ Keyword match on &quot;$100&quot;</code></pre>
+      </div>
+    <h3 id="scenario-2-help-centers"><a class="anchor" href="#scenario-2-help-centers">#</a> Scenario 2: Help Centers</h3>
+<p><strong>Why it&#39;s perfect:</strong></p>
+<ul>
+<li>Users ask questions many ways</li>
+<li>Need conceptual understanding</li>
+<li>But also need exact error codes</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;how do I reset my password&quot;
+→ Semantic: Understands intent
+→ Keyword: Ensures &quot;password&quot; appears
+→ Finds all password recovery articles</code></pre>
+      </div>
+    <h3 id="scenario-3-technical-documentation"><a class="anchor" href="#scenario-3-technical-documentation">#</a> Scenario 3: Technical Documentation</h3>
+<p><strong>Why it&#39;s perfect:</strong></p>
+<ul>
+<li>Specific terms matter (PostgreSQL, ACID)</li>
+<li>But concepts matter too (transactions)</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;PostgreSQL ACID transactions&quot;
+→ Keyword: Exact &quot;PostgreSQL&quot; and &quot;ACID&quot;
+→ Semantic: Related transaction concepts
+→ Perfect technical matches</code></pre>
+      </div>
+    <h3 id="scenario-4-code-search"><a class="anchor" href="#scenario-4-code-search">#</a> Scenario 4: Code Search</h3>
+<p><strong>Why it&#39;s perfect:</strong></p>
+<ul>
+<li>Function names (exact keywords)</li>
+<li>Descriptions (semantic)</li>
+<li>Comments (conceptual)</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;function to parse JSON&quot;
+→ Keyword: &quot;parse&quot;, &quot;JSON&quot;
+→ Semantic: Similar to &quot;decode&quot;, &quot;deserialize&quot;
+→ Finds all relevant code</code></pre>
+      </div>
+    <hr>
+<h3 id="the-golden-rules"><a class="anchor" href="#the-golden-rules">#</a> The Golden Rules</h3>
+<ol>
+<li><strong>Always normalize scores</strong> (rank-based is safest)</li>
+<li><strong>Auto-detect query patterns</strong> (don&#39;t hardcode weights)</li>
+<li><strong>Index multiple fields</strong> (especially for products)</li>
+<li><strong>Implement fallbacks</strong> (never show empty results)</li>
+<li><strong>Start balanced, then optimize</strong> (measure everything)</li>
+</ol>
+<hr>
+<h2 id="quick-reference"><a class="anchor" href="#quick-reference">#</a> Quick Reference</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/pguso/rag-from-scratch/main/images/hybrid-search-decision-tree.png" alt="Hybrid Search Decision Tree" loading="lazy" /></figure></p>
+<h3 id="normalization-methods"><a class="anchor" href="#normalization-methods">#</a> Normalization Methods:</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌─────────────────┬──────────────┬─────────────┬──────────────────┐
+│ Method          │ Best For     │ Pros        │ Cons             │
+├─────────────────┼──────────────┼─────────────┼──────────────────┤
+│ Rank-Based      │ Production   │ Most robust │ Loses magnitude  │
+│ (RECOMMENDED)   │ systems      │ No outliers │                  │
+├─────────────────┼──────────────┼─────────────┼──────────────────┤
+│ Min-Max         │ Prototyping  │ Simple      │ Outlier          │
+│                 │              │ Fast        │ sensitive        │
+├─────────────────┼──────────────┼─────────────┼──────────────────┤
+│ Z-Score         │ Statistical  │ Preserves   │ Can be negative  │
+│                 │ analysis     │ distribution│                  │
+└─────────────────┴──────────────┴─────────────┴──────────────────┘</code></pre>
+      </div>
+    <h3 id="combination-methods"><a class="anchor" href="#combination-methods">#</a> Combination Methods:</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌─────────────┬───────────────┬──────────────────┬────────────────┐
+│ Method      │ Control Level │ Requires         │ Best For       │
+├─────────────┼───────────────┼──────────────────┼────────────────┤
+│ Weighted    │ Full control  │ Normalization    │ Fine-tuning    │
+│             │ over balance  │                  │                │
+├─────────────┼───────────────┼──────────────────┼────────────────┤
+│ RRF         │ Less tunable  │ Nothing          │ Stability,     │
+│             │               │                  │ set-and-forget │
+└─────────────┴───────────────┴──────────────────┴────────────────┘</code></pre>
+      </div>
+    
+<h2 id="code-walkthrough"><a class="anchor" href="#code-walkthrough">#</a> Code walkthrough</h2>
+<p>This guide explains the e-commerce hybrid search code step-by-step. By the end, you&#39;ll understand how to combine vector search (semantic understanding) with keyword search (exact matching) for product searches.</p>
+<h2 id="table-of-contents"><a class="anchor" href="#table-of-contents">#</a> Table of Contents</h2>
+<ol>
+<li><a href="#what-is-hybrid-search">What is Hybrid Search?</a></li>
+<li><a href="#setup-and-imports">Setup and Imports</a></li>
+<li><a href="#configuration">Configuration</a></li>
+<li><a href="#core-functions">Core Functions</a></li>
+<li><a href="#example-1-sku-and-brand-challenges">Example 1: SKU and Brand Challenges</a></li>
+<li><a href="#example-2-score-normalization">Example 2: Score Normalization</a></li>
+<li><a href="#example-3-multi-field-search">Example 3: Multi-Field Search</a></li>
+<li><a href="#example-4-dynamic-weight-adjustment">Example 4: Dynamic Weight Adjustment</a></li>
+<li><a href="#example-5-fallback-strategies">Example 5: Fallback Strategies</a></li>
+<li><a href="#example-6-filter-aware-search">Example 6: Filter-Aware Search</a></li>
+<li><a href="#example-7-performance-optimization">Example 7: Performance Optimization</a></li>
+</ol>
+<hr>
+<h2 id="what-is-hybrid-search"><a class="anchor" href="#what-is-hybrid-search">#</a> What is Hybrid Search?</h2>
+<p><strong>Hybrid search</strong> combines two different search methods:</p>
+<ol>
+<li><p><strong>Vector Search</strong> (Semantic)</p>
+<ul>
+<li>Understands the <em>meaning</em> of words</li>
+<li>Example: &quot;laptop for editing&quot; matches &quot;MacBook Pro for video work&quot;</li>
+<li>Good for: Natural language, concepts, paraphrased queries</li>
+</ul>
+</li>
+<li><p><strong>Keyword Search</strong> (BM25)</p>
+<ul>
+<li>Matches <em>exact words</em></li>
+<li>Example: &quot;MBP-M3MAX-32&quot; only matches that exact SKU</li>
+<li>Good for: Product codes, brand names, technical specs</li>
+</ul>
+</li>
+</ol>
+<p><strong>Why combine them?</strong> Each has strengths and weaknesses. Hybrid search gives you the best of both worlds!</p>
+<hr>
+<h2 id="setup-and-imports"><a class="anchor" href="#setup-and-imports">#</a> Setup and Imports</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { fileURLToPath } from &quot;url&quot;;
+import path from &quot;path&quot;;
+import { VectorDB } from &quot;embedded-vector-db&quot;;
+import { getLlama } from &quot;node-llama-cpp&quot;;
+import { Document } from &quot;../../../src/index.js&quot;;
+import { OutputHelper } from &quot;../../../helpers/output-helper.js&quot;;
+import chalk from &quot;chalk&quot;;</code></pre>
+      </div>
+    <p><strong>What each import does:</strong></p>
+<ul>
+<li><code>fileURLToPath</code> and <code>path</code>: Help find files on your computer</li>
+<li><code>VectorDB</code>: Database that stores product embeddings (vector representations)</li>
+<li><code>getLlama</code>: Loads the AI model that creates embeddings</li>
+<li><code>Document</code>: Wrapper class for product data</li>
+<li><code>OutputHelper</code>: Utility for nice console output</li>
+<li><code>chalk</code>: Makes console text colorful (not essential, just pretty!)</li>
+</ul>
+<hr>
+<h2 id="configuration"><a class="anchor" href="#configuration">#</a> Configuration</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const EMBEDDING_MODEL_PATH = path.join(__dirname, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;models&quot;, &quot;bge-small-en-v1.5.Q8_0.gguf&quot;);
+
+const DIM = 384;
+const MAX_ELEMENTS = 10000;
+const NS = &quot;product_search&quot;;</code></pre>
+      </div>
+    <p><strong>What these constants mean:</strong></p>
+<ul>
+<li><code>__dirname</code>: Current file&#39;s directory</li>
+<li><code>EMBEDDING_MODEL_PATH</code>: Where the AI model file lives</li>
+<li><code>DIM</code>: Embedding dimension (384 numbers represent each product)</li>
+<li><code>MAX_ELEMENTS</code>: Maximum products the database can hold</li>
+<li><code>NS</code>: Namespace (like a folder name in the database)</li>
+</ul>
+<hr>
+<h2 id="core-functions"><a class="anchor" href="#core-functions">#</a> Core Functions</h2>
+<h3 id="function-1-initialize-embedding-model"><a class="anchor" href="#function-1-initialize-embedding-model">#</a> Function 1: Initialize Embedding Model</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function initializeEmbeddingModel() {
+    try {
+        const llama = await getLlama({ logLevel: &quot;error&quot; });
+        const model = await llama.loadModel({ modelPath: EMBEDDING_MODEL_PATH });
+        return await model.createEmbeddingContext();
+    } catch (error) {
+        throw new Error(`Failed to initialize embedding model: ${error.message}`);
+    }
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ol>
+<li>Loads the AI model from disk</li>
+<li>Creates an &quot;embedding context&quot; (a tool to convert text → numbers)</li>
+<li>Returns the embedding context so we can use it later</li>
+</ol>
+<p><strong>Why we need it:</strong> To convert product descriptions and search queries into vectors (arrays of numbers) that the computer can compare.</p>
+<hr>
+<h3 id="function-2-create-product-catalog"><a class="anchor" href="#function-2-create-product-catalog">#</a> Function 2: Create Product Catalog</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function createProductCatalog() {
+    return [
+        new Document(&quot;Apple MacBook Pro 16-inch with M3 Max chip...&quot;, {
+            id: &quot;PROD-001&quot;,
+            title: &quot;MacBook Pro 16-inch M3 Max&quot;,
+            brand: &quot;Apple&quot;,
+            category: &quot;laptops&quot;,
+            price: 3499,
+            sku: &quot;MBP-M3MAX-32-1TB&quot;,
+            attributes: &quot;M3 Max, 32GB RAM, 1TB SSD...&quot;
+        }),
+        // ... more products
+    ];
+}</code></pre>
+      </div>
+    <p><strong>What it does:</strong>
+Creates an array of product documents. Each product has:</p>
+<ul>
+<li><strong>Content</strong> (first parameter): Full description</li>
+<li><strong>Metadata</strong> (second parameter): Structured data like SKU, price, brand</li>
+</ul>
+<p><strong>Why structured this way:</strong></p>
+<ul>
+<li>Content is for semantic search (understanding meaning)</li>
+<li>Metadata fields are for exact matching and filtering</li>
+</ul>
+<hr>
+<h3 id="function-3-add-products-to-store"><a class="anchor" href="#function-3-add-products-to-store">#</a> Function 3: Add Products to Store</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function addProductsToStore(vectorStore, embeddingContext, products) {
+    try {
+        // Enable full-text indexing on multiple fields
+        await vectorStore.setFullTextIndexedFields(NS, 
+            [&#39;content&#39;, &#39;title&#39;, &#39;brand&#39;, &#39;sku&#39;, &#39;attributes&#39;]
+        );
+
+        for (const product of products) {
+            // Convert product description to vector
+            const embedding = await embeddingContext.getEmbeddingFor(product.pageContent);
+            
+            // Prepare metadata
+            const metadata = {
+                content: product.pageContent,
+                ...product.metadata,
+            };
+            
+            // Store in database
+            await vectorStore.insert(
+                NS,
+                product.metadata.id,
+                Array.from(embedding.vector),
+                metadata
+            );
+        }
+    } catch (error) {
+        throw new Error(`Failed to add products to store: ${error.message}`);
+    }
+}</code></pre>
+      </div>
+    <p><strong>Step-by-step:</strong></p>
+<ol>
+<li><p><strong><code>setFullTextIndexedFields</code></strong>: Tells the database which fields to index for keyword search</p>
+<ul>
+<li>Like creating an index in a book for quick lookup</li>
+</ul>
+</li>
+<li><p><strong>Loop through products</strong>: Process each product one by one</p>
+</li>
+<li><p><strong><code>getEmbeddingFor</code></strong>: Convert product description to a vector (array of 384 numbers)</p>
+<ul>
+<li>Example: &quot;MacBook Pro 16-inch...&quot; → [0.23, -0.45, 0.12, ...]</li>
+</ul>
+</li>
+<li><p><strong><code>insert</code></strong>: Save the product with:</p>
+<ul>
+<li>Namespace (folder)</li>
+<li>Product ID</li>
+<li>Vector (for semantic search)</li>
+<li>Metadata (for keyword search and filtering)</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="example-1-sku-and-brand-challenges"><a class="anchor" href="#example-1-sku-and-brand-challenges">#</a> Example 1: SKU and Brand Challenges</h2>
+<p>This example shows why keyword search is critical for product codes.</p>
+<h3 id="test-1-exact-sku-search"><a class="anchor" href="#test-1-exact-sku-search">#</a> Test 1: Exact SKU Search</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query1 = &quot;MBP-M3MAX-32-1TB&quot;;
+const queryEmbedding1 = await embeddingContext.getEmbeddingFor(query1);
+const vectorResults1 = await vectorStore.search(NS, Array.from(queryEmbedding1.vector), 3);
+const keywordResults1 = await vectorStore.fullTextSearch(NS, query1, 3);</code></pre>
+      </div>
+    <p><strong>What happens:</strong></p>
+<ol>
+<li><p><strong>Vector Search</strong>:</p>
+<ul>
+<li>Converts &quot;MBP-M3MAX-32-1TB&quot; to numbers</li>
+<li>Problem: The model doesn&#39;t understand product codes!</li>
+<li>Result: Might return random products</li>
+</ul>
+</li>
+<li><p><strong>Keyword Search (BM25)</strong>:</p>
+<ul>
+<li>Looks for exact text match</li>
+<li>Finds products with &quot;MBP-M3MAX-32-1TB&quot; in SKU field</li>
+<li>Result: Perfect match!</li>
+</ul>
+</li>
+</ol>
+<p><strong>Key Insight:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">SKU codes like &quot;MBP-M3MAX-32-1TB&quot; are &quot;out-of-vocabulary&quot; (OOV) for AI models.
+The model treats them like random characters, but keyword search finds them perfectly.</code></pre>
+      </div>
+    <h3 id="test-2-brand-name-search"><a class="anchor" href="#test-2-brand-name-search">#</a> Test 2: Brand Name Search</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query2 = &quot;Sony headphones&quot;;</code></pre>
+      </div>
+    <p><strong>What happens:</strong></p>
+<ul>
+<li><strong>Vector Search</strong>: Finds Sony products + similar products (like Bose)</li>
+<li><strong>Keyword Search</strong>: Prioritizes exact &quot;Sony&quot; matches</li>
+</ul>
+<p><strong>Best approach:</strong> Use BOTH (hybrid search) to get:</p>
+<ul>
+<li>Exact brand match (keyword)</li>
+<li>Semantic category understanding (vector)</li>
+</ul>
+<hr>
+<h2 id="example-2-score-normalization"><a class="anchor" href="#example-2-score-normalization">#</a> Example 2: Score Normalization</h2>
+<h3 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const vecScores = vectorResults.map(r =&gt; r.similarity);
+const keyScores = keywordResults.map(r =&gt; r.similarity);
+
+// Vector scores might be: [0.85, 0.83, 0.80]
+// Keyword scores might be: [12.5, 8.3, 5.1]</code></pre>
+      </div>
+    <p><strong>Problem:</strong> Different scales! How do you combine them fairly?</p>
+<p>If you just add them: <code>0.85 + 12.5 = 13.35</code> (keyword dominates!)</p>
+<h3 id="solution-1-min-max-normalization"><a class="anchor" href="#solution-1-min-max-normalization">#</a> Solution 1: Min-Max Normalization</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const normalizeMinMax = (scores) =&gt; {
+    const min = Math.min(...scores);
+    const max = Math.max(...scores);
+    const range = max - min || 1;
+    return scores.map(s =&gt; (s - min) / range);
+};</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Scales all scores to [0, 1] range</li>
+<li>Formula: <code>(score - min) / (max - min)</code></li>
+<li>Example: [12.5, 8.3, 5.1] → [1.0, 0.43, 0]</li>
+</ul>
+<p><strong>Pros:</strong> Simple, intuitive
+<strong>Cons:</strong> Sensitive to outliers (one very high/low score affects everything)</p>
+<h3 id="solution-2-z-score-normalization"><a class="anchor" href="#solution-2-z-score-normalization">#</a> Solution 2: Z-Score Normalization</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const normalizeZScore = (scores) =&gt; {
+    const mean = scores.reduce((a, b) =&gt; a + b, 0) / scores.length;
+    const variance = scores.reduce((a, b) =&gt; a + Math.pow(b - mean, 2), 0) / scores.length;
+    const stdDev = Math.sqrt(variance) || 1;
+    return scores.map(s =&gt; (s - mean) / stdDev);
+};</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Centers scores around 0</li>
+<li>Formula: <code>(score - mean) / standard_deviation</code></li>
+<li>Example: [12.5, 8.3, 5.1] → [1.2, 0.1, -1.3]</li>
+</ul>
+<p><strong>Pros:</strong> Preserves distribution, handles outliers better
+<strong>Cons:</strong> Can produce negative scores (but that&#39;s okay for comparison)</p>
+<h3 id="solution-3-rank-based-normalization"><a class="anchor" href="#solution-3-rank-based-normalization">#</a> Solution 3: Rank-Based Normalization</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const normalizeRank = (scores) =&gt; {
+    const n = scores.length;
+    return scores.map((_, idx) =&gt; (n - idx) / n);
+};</code></pre>
+      </div>
+    <p><strong>What it does:</strong></p>
+<ul>
+<li>Ignores actual scores, uses only ranking</li>
+<li>Formula: <code>(total - rank) / total</code></li>
+<li>Example (for 5 results): [1.0, 0.8, 0.6, 0.4, 0.2]</li>
+</ul>
+<p><strong>Pros:</strong> Most robust, used by Reciprocal Rank Fusion (RRF)
+<strong>Cons:</strong> Loses information about score gaps</p>
+<hr>
+<h2 id="example-3-multi-field-search"><a class="anchor" href="#example-3-multi-field-search">#</a> Example 3: Multi-Field Search</h2>
+<h3 id="why-multiple-fields"><a class="anchor" href="#why-multiple-fields">#</a> Why Multiple Fields?</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.setFullTextIndexedFields(NS, 
+    [&#39;content&#39;, &#39;title&#39;, &#39;brand&#39;, &#39;sku&#39;, &#39;attributes&#39;]
+);</code></pre>
+      </div>
+    <p><strong>Each field serves a purpose:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+<th>Example Query</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>content</code></td>
+<td>Semantic understanding</td>
+<td>&quot;laptop for video editing&quot;</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>Product name matching</td>
+<td>&quot;MacBook Pro&quot;</td>
+</tr>
+<tr>
+<td><code>brand</code></td>
+<td>Exact brand matching</td>
+<td>&quot;Apple&quot;</td>
+</tr>
+<tr>
+<td><code>sku</code></td>
+<td>Product code matching</td>
+<td>&quot;MBP-M3MAX-32-1TB&quot;</td>
+</tr>
+<tr>
+<td><code>attributes</code></td>
+<td>Technical specs</td>
+<td>&quot;32GB RAM&quot;</td>
+</tr>
+</tbody></table>
+<h3 id="how-it-works"><a class="anchor" href="#how-it-works">#</a> How It Works</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query = &quot;Apple wireless keyboard&quot;;</code></pre>
+      </div>
+    <p><strong>Search process:</strong></p>
+<ol>
+<li>Searches ALL indexed fields simultaneously</li>
+<li>&quot;Apple&quot; matches strongly in <code>brand</code> field</li>
+<li>&quot;wireless&quot; matches in <code>title</code> and <code>attributes</code></li>
+<li>&quot;keyboard&quot; matches in <code>title</code> and <code>content</code></li>
+<li>Combines all signals for final score</li>
+</ol>
+<p><strong>Result:</strong> More comprehensive, accurate search!</p>
+<hr>
+<h2 id="example-4-dynamic-weight-adjustment"><a class="anchor" href="#example-4-dynamic-weight-adjustment">#</a> Example 4: Dynamic Weight Adjustment</h2>
+<h3 id="the-analyzequery-function"><a class="anchor" href="#the-analyzequery-function">#</a> The analyzeQuery Function</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">function analyzeQuery(query) {
+    const upperCount = (query.match(/[A-Z]/g) || []).length;
+    const digitCount = (query.match(/\d/g) || []).length;
+    const hyphenCount = (query.match(/-/g) || []).length;
+    const wordCount = query.split(/\s+/).length;
+    const hasQuestionWord = /^(what|how|which|where|why|when|who)/i.test(query);
+
+    // Detect query type and return optimal weights
+    let queryType, weights;
+
+    if (hyphenCount &gt;= 2 || (upperCount &gt; 3 &amp;&amp; digitCount &gt; 0)) {
+        queryType = &quot;SKU/Model Number&quot;;
+        weights = { vector: 0.2, text: 0.8 };
+    } else if (digitCount &gt;= 3) {
+        queryType = &quot;Technical Specs&quot;;
+        weights = { vector: 0.3, text: 0.7 };
+    } else if (hasQuestionWord || wordCount &gt;= 6) {
+        queryType = &quot;Natural Language Question&quot;;
+        weights = { vector: 0.8, text: 0.2 };
+    } else if (wordCount &lt;= 2) {
+        queryType = &quot;Short Keyword&quot;;
+        weights = { vector: 0.4, text: 0.6 };
+    } else {
+        queryType = &quot;Mixed Query&quot;;
+        weights = { vector: 0.5, text: 0.5 };
+    }
+
+    return { queryType, weights };
+}</code></pre>
+      </div>
+    <h3 id="understanding-the-logic"><a class="anchor" href="#understanding-the-logic">#</a> Understanding the Logic</h3>
+<p><strong>Pattern Detection:</strong></p>
+<ol>
+<li><p><strong>SKU/Model Number</strong> (<code>hyphenCount &gt;= 2</code>)</p>
+<ul>
+<li>Example: &quot;ASUS-G14-R9-4070&quot;</li>
+<li>Many hyphens + capitals + digits = product code</li>
+<li>Use keyword-heavy: <strong>0.2 vector / 0.8 text</strong></li>
+</ul>
+</li>
+<li><p><strong>Technical Specs</strong> (<code>digitCount &gt;= 3</code>)</p>
+<ul>
+<li>Example: &quot;32GB RAM 4K display&quot;</li>
+<li>Multiple numbers = technical requirements</li>
+<li>Use keyword-heavy: <strong>0.3 vector / 0.7 text</strong></li>
+</ul>
+</li>
+<li><p><strong>Natural Language Question</strong> (starts with question word)</p>
+<ul>
+<li>Example: &quot;What&#39;s the best laptop for video editing?&quot;</li>
+<li>Needs semantic understanding</li>
+<li>Use vector-heavy: <strong>0.8 vector / 0.2 text</strong></li>
+</ul>
+</li>
+<li><p><strong>Short Keyword</strong> (<code>wordCount &lt;= 2</code>)</p>
+<ul>
+<li>Example: &quot;Sony headphones&quot;</li>
+<li>Brief, likely includes brand/category</li>
+<li>Use keyword-leaning: <strong>0.4 vector / 0.6 text</strong></li>
+</ul>
+</li>
+<li><p><strong>Mixed Query</strong> (default)</p>
+<ul>
+<li>Example: &quot;portable charger fast charging&quot;</li>
+<li>Could benefit from both approaches</li>
+<li>Use balanced: <strong>0.5 vector / 0.5 text</strong></li>
+</ul>
+</li>
+</ol>
+<h3 id="how-to-use-it"><a class="anchor" href="#how-to-use-it">#</a> How to Use It</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query = &quot;ASUS-G14-R9-4070&quot;;
+const analysis = analyzeQuery(query);
+// Returns: { queryType: &quot;SKU/Model Number&quot;, weights: { vector: 0.2, text: 0.8 } }
+
+const results = await vectorStore.hybridSearch(
+    NS,
+    Array.from(queryEmbedding.vector),
+    query,
+    {
+        vectorWeight: analysis.weights.vector,  // 0.2
+        textWeight: analysis.weights.text,      // 0.8
+        k: 2
+    }
+);</code></pre>
+      </div>
+    <p><strong>Why this matters:</strong></p>
+<ul>
+<li>Automatic optimization based on query type</li>
+<li>Better user experience without manual configuration</li>
+<li>Adapts to different search patterns</li>
+</ul>
+<hr>
+<h2 id="example-5-fallback-strategies"><a class="anchor" href="#example-5-fallback-strategies">#</a> Example 5: Fallback Strategies</h2>
+<h3 id="the-problem-zero-results"><a class="anchor" href="#the-problem-zero-results">#</a> The Problem: Zero Results</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query = &quot;Microsoft Surface laptop touchscreen&quot;;</code></pre>
+      </div>
+    <p>Problem: No Microsoft products in our catalog!</p>
+<h3 id="strategy-progression"><a class="anchor" href="#strategy-progression">#</a> Strategy Progression</h3>
+<h4 id="strategy-1-pure-keyword-search-likely-fails"><a class="anchor" href="#strategy-1-pure-keyword-search-likely-fails">#</a> Strategy 1: Pure Keyword Search (Likely Fails)</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const keywordOnly = await vectorStore.fullTextSearch(NS, query, 3);
+// Result: 0 results (no exact &quot;Microsoft&quot; match)</code></pre>
+      </div>
+    <p><strong>Why it fails:</strong> No products contain the word &quot;Microsoft&quot;</p>
+<h4 id="strategy-2-balanced-hybrid-search"><a class="anchor" href="#strategy-2-balanced-hybrid-search">#</a> Strategy 2: Balanced Hybrid Search</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const hybrid = await vectorStore.hybridSearch(
+    NS,
+    Array.from(queryEmbedding.vector),
+    query,
+    { k: 3 }  // Default: 0.5/0.5
+);
+// Result: Returns laptops with touchscreens (similar products)</code></pre>
+      </div>
+    <p><strong>Why it works better:</strong> Vector search understands &quot;laptop&quot; and &quot;touchscreen&quot; semantically</p>
+<h4 id="strategy-3-vector-heavy-fallback"><a class="anchor" href="#strategy-3-vector-heavy-fallback">#</a> Strategy 3: Vector-Heavy Fallback</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const vectorFallback = await vectorStore.hybridSearch(
+    NS,
+    Array.from(queryEmbedding.vector),
+    query,
+    {
+        vectorWeight: 0.9,
+        textWeight: 0.1,
+        k: 3
+    }
+);
+// Result: Returns most semantically similar laptops</code></pre>
+      </div>
+    <p><strong>Why use this:</strong> When keyword matching completely fails, rely on semantic similarity</p>
+<h3 id="recommended-fallback-flow"><a class="anchor" href="#recommended-fallback-flow">#</a> Recommended Fallback Flow</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Try balanced hybrid (0.5/0.5)
+   ↓ (if &lt; 3 results)
+2. Try vector-heavy (0.8/0.2)
+   ↓ (if still &lt; 3 results)
+3. Use pure vector (1.0/0.0)
+   ↓
+4. Show &quot;Similar products&quot; message to user</code></pre>
+      </div>
+    <p><strong>In code:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">let results = await hybridSearch(query, { vectorWeight: 0.5, textWeight: 0.5, k: 10 });
+
+if (results.length &lt; 3) {
+    // Fallback to vector-heavy
+    results = await hybridSearch(query, { vectorWeight: 0.8, textWeight: 0.2, k: 10 });
+}
+
+if (results.length &lt; 3) {
+    // Final fallback: pure vector
+    results = await hybridSearch(query, { vectorWeight: 1.0, textWeight: 0.0, k: 10 });
+    // Show message: &quot;No exact matches. Here are similar products:&quot;
+}</code></pre>
+      </div>
+    <hr>
+<h2 id="example-6-filter-aware-search"><a class="anchor" href="#example-6-filter-aware-search">#</a> Example 6: Filter-Aware Search</h2>
+<h3 id="combining-search-with-business-logic"><a class="anchor" href="#combining-search-with-business-logic">#</a> Combining Search with Business Logic</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const query = &quot;high-end laptop professional work&quot;;
+const maxPrice = 2500;</code></pre>
+      </div>
+    <p><strong>Two-step process:</strong></p>
+<h4 id="step-1-hybrid-search"><a class="anchor" href="#step-1-hybrid-search">#</a> Step 1: Hybrid Search</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const results = await vectorStore.hybridSearch(
+    NS,
+    Array.from(queryEmbedding.vector),
+    query,
+    { k: 5 }
+);</code></pre>
+      </div>
+    <p>This finds relevant products based on the query.</p>
+<h4 id="step-2-apply-business-filters"><a class="anchor" href="#step-2-apply-business-filters">#</a> Step 2: Apply Business Filters</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Filter by price
+const priceFiltered = results.filter(doc =&gt; doc.metadata.price &lt;= maxPrice);
+
+// Filter by category AND price
+const categoryFiltered = results.filter(doc =&gt;
+    doc.metadata.category === &#39;laptops&#39; &amp;&amp; 
+    doc.metadata.price &lt;= maxPrice
+);</code></pre>
+      </div>
+    <h3 id="common-e-commerce-filters"><a class="anchor" href="#common-e-commerce-filters">#</a> Common E-Commerce Filters</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Price range
+const inBudget = results.filter(r =&gt; 
+    r.metadata.price &gt;= minPrice &amp;&amp; 
+    r.metadata.price &lt;= maxPrice
+);
+
+// In stock
+const available = results.filter(r =&gt; 
+    r.metadata.inStock === true
+);
+
+// Category
+const category = results.filter(r =&gt; 
+    r.metadata.category === &#39;laptops&#39;
+);
+
+// Brand
+const brand = results.filter(r =&gt; 
+    r.metadata.brand === &#39;Apple&#39;
+);
+
+// Rating
+const highRated = results.filter(r =&gt; 
+    r.metadata.rating &gt;= 4.0
+);</code></pre>
+      </div>
+    <h3 id="pre-filtering-vs-post-filtering"><a class="anchor" href="#pre-filtering-vs-post-filtering">#</a> Pre-filtering vs Post-filtering</h3>
+<p><strong>Post-filtering (shown above):</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Search first, filter after
+const results = await hybridSearch(query, { k: 100 });
+const filtered = results.filter(r =&gt; r.metadata.price &lt;= maxPrice);</code></pre>
+      </div>
+    <p><strong>Pros:</strong> Simple, flexible
+<strong>Cons:</strong> Inefficient for large databases</p>
+<p><strong>Pre-filtering (production approach):</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Filter BEFORE searching (if database supports it)
+const results = await hybridSearch(query, { 
+    k: 100,
+    metadataFilter: { 
+        price: { $lte: maxPrice },
+        category: &#39;laptops&#39;
+    }
+});</code></pre>
+      </div>
+    <p><strong>Pros:</strong> Much faster, searches smaller dataset
+<strong>Cons:</strong> Requires database support</p>
+<hr>
+<h2 id="example-7-performance-optimization"><a class="anchor" href="#example-7-performance-optimization">#</a> Example 7: Performance Optimization</h2>
+<h3 id="optimization-1-query-result-caching"><a class="anchor" href="#optimization-1-query-result-caching">#</a> Optimization 1: Query Result Caching</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const queryCache = new Map();
+
+async function cachedHybridSearch(query, options = {}) {
+    // Create cache key from query + options
+    const cacheKey = `${query}:${JSON.stringify(options)}`;
+
+    // Check cache first
+    if (queryCache.has(cacheKey)) {
+        return { results: queryCache.get(cacheKey), cached: true };
+    }
+
+    // Cache miss: perform search
+    const queryEmbedding = await embeddingContext.getEmbeddingFor(query);
+    const results = await vectorStore.hybridSearch(
+        NS,
+        Array.from(queryEmbedding.vector),
+        query,
+        options
+    );
+
+    // Store in cache
+    queryCache.set(cacheKey, results);
+    return { results, cached: false };
+}</code></pre>
+      </div>
+    <p><strong>How it works:</strong></p>
+<ol>
+<li><p><strong>First search</strong> for &quot;wireless headphones&quot;:</p>
+<ul>
+<li>Computes embedding (slow)</li>
+<li>Searches database (slow)</li>
+<li>Caches result</li>
+<li>Time: ~100ms</li>
+</ul>
+</li>
+<li><p><strong>Second search</strong> for same query:</p>
+<ul>
+<li>Finds in cache (instant)</li>
+<li>Returns cached results</li>
+<li>Time: ~1ms</li>
+<li><strong>100x speedup!</strong></li>
+</ul>
+</li>
+</ol>
+<p><strong>Important considerations:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Set cache expiration (Time-To-Live)
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+queryCache.set(cacheKey, {
+    results: results,
+    timestamp: Date.now()
+});
+
+// Check if cache entry is still valid
+if (queryCache.has(cacheKey)) {
+    const cached = queryCache.get(cacheKey);
+    if (Date.now() - cached.timestamp &lt; CACHE_TTL) {
+        return cached.results;
+    } else {
+        queryCache.delete(cacheKey); // Expired
+    }
+}</code></pre>
+      </div>
+    <h3 id="optimization-2-two-stage-retrieval"><a class="anchor" href="#optimization-2-two-stage-retrieval">#</a> Optimization 2: Two-Stage Retrieval</h3>
+<p><strong>Problem:</strong> Computing embeddings for many products is slow.</p>
+<p><strong>Solution:</strong> Search in two stages:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Stage 1: Fast keyword search to get candidates
+const candidates = await vectorStore.fullTextSearch(NS, query, 100);
+// Returns 100 candidates in ~10ms
+
+// Stage 2: Rerank top candidates with vector search
+const candidateIds = candidates.map(c =&gt; c.metadata.id);
+const reranked = await vectorStore.search(NS, queryEmbedding, 10, {
+    filter: { id: { $in: candidateIds } }
+});
+// Only computes similarity for 100 products, not all 10,000!</code></pre>
+      </div>
+    <p><strong>Why it&#39;s faster:</strong></p>
+<ul>
+<li>Stage 1: Keyword search is very fast</li>
+<li>Stage 2: Only compute expensive vectors for top candidates</li>
+<li><strong>10-100x faster</strong> for large databases</li>
+</ul>
+<h3 id="optimization-3-index-partitioning"><a class="anchor" href="#optimization-3-index-partitioning">#</a> Optimization 3: Index Partitioning</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Create separate indices for categories
+const laptopStore = new VectorDB({ dim: 384, namespace: &quot;laptops&quot; });
+const audioStore = new VectorDB({ dim: 384, namespace: &quot;audio&quot; });
+const accessoryStore = new VectorDB({ dim: 384, namespace: &quot;accessories&quot; });
+
+// Search only relevant partition
+async function partitionedSearch(query, category) {
+    let store;
+    switch(category) {
+        case &#39;laptops&#39;: store = laptopStore; break;
+        case &#39;audio&#39;: store = audioStore; break;
+        case &#39;accessories&#39;: store = accessoryStore; break;
+    }
+    
+    return await store.hybridSearch(/* ... */);
+}</code></pre>
+      </div>
+    <p><strong>Benefits:</strong></p>
+<ul>
+<li>Smaller search space = faster</li>
+<li>Can optimize each partition differently</li>
+<li>Easier to scale horizontally</li>
+</ul>
+<h3 id="optimization-4-pre-computed-embeddings"><a class="anchor" href="#optimization-4-pre-computed-embeddings">#</a> Optimization 4: Pre-computed Embeddings</h3>
+<p><strong>Bad (slow):</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Compute embedding every time
+for (const product of products) {
+    const embedding = await getEmbedding(product.description);
+    await store.insert(id, embedding, metadata);
+}</code></pre>
+      </div>
+    <p><strong>Good (fast):</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Compute embeddings once, store them
+const productsWithEmbeddings = products.map(async (p) =&gt; ({
+    ...p,
+    embedding: await getEmbedding(p.description)
+}));
+
+// Save embeddings to database or file
+await saveEmbeddings(productsWithEmbeddings);
+
+// Later: Load pre-computed embeddings
+const cachedProducts = await loadEmbeddings();
+for (const product of cachedProducts) {
+    await store.insert(id, product.embedding, metadata);
+}</code></pre>
+      </div>
+    <p><strong>Why:</strong> Computing embeddings is the slowest part. Do it once, reuse many times!</p>
+<hr>
+<h2 id="complete-flow-diagram"><a class="anchor" href="#complete-flow-diagram">#</a> Complete Flow Diagram</h2>
+<p>Here&#39;s how all pieces fit together:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">User Query: &quot;Apple wireless keyboard&quot;
+           ↓
+    [Query Analysis]
+    Detects: Short Keyword
+    Weights: 0.4 vector / 0.6 text
+           ↓
+    ┌──────────────────┐
+    │  Hybrid Search   │
+    └──────────────────┘
+           ↓
+    ┌──────┴──────┐
+    ↓             ↓
+[Vector Search] [Keyword Search]
+    ↓             ↓
+Semantic match  Exact match
+&quot;keyboard&quot;      &quot;Apple&quot;
+    ↓             ↓
+Score: 0.85     Score: 12.5
+    ↓             ↓
+[Normalize Scores]
+    ↓             ↓
+Norm: 0.92      Norm: 0.88
+    ↓             ↓
+    └──────┬──────┘
+           ↓
+[Combine with Weights]
+Combined = (0.92 × 0.4) + (0.88 × 0.6) = 0.896
+           ↓
+[Apply Business Filters]
+- Price &lt;= $200
+- In stock = true
+- Category = accessories
+           ↓
+[Return Top Results]
+1. Apple Magic Keyboard Touch ID (0.896)
+2. Apple Magic Keyboard (0.874)
+3. ...</code></pre>
+      </div>
+    <hr>
+<h2 id="best-practices-summary"><a class="anchor" href="#best-practices-summary">#</a> Best Practices Summary</h2>
+<h3 id="1-choose-weights-based-on-query-type"><a class="anchor" href="#1-choose-weights-based-on-query-type">#</a> 1. Choose Weights Based on Query Type</h3>
+<table>
+<thead>
+<tr>
+<th>Query Type</th>
+<th>Vector Weight</th>
+<th>Text Weight</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SKU/Product Code</td>
+<td>0.2</td>
+<td>0.8</td>
+</tr>
+<tr>
+<td>Technical Specs</td>
+<td>0.3</td>
+<td>0.7</td>
+</tr>
+<tr>
+<td>Natural Language</td>
+<td>0.8</td>
+<td>0.2</td>
+</tr>
+<tr>
+<td>Short Keywords</td>
+<td>0.4</td>
+<td>0.6</td>
+</tr>
+<tr>
+<td>Mixed/Default</td>
+<td>0.5</td>
+<td>0.5</td>
+</tr>
+</tbody></table>
+<h3 id="2-index-multiple-fields"><a class="anchor" href="#2-index-multiple-fields">#</a> 2. Index Multiple Fields</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">await vectorStore.setFullTextIndexedFields(NS, 
+    [&#39;content&#39;, &#39;title&#39;, &#39;brand&#39;, &#39;sku&#39;, &#39;attributes&#39;]
+);</code></pre>
+      </div>
+    <h3 id="3-implement-fallback-strategy"><a class="anchor" href="#3-implement-fallback-strategy">#</a> 3. Implement Fallback Strategy</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Try balanced → vector-heavy → pure vector
+if (results.length &lt; threshold) {
+    // Shift toward vector search
+}</code></pre>
+      </div>
+    <h3 id="4-cache-popular-queries"><a class="anchor" href="#4-cache-popular-queries">#</a> 4. Cache Popular Queries</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const cache = new Map();
+// Cache results for 5-10 minutes</code></pre>
+      </div>
+    <h3 id="5-use-pre-filtering-when-possible"><a class="anchor" href="#5-use-pre-filtering-when-possible">#</a> 5. Use Pre-filtering When Possible</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Filter BEFORE search, not after
+const results = await search(query, { 
+    metadataFilter: { price: { $lte: maxPrice } }
+});</code></pre>
+      </div>
+    <h3 id="6-monitor-and-optimize"><a class="anchor" href="#6-monitor-and-optimize">#</a> 6. Monitor and Optimize</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Log slow queries
+if (searchTime &gt; 100) {
+    console.log(`Slow query: ${query} (${searchTime}ms)`);
+}</code></pre>
+      </div>
+    <hr>
+<h2 id="common-pitfalls-and-solutions"><a class="anchor" href="#common-pitfalls-and-solutions">#</a> Common Pitfalls and Solutions</h2>
+<h3 id="pitfall-1-forgetting-to-normalize-scores"><a class="anchor" href="#pitfall-1-forgetting-to-normalize-scores">#</a> Pitfall 1: Forgetting to Normalize Scores</h3>
+<p><strong>Problem:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Keyword scores: [15.2, 12.8, 9.3]
+// Vector scores: [0.85, 0.82, 0.79]
+combined = vectorScore + keywordScore; // Keywords dominate!</code></pre>
+      </div>
+    <p><strong>Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const normVector = normalizeMinMax(vectorScores);
+const normKeyword = normalizeMinMax(keywordScores);
+combined = (normVector * 0.5) + (normKeyword * 0.5);</code></pre>
+      </div>
+    <h3 id="pitfall-2-not-handling-zero-results"><a class="anchor" href="#pitfall-2-not-handling-zero-results">#</a> Pitfall 2: Not Handling Zero Results</h3>
+<p><strong>Problem:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const results = await search(query);
+return results[0]; // Error if no results!</code></pre>
+      </div>
+    <p><strong>Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">let results = await search(query, { vectorWeight: 0.5, textWeight: 0.5 });
+
+if (results.length === 0) {
+    // Fallback to vector-only
+    results = await search(query, { vectorWeight: 1.0, textWeight: 0.0 });
+}
+
+if (results.length === 0) {
+    return { message: &quot;No products found&quot;, suggestions: getPopularProducts() };
+}
+
+return results[0];</code></pre>
+      </div>
+    <h3 id="pitfall-3-over-caching"><a class="anchor" href="#pitfall-3-over-caching">#</a> Pitfall 3: Over-caching</h3>
+<p><strong>Problem:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Cache never expires!
+queryCache.set(query, results);</code></pre>
+      </div>
+    <p><strong>Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Set TTL and max cache size
+const MAX_CACHE_SIZE = 1000;
+const CACHE_TTL = 5 * 60 * 1000;
+
+if (queryCache.size &gt;= MAX_CACHE_SIZE) {
+    const firstKey = queryCache.keys().next().value;
+    queryCache.delete(firstKey); // Remove oldest
+}
+
+queryCache.set(query, {
+    results,
+    timestamp: Date.now()
+});</code></pre>
+      </div>
+    <h3 id="pitfall-4-not-using-query-analysis"><a class="anchor" href="#pitfall-4-not-using-query-analysis">#</a> Pitfall 4: Not Using Query Analysis</h3>
+<p><strong>Problem:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Always use same weights for all queries
+const results = await hybridSearch(query, { vectorWeight: 0.5, textWeight: 0.5 });</code></pre>
+      </div>
+    <p><strong>Solution:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Adapt weights to query type
+const analysis = analyzeQuery(query);
+const results = await hybridSearch(query, {
+    vectorWeight: analysis.weights.vector,
+    textWeight: analysis.weights.text
+});</code></pre>
+      </div>
+    <hr>
+<h2 id="conclusion"><a class="anchor" href="#conclusion">#</a> Conclusion</h2>
+<p>You now understand:</p>
+<p>✅ <strong>What hybrid search is</strong> and why it&#39;s powerful<br>✅ <strong>How to set up</strong> a vector database with multi-field indexing<br>✅ <strong>Score normalization</strong> techniques for fair combination<br>✅ <strong>Dynamic weight adjustment</strong> based on query patterns<br>✅ <strong>Fallback strategies</strong> for zero-result scenarios<br>✅ <strong>Performance optimization</strong> with caching and two-stage retrieval</p>
+<h3 id="next-steps"><a class="anchor" href="#next-steps">#</a> Next Steps</h3>
+<ol>
+<li><strong>Experiment</strong>: Try different weight combinations</li>
+<li><strong>Monitor</strong>: Track which queries are slow</li>
+<li><strong>Optimize</strong>: Implement caching for popular queries</li>
+<li><strong>Iterate</strong>: Adjust weights based on user feedback</li>
+<li><strong>Scale</strong>: Add index partitioning for large catalogs</li>
+</ol>
+<h3 id="additional-resources"><a class="anchor" href="#additional-resources">#</a> Additional Resources</h3>
+<ul>
+<li><strong>Vector Search</strong>: Learn about HNSW and FAISS</li>
+<li><strong>BM25 Algorithm</strong>: Understand the math behind keyword search</li>
+<li><strong>Query Classification</strong>: Use ML to auto-detect query types</li>
+<li><strong>Reranking</strong>: Add a third stage for fine-tuned ranking</li>
+</ul>
+<p>Happy searching! 🚀</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02_query_preprocessing.html"><span>← Previous</span><b>02_query_preprocessing</b></a>
+      <a class="next" href="./04_multi_query_retrieval.html"><span>Next →</span><b>04_multi_query_retrieval</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#c05621", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#c05621", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>04.03 — Reranking — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/04.%20RAG/04-03-reranking.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">RAG</div>
+    <ol class="toc"><li><a href="#1-why-reranking-works-and-what-it-should-optimise-in-rag">1. Why Reranking Works — and What It Should Optimise in RAG</a></li><li><a href="#2-learning-to-rank-losses-the-math-you-need">2. Learning-to-Rank Losses (the Math You Need)</a></li><li><a href="#3-cross-encoder-rerankers-in-practice">3. Cross-Encoder Rerankers in Practice</a></li><li><a href="#4-llm-rerankers">4. LLM Rerankers</a></li><li><a href="#5-calibration-turning-scores-into-decisions">5. Calibration: Turning Scores into Decisions</a></li><li><a href="#6-diversity-and-redundancy-after-reranking">6. Diversity and Redundancy After Reranking</a></li><li><a href="#7-production-challenges-how-to-solve-them">7. Production Challenges &amp; How to Solve Them</a></li><li><a href="#8-hands-on-projects">8. Hands-On Projects</a></li><li><a href="#9-foundational-papers-exact-titles">9. Foundational Papers (exact titles)</a></li><li><a href="#10-essential-tooling">10. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · RAG</div>
+    <h1 class="lesson-title">04.03 — Reranking</h1>
+    <p class="lesson-sub">**Module 4: RAG** · Subtopic 3 of 5</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — RAG 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.7" y="118.9" width="26.2" height="26.2" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.8 132.0)"/>
+        <circle cx="22.4" cy="127.1" r="12.5" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.0" cy="122.2" r="11.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="121.6" cy="117.2" r="11.2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.2" cy="112.3" r="10.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="40" lengthAdjust="spacingAndGlyphs">RAG</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">04.03 — Reranking</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> <strong>03.04 §6</strong> (cross-encoders, LLM rerankers, latency budgeting — the introduction), 03.01 (contrastive training), 02.01 §7 (paired tests), 04.02 (retrieval ceiling, dynamic k).
+<strong>Outcome:</strong> you understand ranking losses mathematically, can train and distil domain rerankers, can implement pointwise, pairwise, listwise, and setwise LLM reranking with bias controls, can <strong>calibrate</strong> reranker scores so they drive RAG decisions (how many chunks, when to abstain), and can serve rerankers within a latency budget.</p>
+</blockquote>
+<hr>
+<h2 id="1-why-reranking-works-and-what-it-should-optimise-in-rag"><a class="anchor" href="#1-why-reranking-works-and-what-it-should-optimise-in-rag">#</a> 1. Why Reranking Works — and What It Should Optimise in RAG</h2>
+<p>First-stage retrievers score the query and document <strong>independently</strong> ($s = \langle f(q), g(d)\rangle$, or BM25). A reranker scores them <strong>jointly</strong>, $s = h(q, d)$, with full token-level interaction. It sees negation, qualifiers, exact numbers, and whether the passage <em>answers</em> the question or merely mentions the topic.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> first stage (recall@100 high, precision low)     reranker (precision@5 high)
+ ┌─────────────────────────────────────┐          ┌───────────────────────────┐
+ │ 100–200 candidates, cheap scoring   │ ───────► │ joint q–d scoring, top 5–20│ ──► context budget (04.02 §6)
+ └─────────────────────────────────────┘          └───────────────────────────┘</code></pre>
+      </div>
+    <p><strong>In RAG, topical relevance is not the target — usefulness for answering is.</strong> A passage that restates the question is topically relevant but useless. A definitions section that the answer depends on may look off-topic. Train and evaluate rerankers against <strong>evidence labels</strong> (&quot;needed to answer&quot;), not topical labels, and:</p>
+<ul>
+<li>Rerank against the <strong>standalone, rewritten question</strong> (04.04), not the raw conversational turn.</li>
+<li>Include <strong>metadata</strong> in the reranker input (section path, document status, date). &quot;Enacted, 2025&quot; vs &quot;introduced bill, 2021&quot; matters.</li>
+<li>For instruction-following rerankers, state the domain preferences explicitly: &quot;Prefer current enacted statutes over bills and commentary.&quot;</li>
+</ul>
+<hr>
+<h2 id="2-learning-to-rank-losses-the-math-you-need"><a class="anchor" href="#2-learning-to-rank-losses-the-math-you-need">#</a> 2. Learning-to-Rank Losses (the Math You Need)</h2>
+<p>Let $s_i = h(q, d_i)$ be the model score and $y_i$ the graded label.</p>
+<p><strong>Pointwise (binary cross-entropy):</strong></p>
+<p>$$
+\mathcal{L}_{\text{point}} = -\sum_i \Big[y_i \log \sigma(s_i) + (1 - y_i)\log\big(1 - \sigma(s_i)\big)\Big]
+$$</p>
+<p>This is simple and yields probability-like scores, but it ignores that only the <em>order</em> matters.</p>
+<p><strong>Pairwise (RankNet):</strong> model $P(d_i \succ d_j) = \sigma(s_i - s_j)$ over pairs with $y_i &gt; y_j$:</p>
+<p>$$
+\mathcal{L}<em>{\text{RankNet}} = -\sum</em>{(i,j):, y_i &gt; y_j} \log \sigma(s_i - s_j)
+$$</p>
+<p><strong>LambdaRank:</strong> scale each pair&#39;s gradient by the change in NDCG from swapping the pair, which focuses learning on the top of the list:</p>
+<p>$$
+\lambda_{ij} = \frac{-,|\Delta \text{NDCG}_{ij}|}{1 + e^{,s_i - s_j}}
+$$</p>
+<p><strong>Listwise (ListNet / softmax cross-entropy):</strong></p>
+<p>$$
+\mathcal{L}_{\text{ListNet}} = -\sum_i \mathrm{softmax}(\mathbf{y})_i ,\log \mathrm{softmax}(\mathbf{s})_i
+$$</p>
+<p><strong>Localized Contrastive Estimation (LCE)</strong> — the standard cross-encoder recipe (Gao et al., 2021) — uses one positive and $n$ <strong>hard negatives sampled from the first-stage retriever you will actually rerank</strong>:</p>
+<p>$$
+\mathcal{L}<em>{\text{LCE}} = -\log \frac{e^{s^+}}{e^{s^+} + \sum</em>{k=1}^{n} e^{s_k^-}}
+$$</p>
+<p><strong>Distillation (MarginMSE):</strong> match the teacher&#39;s <em>margin</em> rather than its raw scores. This transfers knowledge from a large cross-encoder or LLM to a small, fast model (Hofstätter et al., 2020):</p>
+<p>$$
+\mathcal{L}_{\text{MarginMSE}} = \Big( (s^+ - s^-) - (t^+ - t^-) \Big)^2
+$$</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn.functional as F
+
+
+def ranknet_loss(scores: torch.Tensor, labels: torch.Tensor) -&gt; torch.Tensor:
+    &quot;&quot;&quot;scores, labels: (B, n). Mean over pairs with labels_i &gt; labels_j.&quot;&quot;&quot;
+    diff = scores[:, :, None] - scores[:, None, :]
+    mask = (labels[:, :, None] &gt; labels[:, None, :]).float()
+    return (F.softplus(-diff) * mask).sum() / mask.sum().clamp(min=1)     # -log σ(x) = softplus(-x)
+
+
+def listnet_loss(scores: torch.Tensor, labels: torch.Tensor) -&gt; torch.Tensor:
+    return -(F.softmax(labels.float(), dim=-1) * F.log_softmax(scores, dim=-1)).sum(-1).mean()
+
+
+def lce_loss(pos: torch.Tensor, negs: torch.Tensor) -&gt; torch.Tensor:
+    &quot;&quot;&quot;pos: (B,), negs: (B, n). Positive is class 0.&quot;&quot;&quot;
+    logits = torch.cat([pos[:, None], negs], dim=1)
+    return F.cross_entropy(logits, torch.zeros(len(pos), dtype=torch.long, device=pos.device))
+
+
+def margin_mse_loss(s_pos, s_neg, t_pos, t_neg) -&gt; torch.Tensor:
+    return F.mse_loss(s_pos - s_neg, t_pos - t_neg)</code></pre>
+      </div>
+    <hr>
+<h2 id="3-cross-encoder-rerankers-in-practice"><a class="anchor" href="#3-cross-encoder-rerankers-in-practice">#</a> 3. Cross-Encoder Rerankers in Practice</h2>
+<h3 id="31-training-recipe-for-a-domain-reranker"><a class="anchor" href="#31-training-recipe-for-a-domain-reranker">#</a> 3.1 Training recipe for a domain reranker</h3>
+<ol>
+<li><strong>Candidates:</strong> run your <em>production</em> first stage (hybrid, 04.02) on the training queries and keep the top 50–200. Training on candidates from a different retriever teaches the wrong distinctions.</li>
+<li><strong>Labels:</strong> human evidence labels where you have them. Otherwise use an <strong>LLM judge validated against human labels</strong> (03.04 Project 3), with graded 0–3 labels and reasoning before the grade.</li>
+<li><strong>Loss:</strong> LCE with 7–15 hard negatives per positive, optionally plus MarginMSE from a stronger teacher (a large cross-encoder or an LLM pointwise score).</li>
+<li><strong>Input format:</strong> <code>query [SEP] section_path | title | status | date [SEP] passage</code>, truncated to 256–512 tokens.</li>
+<li><strong>Evaluation:</strong> nDCG@10 and evidence recall at the RAG budget on a human-labelled test set, sliced by query type. Include the first-stage-only baseline.</li>
+</ol>
+<h3 id="32-serving"><a class="anchor" href="#32-serving">#</a> 3.2 Serving</h3>
+<p>The cost per query is roughly</p>
+<p>$$
+T_{\text{rerank}} \approx \frac{n_{\text{cand}}\cdot(\ell_q + \ell_d)}{\text{throughput (tokens/s)}} + T_{\text{overhead}}
+$$</p>
+<p>Levers: rerank depth $n_{\text{cand}}$ (gains usually flatten beyond 50–100), passage truncation $\ell_d$, model size (distil), batching, fp16/INT8 with ONNX Runtime or TensorRT, and <strong>score caching</strong> by <code>(query_hash, chunk_id, chunk_version, model_version)</code> for repeated queries. Always set a <strong>timeout with fallback</strong> to the fused first-stage order (03.04 §6.3).</p>
+<hr>
+<h2 id="4-llm-rerankers"><a class="anchor" href="#4-llm-rerankers">#</a> 4. LLM Rerankers</h2>
+<p>LLMs rerank well zero-shot, follow instructions, and can reason about usefulness. They are also slow, expensive, and <strong>position-biased</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Calls for n candidates</th>
+<th>Strengths</th>
+<th>Weaknesses</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Pointwise</strong> (yes/no log-prob or 0–3 grade)</td>
+<td>$n$ (parallel)</td>
+<td>Simple, parallel, calibratable</td>
+<td>Scores are not comparable across queries without calibration; ignores other candidates</td>
+</tr>
+<tr>
+<td><strong>Pairwise</strong> (PRP: &quot;Which passage is more relevant, A or B?&quot;)</td>
+<td>$O(n^2)$ all-pairs, or $O(nk)$ with a sliding or sorting variant</td>
+<td>Robust; both orders cancel position bias</td>
+<td>Many calls</td>
+</tr>
+<tr>
+<td><strong>Listwise</strong> (RankGPT: output a permutation of a window)</td>
+<td>$\lceil (n - w)/s \rceil + 1$ per pass</td>
+<td>Sees the candidates together; strong quality</td>
+<td>Position bias; output parsing; context-length limits</td>
+</tr>
+<tr>
+<td><strong>Setwise</strong> (pick the best of a set of $c$; tournament or heap sort)</td>
+<td>≈ $O\big(\frac{n}{c-1} + k \log_c n\big)$</td>
+<td>Fewer calls than pairwise; good quality/cost</td>
+<td>More complex orchestration</td>
+</tr>
+<tr>
+<td><strong>Reasoning rerankers</strong> (think before judging)</td>
+<td>as above, more tokens</td>
+<td>Better on hard, reasoning-heavy relevance</td>
+<td>Latency; use only on the final top 10–20</td>
+</tr>
+</tbody></table>
+<h3 id="41-sliding-window-listwise-reranking"><a class="anchor" href="#41-sliding-window-listwise-reranking">#</a> 4.1 Sliding-window listwise reranking</h3>
+<p>Process windows from the <strong>bottom of the list upward</strong>, so strong candidates &quot;bubble&quot; to the top in one pass. With window $w$ and stride $s$, one pass guarantees that the top $w - s$ positions are fully sorted relative to everything seen.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from typing import Callable, Sequence
+
+
+def sliding_window_rerank(query: str, docs: Sequence[str],
+                          rank_window: Callable[[str, list[str]], list[int]],
+                          window: int = 20, stride: int = 10) -&gt; list[int]:
+    &quot;&quot;&quot;rank_window(query, window_docs) -&gt; permutation of range(len(window_docs)), best first.
+    Returns a permutation of range(len(docs)), best first.&quot;&quot;&quot;
+    order = list(range(len(docs)))
+    end = len(order)
+    start = max(0, end - window)
+    while True:
+        idx = order[start:end]
+        perm = rank_window(query, [docs[i] for i in idx])
+        if sorted(perm) != list(range(len(idx))):             # malformed output: keep the window&#39;s order
+            perm = list(range(len(idx)))
+        order[start:end] = [idx[p] for p in perm]
+        if start == 0:
+            return order
+        end -= stride
+        start = max(0, end - window)</code></pre>
+      </div>
+    <h3 id="42-controlling-position-bias"><a class="anchor" href="#42-controlling-position-bias">#</a> 4.2 Controlling position bias</h3>
+<ul>
+<li><strong>Pairwise:</strong> ask both orders (A,B) and (B,A). Count a win only when the two answers are consistent; otherwise treat it as a tie.</li>
+<li><strong>Listwise:</strong> <strong>permutation self-consistency</strong> (Tang et al., 2023). Rerank several random shuffles of the same candidates, then aggregate the rankings (Borda count, or a Kemeny approximation).</li>
+<li><strong>Measure the bias:</strong> for a fixed set of relevant passages, plot selection frequency against input position. A slope means your prompt or model needs these controls.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import random
+from collections import defaultdict
+from typing import Callable
+
+
+def prp_allpairs(query, docs, prefer: Callable[[str, str, str], str]) -&gt; list[int]:
+    &quot;&quot;&quot;prefer(query, a, b) -&gt; &#39;A&#39; | &#39;B&#39;. Both orders are asked; inconsistent answers count as ties.&quot;&quot;&quot;
+    score = defaultdict(float)
+    n = len(docs)
+    for i in range(n):
+        for j in range(i + 1, n):
+            ab, ba = prefer(query, docs[i], docs[j]), prefer(query, docs[j], docs[i])
+            if ab == &quot;A&quot; and ba == &quot;B&quot;:
+                score[i] += 1
+            elif ab == &quot;B&quot; and ba == &quot;A&quot;:
+                score[j] += 1
+            else:
+                score[i] += 0.5
+                score[j] += 0.5
+    return sorted(range(n), key=lambda i: -score[i])
+
+
+def permutation_self_consistency(query, docs, rerank: Callable[[str, list[str]], list[int]],
+                                 n_shuffles: int = 5, seed: int = 0) -&gt; list[int]:
+    &quot;&quot;&quot;Borda aggregation over rerankings of shuffled inputs.&quot;&quot;&quot;
+    rng, n = random.Random(seed), len(docs)
+    points = defaultdict(float)
+    for _ in range(n_shuffles):
+        perm = list(range(n))
+        rng.shuffle(perm)
+        ranked = rerank(query, [docs[p] for p in perm])        # indices into the shuffled list
+        for pos, local in enumerate(ranked):
+            points[perm[local]] += n - pos
+    return sorted(range(n), key=lambda i: -points[i])</code></pre>
+      </div>
+    <h3 id="43-practical-guidance"><a class="anchor" href="#43-practical-guidance">#</a> 4.3 Practical guidance</h3>
+<ul>
+<li>Use an LLM reranker as a <strong>final stage</strong> on ≤ 20–30 candidates, after a cross-encoder. Or use it <strong>offline</strong>, to label training data for a cross-encoder you then serve.</li>
+<li>Force a structured output (a JSON array of IDs, via 02.03) and validate it as a permutation. Fall back gracefully.</li>
+<li>Use short, stable passage IDs (<code>[1]</code>…<code>[20]</code>) rather than long IDs. This reduces errors and tokens.</li>
+<li>Cache by <code>(query, candidate set hash, model, prompt version)</code>.</li>
+</ul>
+<hr>
+<h2 id="5-calibration-turning-scores-into-decisions"><a class="anchor" href="#5-calibration-turning-scores-into-decisions">#</a> 5. Calibration: Turning Scores into Decisions</h2>
+<p>RAG needs rerankers to answer <strong>&quot;how many chunks?&quot;</strong> and <strong>&quot;is anything relevant at all?&quot;</strong> (04.02 §6). Raw scores (logits, similarities) are not probabilities, and their scale shifts across queries and model versions. Calibrate on a labelled development set.</p>
+<p><strong>Platt scaling:</strong></p>
+<p>$$
+\hat p(\text{relevant} \mid s) = \sigma(a,s + b), \qquad (a, b) = \arg\min_{a,b} \sum_i \mathrm{BCE}\big(y_i,\ \sigma(a s_i + b)\big)
+$$</p>
+<p>(Isotonic regression is the non-parametric alternative when you have more data.) Then choose the threshold $\tau$ for a <strong>target precision</strong> on the development set, and evaluate the results on held-out data:</p>
+<ul>
+<li>keep chunks with $\hat p \ge \tau$;</li>
+<li><strong>abstain</strong> when none pass;</li>
+<li>report the <strong>expected calibration error</strong>, $\text{ECE} = \sum_b \frac{|B_b|}{N},|\mathrm{acc}(B_b) - \mathrm{conf}(B_b)|$.</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def fit_platt(scores: np.ndarray, labels: np.ndarray, iters: int = 200, lr: float = 0.1):
+    &quot;&quot;&quot;Fit p = sigmoid(a*s + b) by gradient descent on log loss (standardised scores for stability).&quot;&quot;&quot;
+    mu, sd = scores.mean(), scores.std() or 1.0
+    z = (scores - mu) / sd
+    a, b = 1.0, 0.0
+    for _ in range(iters):
+        p = 1 / (1 + np.exp(-(a * z + b)))
+        g = p - labels
+        a -= lr * float((g * z).mean())
+        b -= lr * float(g.mean())
+    return lambda s: 1 / (1 + np.exp(-(a * (np.asarray(s) - mu) / sd + b)))
+
+
+def threshold_for_precision(probs: np.ndarray, labels: np.ndarray, target: float = 0.9) -&gt; float:
+    order = np.argsort(-probs)
+    tp = np.cumsum(labels[order])
+    prec = tp / np.arange(1, len(order) + 1)
+    ok = np.where(prec &gt;= target)[0]
+    return float(probs[order][ok.max()]) if len(ok) else 1.0
+
+
+def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, bins: int = 10) -&gt; float:
+    edges = np.linspace(0, 1, bins + 1)
+    ece = 0.0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        m = (probs &gt;= lo) &amp; (probs &lt; hi) if hi &lt; 1 else (probs &gt;= lo) &amp; (probs &lt;= hi)
+        if m.any():
+            ece += m.mean() * abs(labels[m].mean() - probs[m].mean())
+    return float(ece)</code></pre>
+      </div>
+    <p><strong>Recalibrate</strong> whenever the reranker model, the input format, or the first-stage retriever changes. Monitor the score distributions in production for drift.</p>
+<hr>
+<h2 id="6-diversity-and-redundancy-after-reranking"><a class="anchor" href="#6-diversity-and-redundancy-after-reranking">#</a> 6. Diversity and Redundancy After Reranking</h2>
+<p>Rerankers score each candidate independently, so the top 5 may be five near-copies of the same paragraph (amended and original versions, or overlapping chunks). Before assembling the context:</p>
+<ul>
+<li><strong>Deduplicate</strong> by chunk overlap (offsets) and near-duplicate text (02.02 §8).</li>
+<li><strong>Merge siblings into parents</strong> (04.01 §4.1).</li>
+<li><strong>MMR</strong> over reranker scores and embeddings (02.01 §3.1) for multi-aspect questions.</li>
+</ul>
+<hr>
+<h2 id="7-production-challenges-how-to-solve-them"><a class="anchor" href="#7-production-challenges-how-to-solve-them">#</a> 7. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Reranker trained on the wrong candidates</strong></td>
+<td>Offline gains don&#39;t show in production</td>
+<td>Mine negatives from the <em>production</em> first stage; retrain when the retriever changes</td>
+</tr>
+<tr>
+<td><strong>Topical ≠ useful</strong></td>
+<td>Top chunks restate the question</td>
+<td>Evidence-based labels; metadata in the input; instruction-following rerankers</td>
+</tr>
+<tr>
+<td><strong>Latency blow-ups</strong></td>
+<td>P99 over the SLO at peak</td>
+<td>Cap the depth; truncate passages; distilled model; batching; timeout fallback</td>
+</tr>
+<tr>
+<td><strong>LLM position bias</strong></td>
+<td>The first/last candidates are over-selected</td>
+<td>Both-order pairwise; permutation self-consistency; bias measurement</td>
+</tr>
+<tr>
+<td><strong>Malformed listwise output</strong></td>
+<td>Missing or duplicate IDs</td>
+<td>Structured output; permutation validation; fallback to the input order</td>
+</tr>
+<tr>
+<td><strong>Uncalibrated thresholds</strong></td>
+<td>Too many or too few chunks; wrong abstentions</td>
+<td>Platt/isotonic calibration; precision-targeted thresholds; ECE monitoring</td>
+</tr>
+<tr>
+<td><strong>Redundant top-k</strong></td>
+<td>Context full of near-duplicates</td>
+<td>Dedup, parent merging, MMR</td>
+</tr>
+<tr>
+<td><strong>Cost of LLM reranking</strong></td>
+<td>Token bills</td>
+<td>Use the LLM only for the final 10–20 candidates, or offline for labels; cache</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="8-hands-on-projects"><a class="anchor" href="#8-hands-on-projects">#</a> 8. Hands-On Projects</h2>
+<h3 id="project-1-train-and-distil-a-domain-cross-encoder"><a class="anchor" href="#project-1-train-and-distil-a-domain-cross-encoder">#</a> Project 1 — Train and Distil a Domain Cross-Encoder</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a RAG engineer</em>, I want a small reranker trained on our legislative queries that matches a large model&#39;s quality at a fraction of the latency, so that we can rerank 100 candidates under 60 ms.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Training data: ≥ 10k queries (real + synthetic, filtered), with candidates from the production hybrid retriever (04.02) and labels from a validated LLM judge. Test set: ≥ 300 human-labelled queries.</li>
+<li>Trains a small cross-encoder (~20–150M parameters) with LCE (§2) and hard negatives, and a variant with MarginMSE distillation from a large cross-encoder or LLM teacher.</li>
+<li>Reports nDCG@10, MRR@10, and evidence recall at 2k tokens against: the first stage only, an off-the-shelf small reranker, the large teacher, and your distilled student. The student reaches ≥ 95% of the teacher&#39;s nDCG@10.</li>
+<li>Serving: an ONNX/INT8 export with measured P50/P95 latency for 100 candidates on the target hardware, plus a timeout fallback.</li>
+<li>End-to-end RAG answer accuracy improves over no reranking, with paired significance.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Generate the candidate pools and judge labels (batch APIs for cost), and validate the judge on 200 human pairs.</li>
+<li>Implement the training loop with <code>lce_loss</code> and <code>margin_mse_loss</code> (sentence-transformers <code>CrossEncoder</code> or your own).</li>
+<li>Train the teacher-scored variant; tune the negatives count and the truncation length.</li>
+<li>Export to ONNX, quantise, and benchmark with batching.</li>
+<li>Integrate behind the retrieval API and run the RAG evaluation.</li>
+</ol>
+<hr>
+<h3 id="project-2-llm-reranker-lab-strategies-bias-and-cost"><a class="anchor" href="#project-2-llm-reranker-lab-strategies-bias-and-cost">#</a> Project 2 — LLM Reranker Lab: Strategies, Bias, and Cost</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an applied scientist</em>, I want to know which LLM reranking strategy gives the best quality per dollar and how strong position bias is, so that we configure the final rerank stage responsibly.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Implements pointwise (log-prob and graded), pairwise (PRP all-pairs and a sliding variant), listwise (sliding window, §4.1), and setwise reranking with the same LLM.</li>
+<li>On a BEIR dataset and your domain set: nDCG@10, the number of LLM calls, input and output tokens, cost, and latency for n ∈ {20, 50, 100}.</li>
+<li>Position-bias study: selection rate vs input position, with and without both-order pairing and permutation self-consistency (3 and 5 shuffles).</li>
+<li>Robustness: the rate of malformed outputs and the effectiveness of fallbacks.</li>
+<li>A recommendation table: strategy × depth for three latency and cost tiers.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Build a prompt library per strategy, with structured outputs and ID-based passages.</li>
+<li>Implement <code>sliding_window_rerank</code>, <code>prp_allpairs</code>, <code>permutation_self_consistency</code>, and a setwise tournament.</li>
+<li>Cache all LLM calls by <code>(prompt hash)</code> to make the experiments reproducible and cheap to re-run.</li>
+<li>Run the grid; compute the metrics and costs; plot quality against cost.</li>
+<li>Write the analysis, including the bias plots.</li>
+</ol>
+<hr>
+<h3 id="project-3-calibrated-reranker-gate-dynamic-k-and-abstention-in-rag"><a class="anchor" href="#project-3-calibrated-reranker-gate-dynamic-k-and-abstention-in-rag">#</a> Project 3 — Calibrated Reranker Gate: Dynamic k and Abstention in RAG</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a product owner</em>, I want the assistant to use only the chunks that matter, and to say &quot;the provided sources don&#39;t cover this&quot; instead of guessing, so that attorneys trust it.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Calibrates the reranker with Platt and isotonic regression on a development set, and reports ECE before and after (target ECE &lt; 0.05).</li>
+<li>Implements a gate: keep chunks with $\hat p \ge \tau$ (τ chosen for target precisions of 0.8, 0.9, and 0.95); abstain when none pass.</li>
+<li>The test set includes ≥ 100 <strong>unanswerable</strong> questions (the evidence is absent from the corpus) alongside answerable ones.</li>
+<li>Metrics: answer accuracy on answerable questions, abstention precision and recall on unanswerable ones, hallucination rate (judge-validated), and average context tokens. Compared with a fixed top-k baseline.</li>
+<li>Monitoring: score-distribution drift alerts and a documented recalibration procedure.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Collect the reranker scores and labels on the development set; fit the calibrators (<code>fit_platt</code>, isotonic via scikit-learn).</li>
+<li>Choose τ with <code>threshold_for_precision</code>, and validate it on held-out data.</li>
+<li>Add the gate to the RAG pipeline, plus an abstention response template.</li>
+<li>Build the unanswerable set by removing the gold documents or writing out-of-scope questions.</li>
+<li>Evaluate against the baseline, and set up the drift monitoring.</li>
+</ol>
+<hr>
+<h2 id="9-foundational-papers-exact-titles"><a class="anchor" href="#9-foundational-papers-exact-titles">#</a> 9. Foundational Papers (exact titles)</h2>
+<p><strong>Learning to rank</strong></p>
+<ul>
+<li>Burges et al., 2005 — <em>Learning to Rank using Gradient Descent</em> (RankNet)</li>
+<li>Burges, 2010 — <em>From RankNet to LambdaRank to LambdaMART: An Overview</em></li>
+<li>Cao et al., 2007 — <em>Learning to Rank: From Pairwise Approach to Listwise Approach</em> (ListNet)</li>
+<li>Liu, 2009 — <em>Learning to Rank for Information Retrieval</em> (monograph)</li>
+</ul>
+<p><strong>Neural rerankers</strong></p>
+<ul>
+<li>Nogueira &amp; Cho, 2019 — <em>Passage Re-ranking with BERT</em></li>
+<li>Nogueira et al., 2020 — <em>Document Ranking with a Pretrained Sequence-to-Sequence Model</em></li>
+<li>Gao, Dai &amp; Callan, 2021 — <em>Rethink Training of BERT Rerankers in Multi-Stage Retrieval Pipeline</em></li>
+<li>Hofstätter et al., 2020 — <em>Improving Efficient Neural Ranking Models with Cross-Architecture Knowledge Distillation</em></li>
+<li>Lin, Nogueira &amp; Yates, 2021 — <em>Pretrained Transformers for Text Ranking: BERT and Beyond</em></li>
+</ul>
+<p><strong>LLM reranking</strong></p>
+<ul>
+<li>Sun et al., 2023 — <em>Is ChatGPT Good at Search? Investigating Large Language Models as Re-Ranking Agents</em></li>
+<li>Qin et al., 2023 — <em>Large Language Models are Effective Text Rankers with Pairwise Ranking Prompting</em></li>
+<li>Zhuang et al., 2024 — <em>A Setwise Approach for Effective and Highly Efficient Zero-Shot Ranking with Large Language Models</em></li>
+<li>Tang et al., 2023 — <em>Found in the Middle: Permutation Self-Consistency Improves Listwise Ranking in Large Language Models</em></li>
+<li>Pradeep, Sharifymoghaddam &amp; Lin, 2023 — <em>RankZephyr: Effective and Robust Zero-Shot Listwise Reranking is a Breeze!</em></li>
+<li>Weller et al., 2025 — <em>Rank1: Test-Time Compute for Reranking in Information Retrieval</em></li>
+</ul>
+<p><strong>Calibration</strong></p>
+<ul>
+<li>Platt, 1999 — <em>Probabilistic Outputs for Support Vector Machines and Comparisons to Regularized Likelihood Methods</em></li>
+<li>Guo et al., 2017 — <em>On Calibration of Modern Neural Networks</em></li>
+</ul>
+<h2 id="10-essential-tooling"><a class="anchor" href="#10-essential-tooling">#</a> 10. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>sentence-transformers <code>CrossEncoder</code></strong></td>
+<td>Training and inference for cross-encoders</td>
+</tr>
+<tr>
+<td><strong>RankLLM</strong>, <strong>rerankers</strong> (Python)</td>
+<td>LLM and cross-encoder reranking implementations</td>
+</tr>
+<tr>
+<td><strong>Hosted rerank APIs</strong> (Cohere, Voyage, Jina, cloud providers)</td>
+<td>Managed rerankers; check latency, limits, data policies</td>
+</tr>
+<tr>
+<td><strong>ONNX Runtime / TensorRT / Text Embeddings Inference (rerank endpoint)</strong></td>
+<td>Fast serving</td>
+</tr>
+<tr>
+<td><strong>LightGBM (lambdarank)</strong></td>
+<td>Feature-based learning to rank</td>
+</tr>
+<tr>
+<td><strong>scikit-learn</strong> (<code>CalibratedClassifierCV</code>, <code>IsotonicRegression</code>)</td>
+<td>Calibration</td>
+</tr>
+<tr>
+<td><strong>ranx / ir_measures</strong></td>
+<td>Metrics and significance</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-02-hybrid-search.html"><span>← Previous</span><b>02 hybrid search</b></a>
+      <a class="next" href="./04-04-query-rewriting.html"><span>Next →</span><b>04 query rewriting</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

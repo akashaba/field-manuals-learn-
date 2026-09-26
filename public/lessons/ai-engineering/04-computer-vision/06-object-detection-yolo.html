@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Object Detection — YOLO from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/06-object-detection-yolo/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Object Detection — YOLO from Scratch</h1>
+    <p class="lesson-sub">Detection is classification plus regression, run at every position in a feature map, then cleaned up with non-maximum suppression.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 4 Lesson 04 (Image Classification), Phase 4 Lesson 05 (Transfer Learning)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 06">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M87.4,98.4 L95.5,86.2 L103.6,98.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.6,93.0 L90.0,81.9 L97.5,93.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.9" y="118.2" width="26.0" height="26.0" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(132 26.9 131.2)"/>
+        <circle cx="21.5" cy="126.2" r="12.4" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.1" cy="121.3" r="11.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">06</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Object Detection —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">YOLO from Scratch</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain the grid-and-anchor design that turns detection into a dense prediction problem and state what every number in the output tensor means</li>
+<li>Compute Intersection-over-Union between boxes and implement non-maximum suppression from scratch</li>
+<li>Build a minimal YOLO-style head on top of a pretrained backbone, including the classification, objectness, and box-regression losses</li>
+<li>Read a detection metric row (<a href="mailto:precision@0.5">precision@0.5</a>, recall, <a href="mailto:mAP@0.5">mAP@0.5</a>, <a href="mailto:mAP@0.5">mAP@0.5</a>:0.95) and pick which knob to turn next</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Classification says &quot;this image is a dog.&quot; Detection says &quot;there is a dog at pixels (112, 40, 280, 210), there is a cat at (400, 180, 560, 310), and nothing else in the frame.&quot; That one structural change — predicting a variable number of labelled boxes instead of one label per image — is what every autonomous system, every surveillance product, every document layout parser, and every factory vision line depends on.</p>
+<p>Detection is also where every engineering trade-off in vision shows up at once. You want boxes that are accurate (regression head), you want the right class for each box (classification head), you want the model to know when there is nothing to detect (objectness score), and you want exactly one prediction per real object (non-maximum suppression). Miss any of these and the pipeline either misses objects, reports hallucinated boxes, or predicts the same object fifteen times in slightly different positions.</p>
+<p>YOLO (You Only Look Once, Redmon et al. 2016) was the design that made all of this run in real time by doing it with a single forward pass of a conv net, and the same structural decisions are still the backbone of modern detectors (YOLOv8, YOLOv9, YOLO-NAS, RT-DETR). Learn the core and every variant becomes a rearrangement of the same parts.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="detection-as-dense-prediction"><a class="anchor" href="#detection-as-dense-prediction">#</a> Detection as dense prediction</h3>
+<p>A classifier outputs C numbers per image. A YOLO-style detector outputs <code>(S x S x (5 + C))</code> numbers per image, where S is the spatial grid size.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    IMG[&quot;Input 416x416 RGB&quot;] --&gt; BB[&quot;Backbone&lt;br/&gt;(ResNet, DarkNet, ...)&quot;]
+    BB --&gt; FM[&quot;Feature map&lt;br/&gt;(C_feat, 13, 13)&quot;]
+    FM --&gt; HEAD[&quot;Detection head&lt;br/&gt;(1x1 convs)&quot;]
+    HEAD --&gt; OUT[&quot;Output tensor&lt;br/&gt;(13, 13, B * (5 + C))&quot;]
+    OUT --&gt; DEC[&quot;Decode&lt;br/&gt;(grid + sigmoid + exp)&quot;]
+    DEC --&gt; NMS[&quot;Non-max suppression&quot;]
+    NMS --&gt; RESULT[&quot;Final boxes&quot;]
+
+    style IMG fill:#dbeafe,stroke:#2563eb
+    style HEAD fill:#fef3c7,stroke:#d97706
+    style NMS fill:#fecaca,stroke:#dc2626
+    style RESULT fill:#dcfce7,stroke:#16a34a</pre></div><p>Each of the <code>S * S</code> grid cells predicts <code>B</code> boxes. For each box:</p>
+<ul>
+<li>4 numbers describe geometry: <code>tx, ty, tw, th</code>.</li>
+<li>1 number is the objectness score: &quot;is there an object centred in this cell?&quot;</li>
+<li>C numbers are class probabilities.</li>
+</ul>
+<p>Total per cell: <code>B * (5 + C)</code>. For VOC with <code>S=13, B=2, C=20</code>, that is 50 numbers per cell.</p>
+<h3 id="why-grids-and-anchors"><a class="anchor" href="#why-grids-and-anchors">#</a> Why grids and anchors</h3>
+<p>Plain regression would predict <code>(x, y, w, h)</code> for every object as an absolute coordinate. That is hard for a conv network because translating the image should not translate all predictions by the same amount — each object is spatially anchored. The grid answers this by assigning each ground-truth box to the grid cell its centre falls in; only that cell is responsible for that object.</p>
+<p>Anchors address a second problem. A 3x3 conv cannot easily regress a 500-pixel-wide box out of a 16-pixel receptive field feature cell. Instead, we pre-define <code>B</code> prior box shapes (anchors) per cell and predict small deltas from each anchor. The model learns to pick the right anchor and nudge it rather than regress from nothing.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Anchor box priors (example for 416x416 input):
+
+  small:   (30,  60)
+  medium:  (75,  170)
+  large:   (200, 380)
+
+At each grid cell, every anchor emits (tx, ty, tw, th, obj, c_1, ..., c_C).</code></pre>
+      </div>
+    <p>Modern detectors often use FPN with different anchor sets per resolution — small anchors on shallow high-resolution maps, large anchors on deep low-resolution maps. Same idea, more scales.</p>
+<h3 id="decoding-predictions"><a class="anchor" href="#decoding-predictions">#</a> Decoding predictions</h3>
+<p>The raw <code>tx, ty, tw, th</code> are not box coordinates; they are regression targets to be transformed before plotting:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">centre x  = (sigmoid(tx) + cell_x) * stride
+centre y  = (sigmoid(ty) + cell_y) * stride
+width     = anchor_w * exp(tw)
+height    = anchor_h * exp(th)</code></pre>
+      </div>
+    <p><code>sigmoid</code> keeps centre offsets inside the cell. <code>exp</code> lets the width scale freely from the anchor without a sign flip. <code>stride</code> scales the grid coordinates back to pixels. This decode step is the same in every YOLO version since v2.</p>
+<h3 id="iou"><a class="anchor" href="#iou">#</a> IoU</h3>
+<p>Detection&#39;s universal similarity metric between two boxes:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">IoU(A, B) = area(A intersect B) / area(A union B)</code></pre>
+      </div>
+    <p>IoU = 1 means identical; IoU = 0 means no overlap. IoU between the prediction and the ground-truth box is what decides whether a prediction counts as a true positive (typically IoU &gt;= 0.5). IoU between two predictions is what NMS uses to deduplicate.</p>
+<h3 id="non-maximum-suppression"><a class="anchor" href="#non-maximum-suppression">#</a> Non-maximum suppression</h3>
+<p>A conv network trained on adjacent anchors will often predict overlapping boxes for the same object. NMS keeps the highest-confidence prediction and deletes any other prediction with IoU above a threshold.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">NMS(boxes, scores, iou_threshold):
+    sort boxes by score descending
+    keep = []
+    while boxes not empty:
+        pick the top-scoring box, add to keep
+        remove every box with IoU &gt; iou_threshold to the picked box
+    return keep</code></pre>
+      </div>
+    <p>Typical threshold: 0.45 for object detection. Recent detectors replace standard NMS with <code>soft-NMS</code>, <code>DIoU-NMS</code>, or learn the suppression directly (RT-DETR) but the structural purpose is the same.</p>
+<h3 id="the-loss"><a class="anchor" href="#the-loss">#</a> The loss</h3>
+<p>YOLO loss is three losses added with weights:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L = lambda_coord * L_box(pred, target, where obj=1)
+  + lambda_obj   * L_obj(pred, 1,     where obj=1)
+  + lambda_noobj * L_obj(pred, 0,     where obj=0)
+  + lambda_cls   * L_cls(pred, target, where obj=1)</code></pre>
+      </div>
+    <p>Only cells that contain an object contribute to the box-regression and classification losses. Cells without objects contribute only to the objectness loss (teaching the model to stay silent). <code>lambda_noobj</code> is usually small (~0.5) because the vast majority of cells are empty and would otherwise dominate the total loss.</p>
+<p>Modern variants swap MSE box loss for CIoU / DIoU (which optimise IoU directly), use focal loss for class imbalance, and balance objectness with quality focal loss. The three-component structure is unchanged.</p>
+<h3 id="detection-metrics"><a class="anchor" href="#detection-metrics">#</a> Detection metrics</h3>
+<p>Accuracy does not transfer to detection. Four numbers that do:</p>
+<ul>
+<li><strong>Precision@IoU=0.5</strong> — of the predictions counted as positives, how many are actually correct.</li>
+<li><strong>Recall@IoU=0.5</strong> — of the real objects, how many did we find.</li>
+<li><strong><a href="mailto:AP@0.5">AP@0.5</a></strong> — precision-recall curve area at IoU threshold 0.5; one number per class.</li>
+<li><strong><a href="mailto:mAP@0.5">mAP@0.5</a>:0.95</strong> — average of AP over IoU thresholds 0.5, 0.55, ..., 0.95. The COCO metric; strictest and most informative.</li>
+</ul>
+<p>Report all four. A detector that is strong on <a href="mailto:mAP@0.5">mAP@0.5</a> but weak on <a href="mailto:mAP@0.5">mAP@0.5</a>:0.95 is localising roughly but not tightly; fix with better box-regression loss. A detector with high precision and low recall is too conservative; lower the confidence threshold or increase the objectness weight.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">object-detection-nms</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-iou"><a class="anchor" href="#step-1-iou">#</a> Step 1: IoU</h3>
+<p>The workhorse of the whole lesson. Works on two arrays of boxes in <code>(x1, y1, x2, y2)</code> format.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def box_iou(boxes_a, boxes_b):
+    ax1, ay1, ax2, ay2 = boxes_a[:, 0], boxes_a[:, 1], boxes_a[:, 2], boxes_a[:, 3]
+    bx1, by1, bx2, by2 = boxes_b[:, 0], boxes_b[:, 1], boxes_b[:, 2], boxes_b[:, 3]
+
+    inter_x1 = np.maximum(ax1[:, None], bx1[None, :])
+    inter_y1 = np.maximum(ay1[:, None], by1[None, :])
+    inter_x2 = np.minimum(ax2[:, None], bx2[None, :])
+    inter_y2 = np.minimum(ay2[:, None], by2[None, :])
+
+    inter_w = np.clip(inter_x2 - inter_x1, 0, None)
+    inter_h = np.clip(inter_y2 - inter_y1, 0, None)
+    inter = inter_w * inter_h
+
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    union = area_a[:, None] + area_b[None, :] - inter
+    return inter / np.clip(union, 1e-8, None)</code></pre>
+      </div>
+    <p>Returns an <code>(N_a, N_b)</code> matrix of pairwise IoUs. Use it against a single ground-truth box by making one of the arrays shape <code>(1, 4)</code>.</p>
+<h3 id="step-2-non-max-suppression"><a class="anchor" href="#step-2-non-max-suppression">#</a> Step 2: Non-max suppression</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def nms(boxes, scores, iou_threshold=0.45):
+    order = np.argsort(-scores)
+    keep = []
+    while len(order) &gt; 0:
+        i = order[0]
+        keep.append(i)
+        if len(order) == 1:
+            break
+        rest = order[1:]
+        ious = box_iou(boxes[[i]], boxes[rest])[0]
+        order = rest[ious &lt;= iou_threshold]
+    return np.array(keep, dtype=np.int64)</code></pre>
+      </div>
+    <p>Deterministic, <code>O(N log N)</code> from the sort, and matches the behaviour of <code>torchvision.ops.nms</code> on identical inputs.</p>
+<h3 id="step-3-box-encoding-and-decoding"><a class="anchor" href="#step-3-box-encoding-and-decoding">#</a> Step 3: Box encoding and decoding</h3>
+<p>Convert between pixel coordinates and the <code>(tx, ty, tw, th)</code> targets that the network actually regresses.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def encode(box_xyxy, cell_x, cell_y, stride, anchor_wh):
+    x1, y1, x2, y2 = box_xyxy
+    cx = 0.5 * (x1 + x2)
+    cy = 0.5 * (y1 + y2)
+    w = x2 - x1
+    h = y2 - y1
+    tx = cx / stride - cell_x
+    ty = cy / stride - cell_y
+    tw = np.log(w / anchor_wh[0] + 1e-8)
+    th = np.log(h / anchor_wh[1] + 1e-8)
+    return np.array([tx, ty, tw, th])
+
+
+def decode(tx_ty_tw_th, cell_x, cell_y, stride, anchor_wh):
+    tx, ty, tw, th = tx_ty_tw_th
+    cx = (sigmoid(tx) + cell_x) * stride
+    cy = (sigmoid(ty) + cell_y) * stride
+    w = anchor_wh[0] * np.exp(tw)
+    h = anchor_wh[1] * np.exp(th)
+    return np.array([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2])
+
+
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))</code></pre>
+      </div>
+    <p>Test: encode a box then decode — you should get back something very close to the original (up to the sigmoid inverse not being perfectly invertible when <code>tx</code> is not in the post-sigmoid range).</p>
+<h3 id="step-4-a-minimal-yolo-head"><a class="anchor" href="#step-4-a-minimal-yolo-head">#</a> Step 4: A minimal YOLO head</h3>
+<p>One 1x1 conv on a feature map, reshaping to <code>(B, S, S, num_anchors, 5 + C)</code>.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+class YOLOHead(nn.Module):
+    def __init__(self, in_c, num_anchors, num_classes):
+        super().__init__()
+        self.num_anchors = num_anchors
+        self.num_classes = num_classes
+        self.conv = nn.Conv2d(in_c, num_anchors * (5 + num_classes), kernel_size=1)
+
+    def forward(self, x):
+        n, _, h, w = x.shape
+        y = self.conv(x)
+        y = y.view(n, self.num_anchors, 5 + self.num_classes, h, w)
+        y = y.permute(0, 3, 4, 1, 2).contiguous()
+        return y</code></pre>
+      </div>
+    <p>Output shape: <code>(N, H, W, num_anchors, 5 + C)</code>. The last dimension holds <code>[tx, ty, tw, th, obj, cls_0, ..., cls_{C-1}]</code>.</p>
+<h3 id="step-5-ground-truth-assignment"><a class="anchor" href="#step-5-ground-truth-assignment">#</a> Step 5: Ground-truth assignment</h3>
+<p>For every ground-truth box, decide which <code>(cell, anchor)</code> is responsible.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def assign_targets(boxes_xyxy, classes, anchors, stride, grid_size, num_classes):
+    num_anchors = len(anchors)
+    target = np.zeros((grid_size, grid_size, num_anchors, 5 + num_classes), dtype=np.float32)
+    has_obj = np.zeros((grid_size, grid_size, num_anchors), dtype=bool)
+
+    for box, cls in zip(boxes_xyxy, classes):
+        x1, y1, x2, y2 = box
+        cx, cy = 0.5 * (x1 + x2), 0.5 * (y1 + y2)
+        gx, gy = int(cx / stride), int(cy / stride)
+        bw, bh = x2 - x1, y2 - y1
+
+        ious = np.array([
+            (min(bw, aw) * min(bh, ah)) / (bw * bh + aw * ah - min(bw, aw) * min(bh, ah))
+            for aw, ah in anchors
+        ])
+        best = int(np.argmax(ious))
+        aw, ah = anchors[best]
+
+        target[gy, gx, best, 0] = cx / stride - gx
+        target[gy, gx, best, 1] = cy / stride - gy
+        target[gy, gx, best, 2] = np.log(bw / aw + 1e-8)
+        target[gy, gx, best, 3] = np.log(bh / ah + 1e-8)
+        target[gy, gx, best, 4] = 1.0
+        target[gy, gx, best, 5 + cls] = 1.0
+        has_obj[gy, gx, best] = True
+    return target, has_obj</code></pre>
+      </div>
+    <p>Anchor selection is &quot;best shape IoU with the ground truth&quot; — a cheap proxy that matches the YOLOv2/v3 assignment. v5 and later use more sophisticated strategies (task-aligned matching, dynamic k) that refine the same idea.</p>
+<h3 id="step-6-the-three-losses"><a class="anchor" href="#step-6-the-three-losses">#</a> Step 6: The three losses</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def yolo_loss(pred, target, has_obj, lambda_coord=5.0, lambda_obj=1.0, lambda_noobj=0.5, lambda_cls=1.0):
+    has_obj_t = torch.from_numpy(has_obj).bool()
+    target_t = torch.from_numpy(target).float()
+
+    # box-regression loss: only on cells with objects
+    box_pred = pred[..., :4][has_obj_t]
+    box_true = target_t[..., :4][has_obj_t]
+    loss_box = torch.nn.functional.mse_loss(box_pred, box_true, reduction=&quot;sum&quot;)
+
+    # objectness loss
+    obj_pred = pred[..., 4]
+    obj_true = target_t[..., 4]
+    loss_obj_pos = torch.nn.functional.binary_cross_entropy_with_logits(
+        obj_pred[has_obj_t], obj_true[has_obj_t], reduction=&quot;sum&quot;)
+    loss_obj_neg = torch.nn.functional.binary_cross_entropy_with_logits(
+        obj_pred[~has_obj_t], obj_true[~has_obj_t], reduction=&quot;sum&quot;)
+
+    # classification loss on cells with objects
+    cls_pred = pred[..., 5:][has_obj_t]
+    cls_true = target_t[..., 5:][has_obj_t]
+    loss_cls = torch.nn.functional.binary_cross_entropy_with_logits(
+        cls_pred, cls_true, reduction=&quot;sum&quot;)
+
+    total = (lambda_coord * loss_box
+             + lambda_obj * loss_obj_pos
+             + lambda_noobj * loss_obj_neg
+             + lambda_cls * loss_cls)
+    return total, {&quot;box&quot;: loss_box.item(), &quot;obj_pos&quot;: loss_obj_pos.item(),
+                   &quot;obj_neg&quot;: loss_obj_neg.item(), &quot;cls&quot;: loss_cls.item()}</code></pre>
+      </div>
+    <p>Five hyper-parameters that every YOLO tutorial either hardcodes or sweeps. The ratios matter: <code>lambda_coord=5, lambda_noobj=0.5</code> mirrors the original YOLOv1 paper and still works as a reasonable default.</p>
+<h3 id="step-7-inference-pipeline"><a class="anchor" href="#step-7-inference-pipeline">#</a> Step 7: Inference pipeline</h3>
+<p>Decode the raw head output, apply sigmoid/exp, threshold on objectness, and NMS.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def postprocess(pred_tensor, anchors, stride, img_size, conf_threshold=0.25, iou_threshold=0.45):
+    pred = pred_tensor.detach().cpu().numpy()
+    grid_h, grid_w = pred.shape[1], pred.shape[2]
+    num_anchors = len(anchors)
+
+    boxes, scores, classes = [], [], []
+    for gy in range(grid_h):
+        for gx in range(grid_w):
+            for a in range(num_anchors):
+                tx, ty, tw, th, obj, *cls = pred[0, gy, gx, a]
+                score = sigmoid(obj) * sigmoid(np.array(cls)).max()
+                if score &lt; conf_threshold:
+                    continue
+                cls_idx = int(np.argmax(cls))
+                cx = (sigmoid(tx) + gx) * stride
+                cy = (sigmoid(ty) + gy) * stride
+                w = anchors[a][0] * np.exp(tw)
+                h = anchors[a][1] * np.exp(th)
+                boxes.append([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2])
+                scores.append(float(score))
+                classes.append(cls_idx)
+
+    if not boxes:
+        return np.zeros((0, 4)), np.zeros((0,)), np.zeros((0,), dtype=int)
+    boxes = np.array(boxes)
+    scores = np.array(scores)
+    classes = np.array(classes)
+    keep = nms(boxes, scores, iou_threshold)
+    return boxes[keep], scores[keep], classes[keep]</code></pre>
+      </div>
+    <p>That is the complete eval path: head -&gt; decode -&gt; threshold -&gt; NMS.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>torchvision.models.detection</code> ships production detectors with the same conceptual structure. Loading a pretrained model takes three lines.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
+
+model = fasterrcnn_resnet50_fpn_v2(weights=&quot;DEFAULT&quot;)
+model.eval()
+with torch.no_grad():
+    predictions = model([torch.randn(3, 400, 600)])
+print(predictions[0].keys())
+print(f&quot;boxes:  {predictions[0][&#39;boxes&#39;].shape}&quot;)
+print(f&quot;scores: {predictions[0][&#39;scores&#39;].shape}&quot;)
+print(f&quot;labels: {predictions[0][&#39;labels&#39;].shape}&quot;)</code></pre>
+      </div>
+    <p>For real-time inference pipelines, <code>ultralytics</code> (YOLOv8/v9) is the standard: <code>from ultralytics import YOLO; model = YOLO(&#39;yolov8n.pt&#39;); model(img)</code>. The model handles decoding and NMS internally and returns the same <code>boxes / scores / labels</code> triple you built above.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-detection-metric-reader.md</code> — a prompt that turns a <code>precision, recall, AP, mAP@0.5:0.95</code> row into a one-line diagnosis and the single most useful next experiment.</li>
+<li><code>outputs/skill-anchor-designer.md</code> — a skill that, given a dataset of ground-truth boxes, runs k-means on <code>(w, h)</code> and returns anchor sets per FPN level plus the coverage statistics you need to pick the right number of anchors.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Implement <code>box_iou</code> and run it against <code>torchvision.ops.box_iou</code> on 1,000 random box pairs. Verify max absolute difference is below <code>1e-6</code>.</li>
+<li><strong>(Medium)</strong> Port <code>yolo_loss</code> to a version that uses <code>CIoU</code> box loss instead of MSE. Show on a 100-image synthetic dataset that CIoU converges to a better final <a href="mailto:mAP@0.5">mAP@0.5</a>:0.95 than MSE in the same number of epochs.</li>
+<li><strong>(Hard)</strong> Implement multi-scale inference: feed the same image at three resolutions through the model, union the box predictions, and run a single NMS at the end. Measure the mAP lift vs single-scale inference on a held-out set.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Anchor</td>
+<td>&quot;Box prior&quot;</td>
+<td>A pre-defined box shape at each grid cell from which the network predicts deltas instead of absolute coordinates</td>
+</tr>
+<tr>
+<td>IoU</td>
+<td>&quot;Overlap&quot;</td>
+<td>Intersection-over-union of two boxes; the universal similarity measure in detection</td>
+</tr>
+<tr>
+<td>NMS</td>
+<td>&quot;Deduplicate&quot;</td>
+<td>Greedy algorithm that keeps highest-score predictions and removes overlapping ones above a threshold</td>
+</tr>
+<tr>
+<td>Objectness</td>
+<td>&quot;Is there something here&quot;</td>
+<td>Per-anchor, per-cell scalar predicting whether an object is centred in that cell</td>
+</tr>
+<tr>
+<td>Grid stride</td>
+<td>&quot;Downsample factor&quot;</td>
+<td>Pixels per grid cell; a 416-px input with a 13-grid head has stride 32</td>
+</tr>
+<tr>
+<td>mAP</td>
+<td>&quot;Mean average precision&quot;</td>
+<td>Average of the area under the precision-recall curve, averaged over classes and (for COCO) IoU thresholds</td>
+</tr>
+<tr>
+<td><a href="mailto:AP@0.5">AP@0.5</a></td>
+<td>&quot;PASCAL VOC AP&quot;</td>
+<td>Average precision with IoU threshold 0.5; the lenient version of the metric</td>
+</tr>
+<tr>
+<td><a href="mailto:mAP@0.5">mAP@0.5</a>:0.95</td>
+<td>&quot;COCO AP&quot;</td>
+<td>Average over IoU thresholds 0.5..0.95 step 0.05; the strict version and current community standard</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1506.02640">YOLOv1: You Only Look Once (Redmon et al., 2016)</a> — the founding paper; every YOLO since is a refinement of this structure</li>
+<li><a href="https://arxiv.org/abs/1804.02767">YOLOv3 (Redmon &amp; Farhadi, 2018)</a> — the paper that introduced multi-scale FPN-style heads; still the clearest diagram</li>
+<li><a href="https://docs.ultralytics.com">Ultralytics YOLOv8 docs</a> — the current production reference; covers dataset formats, augmentations, training recipes</li>
+<li><a href="https://jonathan-hui.medium.com/object-detection-series-24d03a12f904">The Illustrated Guide to Object Detection (Jonathan Hui)</a> — best plain-English tour of the full detector zoo; priceless for understanding how DETR, RetinaNet, FCOS, and YOLO relate</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./05-transfer-learning.html"><span>← Previous</span><b>transfer learning</b></a>
+      <a class="next" href="./07-semantic-segmentation-unet.html"><span>Next →</span><b>semantic segmentation unet</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

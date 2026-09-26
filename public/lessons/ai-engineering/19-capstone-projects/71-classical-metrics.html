@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Classical Metrics — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/71-classical-metrics/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning objectives</a></li><li><a href="#why-reimplement">Why reimplement</a></li><li><a href="#tokenisation">Tokenisation</a></li><li><a href="#exact-match">Exact match</a></li><li><a href="#token-level-f1">Token-level F1</a></li><li><a href="#bleu-4">BLEU-4</a></li><li><a href="#rouge-l">ROUGE-L</a></li><li><a href="#accuracy">Accuracy</a></li><li><a href="#dispatch-contract">Dispatch contract</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Classical Metrics</h1>
+    <p class="lesson-sub">BLEU, ROUGE-L, F1, exact-match, accuracy. Five metrics that still account for most published LLM eval numbers. Implement each from first principles so you know what the number means.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track B foundations, lesson 70</b></div><div><span>Time</span><b>~90 min</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 71">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="25.9" y="128.9" width="29.2" height="29.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(177 40.5 143.6)"/>
+        <rect x="21.1" y="124.7" width="27.9" height="27.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(159 35.1 138.6)"/>
+        <rect x="16.3" y="120.4" width="26.7" height="26.7" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(141 29.7 133.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">71</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Classical Metrics</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning objectives</h2>
+<ul>
+<li>Implement token-level exact-match, F1, and accuracy with explicit tokenisation rules.</li>
+<li>Implement BLEU-4 from the ground up: modified n-gram precision, geometric mean over n equals 1 through 4, brevity penalty.</li>
+<li>Implement ROUGE-L using longest common subsequence, with F-beta combination of precision and recall.</li>
+<li>Dispatch on the metric_name field from lesson 70 so the runner stays metric-agnostic.</li>
+<li>Pin the behaviour with reference vectors drawn from worked examples, not from a third-party library.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cd-bleu-overlap</code></pre>
+      </div>
+    <h2 id="why-reimplement"><a class="anchor" href="#why-reimplement">#</a> Why reimplement</h2>
+<p>You will read papers that report BLEU 28.3 and another that reports BLEU 0.283. You will find ROUGE-L scores that differ by ten points across two libraries because one truncates to lowercase and the other does not. The fastest way to stop being confused is to write the metrics yourself, then point at the line where the tokenizer is decided and the line where the smoothing is applied. After that, comparing numbers across papers becomes a matter of reading the metric setup, not arguing about libraries.</p>
+<p>Stdlib plus numpy is enough. BLEU is counting and a clamp. ROUGE-L is dynamic programming. F1 is a set intersection on tokens. The hardest part is choosing a tokenizer and committing to it.</p>
+<h2 id="tokenisation"><a class="anchor" href="#tokenisation">#</a> Tokenisation</h2>
+<p>The tokenizer is <code>re.findall(r&quot;\w+&quot;, text.lower())</code>. Lowercase, alphanumeric runs, drop punctuation. Every metric in this lesson uses this exact tokenizer. The runner does not get to choose. If you swap tokenizers, you are running a different benchmark.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">TOKEN_RE = re.compile(r&quot;\w+&quot;, re.UNICODE)
+def tokenize(text):
+    return TOKEN_RE.findall(text.lower())</code></pre>
+      </div>
+    <p>This is a deliberate simplification. Production setups will care about CJK, contractions, and code identifiers. The point of the lesson is that the tokenizer is a contract, not a knob.</p>
+<h2 id="exact-match"><a class="anchor" href="#exact-match">#</a> Exact match</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def exact_match(pred, targets):
+    return float(any(pred.strip() == t.strip() for t in targets))</code></pre>
+      </div>
+    <p>It returns 1.0 or 0.0 per task. The aggregate over a dataset is the mean. This is the workhorse for arithmetic, MCQ, and short classification tasks.</p>
+<h2 id="token-level-f1"><a class="anchor" href="#token-level-f1">#</a> Token-level F1</h2>
+<p>Set up the token multiset for prediction and target. Precision is the multiset intersection divided by the multiset of the prediction. Recall is the same intersection divided by the multiset of the target. F1 is the harmonic mean. The implementation handles the empty-prediction and empty-target edge cases.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[pred text] --&gt;|tokenize| P[pred tokens]
+    B[target text] --&gt;|tokenize| T[target tokens]
+    P --&gt; X[multiset intersection]
+    T --&gt; X
+    X --&gt; PR[precision = inter / pred]
+    X --&gt; RE[recall = inter / target]
+    PR --&gt; F[F1 = 2 P R / P + R]
+    RE --&gt; F</pre></div><p>For multi-target tasks, we take the best F1 over the target list. That matches the SQuAD-style behaviour widely reported in the literature.</p>
+<h2 id="bleu-4"><a class="anchor" href="#bleu-4">#</a> BLEU-4</h2>
+<p>BLEU is the canonical machine-translation metric and it still shows up in summarisation work. The formulation we use is corpus-level BLEU-4 with the standard brevity penalty and additive-one smoothing on modified n-gram counts so a single missing 4-gram does not push the score to zero.</p>
+<p>For each candidate-reference pair, we count modified n-gram precision for n equals 1, 2, 3, 4. Modified precision clips the candidate n-gram count by the maximum count of that n-gram in any reference, so a candidate cannot inflate by repeating one phrase. The geometric mean across the four precisions is wrapped by the brevity penalty.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[candidate tokens] --&gt; B[count n-grams n=1..4]
+    R[reference tokens] --&gt; C[max count per n-gram]
+    B --&gt; D[clipped n-gram count]
+    C --&gt; D
+    D --&gt; E[modified precision p_n]
+    A --&gt; F[candidate length c]
+    R --&gt; G[reference length r]
+    F --&gt; BP[BP = 1 if c&gt;=r else exp 1 - r/c]
+    G --&gt; BP
+    E --&gt; M[geometric mean of p_n]
+    M --&gt; S[BLEU = BP * geo mean]
+    BP --&gt; S</pre></div><p>The smoothing rule is the one Lin and Och called method 1: add one to both numerator and denominator of every n-gram precision before taking the log. This avoids <code>log 0</code> when a reference has no matching 4-gram and stays close to the unsmoothed value on long candidates.</p>
+<h2 id="rouge-l"><a class="anchor" href="#rouge-l">#</a> ROUGE-L</h2>
+<p>ROUGE-L compares the longest common subsequence of the candidate and reference token sequences. The LCS captures word order without forcing contiguity, which is why it is the default summarisation metric. We compute the LCS length with a standard dynamic-programming table, then derive recall as <code>lcs / reference length</code>, precision as <code>lcs / candidate length</code>, and combine with F-beta where beta equals one for the symmetric F1 form.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def lcs_length(a, b):
+    n, m = len(a), len(b)
+    dp = numpy.zeros((n + 1, m + 1), dtype=int)
+    for i in range(n):
+        for j in range(m):
+            if a[i] == b[j]:
+                dp[i+1, j+1] = dp[i, j] + 1
+            else:
+                dp[i+1, j+1] = max(dp[i+1, j], dp[i, j+1])
+    return int(dp[n, m])</code></pre>
+      </div>
+    <p>The numpy table makes the implementation legible; pure Python lists would work too. Tasks that opt into ROUGE-L pay the O(n m) cost per task. For typical summary lengths that stays under a millisecond.</p>
+<h2 id="accuracy"><a class="anchor" href="#accuracy">#</a> Accuracy</h2>
+<p>For multi-target classification tasks, accuracy reduces to exact-match against a single normalised target. We expose it as a separate function so the dispatcher can dispatch on <code>metric_name</code> without going through string comparisons inside the runner.</p>
+<h2 id="dispatch-contract"><a class="anchor" href="#dispatch-contract">#</a> Dispatch contract</h2>
+<p>The single entry point is <code>score(metric_name, prediction, targets)</code>. It returns a float in <code>[0, 1]</code>. The runner does not branch on metric name. It hands the call off and writes the result. This is the surface that lesson 75 will glue to the task spec from lesson 70.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def score(metric_name, pred, targets):
+    if metric_name == &quot;exact_match&quot;:
+        return exact_match(pred, targets)
+    if metric_name == &quot;f1&quot;:
+        return max(f1_score(pred, t) for t in targets)
+    if metric_name == &quot;bleu_4&quot;:
+        return max(bleu4(pred, t) for t in targets)
+    if metric_name == &quot;rouge_l&quot;:
+        return max(rouge_l(pred, t) for t in targets)
+    if metric_name == &quot;accuracy&quot;:
+        return accuracy(pred, targets)
+    raise ValueError(f&quot;unknown metric_name: {metric_name}&quot;)</code></pre>
+      </div>
+    <p><code>code_exec</code> is handled in lesson 72 and slotted into the dispatcher there.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not call a model. It does not normalise generations beyond what the post-process rules from lesson 70 already did. It does not compute confidence intervals. It does not do BLEURT or BERTScore (those need a model and live in a different lesson). The point is the floor: five metrics, one tokenizer, one dispatch table.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines each metric as a free function plus the dispatcher. The reference vectors live in the <code>_reference_examples</code> block at the bottom of the file. The demo runs the dispatcher against eight examples and prints per-metric scores. The tests in <code>code/tests/test_metrics.py</code> pin the reference vectors and stress every edge case (empty prediction, empty reference, no shared tokens, exact match, repeated phrase clipping).</p>
+<p>Read <code>main.py</code> top to bottom. The functions are ordered by complexity. exact_match and accuracy are one line each. F1 is six lines. BLEU and ROUGE-L are the heavy parts and they include detailed comments on the smoothing rule and the LCS recurrence.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>The classical metrics are necessary, not sufficient. They reward surface overlap and miss meaning. The fix is to layer model-based metrics on top (BLEURT, BERTScore, GEval) once you trust the classical floor. That is a later lesson. For now: make these five work, pin them with tests, and you have a metric stack that is auditable, fast, and reproducible.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./70-task-spec-format.html"><span>← Previous</span><b>task spec format</b></a>
+      <a class="next" href="./72-code-exec-metric.html"><span>Next →</span><b>code exec metric</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

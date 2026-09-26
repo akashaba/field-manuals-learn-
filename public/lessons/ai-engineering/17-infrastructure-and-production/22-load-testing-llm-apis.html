@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Load Testing LLM APIs — Why k6 and Locust Lie — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/22-load-testing-llm-apis/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Load Testing LLM APIs — Why k6 and Locust Lie</h1>
+    <p class="lesson-sub">Traditional load testers were not designed for streaming responses, variable output lengths, token-level metrics, or GPU saturation. Two traps bite most teams. The GIL trap: Locust&#39;s token-level measurement runs tokenization under the Python GIL, which competes with request generation under heavy concurrency; tokenization backlog then inflates reported inter-token latency — your client is the bottleneck, not the server. The prompt-uniformity trap: identical prompts in a loop test one point on the token distribution; real traffic has variable length and diverse prefix matches. LLMPerf fixes this with `--mean-input-tokens` + `--stddev-input-tokens`. Tool mapping in 2026: LLM-specialized (GenAI-Perf, LLMPerf, LLM-Locust, guidellm) for token-level accuracy; **k6 v2026.1.0** + **k6 Operator 1.0 GA (Sept 2025)** — streaming-aware, Kubernetes-native distributed via TestRun/PrivateLoadZone CRDs, best for CI/CD gates; Vegeta for Go constant-rate saturation; Locust 2.43.3 only with LLM-Locust extension for streaming. Load patterns: steady-state, ramp, spike (autoscaling test), soak (memory leaks).</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, toy realistic-prompt generator + latency collector)</b></div><div><span>Prerequisites</span><b>Phase 17 · 08 (Inference Metrics), Phase 17 · 03 (GPU Autoscaling)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 22">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M45.2,73.7 L62.4,47.9 L79.6,73.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="40.4" y="41.9" width="33.1" height="33.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(231 56.9 58.5)"/>
+        <rect x="35.6" y="37.6" width="31.8" height="31.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(213 51.5 53.6)"/>
+        <rect x="30.8" y="33.4" width="30.5" height="30.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(195 46.1 48.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">22</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Load Testing LLM</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">APIs — Why k6 and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain the two anti-patterns (GIL trap, prompt-uniformity trap) that make generic load testers lie for LLM APIs.</li>
+<li>Pick a tool for a given purpose: LLMPerf (benchmark run), k6 + streaming extension (CI gate), guidellm (large-scale synthetic), GenAI-Perf (NVIDIA reference).</li>
+<li>Design four load patterns (steady, ramp, spike, soak) and name the failure mode each catches.</li>
+<li>Build a realistic prompt distribution using mean + stddev of input tokens rather than fixed length.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You k6-tested your LLM endpoint at 500 concurrent users. It held. You shipped. In production at 200 actual users the service fell over — P99 TTFT exploded, GPUs pinned.</p>
+<p>Two things happened. First, k6 sent 500 identical prompts — your request-coalescing and prefix caching made it look like you were handling 500 concurrent decodes when you were actually handling one. Second, k6 doesn&#39;t track inter-token latency on streaming responses the way the eye experiences it; it sees one HTTP connection, not 500 tokens arriving at varying intervals.</p>
+<p>Load testing for LLMs is its own discipline.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-gil-trap-locust"><a class="anchor" href="#the-gil-trap-locust">#</a> The GIL trap (Locust)</h3>
+<p>Locust uses Python and runs tokenization client-side under the GIL. Under high concurrency the tokenizer queues behind request generation. Reported inter-token latency includes client-side tokenization backlog. You think the server is slow; it&#39;s the test harness.</p>
+<p>Fix: LLM-Locust extension moves tokenization to separate processes, or use a compiled-language harness (k6, LLMPerf using tokenizers.rs).</p>
+<h3 id="the-prompt-uniformity-trap"><a class="anchor" href="#the-prompt-uniformity-trap">#</a> The prompt-uniformity trap</h3>
+<p>All known load testers let you configure one prompt. In a loop test of 10,000 iterations the exact same prompt sends each time. Server sees the same prefix every time — prefix cache hits approach 100%, throughput looks great.</p>
+<p>Fix: sample from a prompt distribution. LLMPerf uses <code>--mean-input-tokens 500 --stddev-input-tokens 150</code> — diverse lengths, diverse content.</p>
+<h3 id="four-load-patterns"><a class="anchor" href="#four-load-patterns">#</a> Four load patterns</h3>
+<ol>
+<li><strong>Steady-state</strong> — constant RPS for 30-60 min. Catches: baseline performance regressions.</li>
+<li><strong>Ramp</strong> — linearly increase RPS from 0 to target over 15 min. Catches: capacity breakpoint, warm-up anomalies.</li>
+<li><strong>Spike</strong> — sudden 3-10x RPS for 2 min then back. Catches: autoscaling latency, queue saturation, cold-start impact.</li>
+<li><strong>Soak</strong> — steady-state for 4-8 hours. Catches: memory leaks, connection-pool drift, observability overflow.</li>
+</ol>
+<h3 id="2026-tool-mapping"><a class="anchor" href="#2026-tool-mapping">#</a> 2026 tool mapping</h3>
+<p><strong>LLMPerf</strong> (Anyscale) — Python but Rust-backed tokenization. Mean/stddev prompts. Streaming-aware. Best default for performance runs.</p>
+<p><strong>NVIDIA GenAI-Perf</strong> — NVIDIA&#39;s reference. Uses Triton client; comprehensive metric coverage. Note its ITL excludes TTFT; LLMPerf&#39;s includes it. Two tools produce different TPOT for the same server.</p>
+<p><strong>LLM-Locust</strong> (TrueFoundry) — Locust extension that fixes the GIL trap. Familiar Locust DSL + streaming metrics.</p>
+<p><strong>guidellm</strong> — large-scale synthetic benchmarking.</p>
+<p><strong>k6 v2026.1.0</strong> + <strong>k6 Operator 1.0 GA (Sept 2025)</strong>:</p>
+<ul>
+<li>k6 itself (Go, compiled, no GIL) added streaming-aware metrics.</li>
+<li>k6 Operator uses TestRun / PrivateLoadZone CRDs for Kubernetes-native distributed testing.</li>
+<li>Best for CI/CD gates and SLA testing.</li>
+</ul>
+<p><strong>Vegeta</strong> — Go, simpler than k6. Constant-rate HTTP saturation. Not LLM-aware but good for gateway / rate-limit testing.</p>
+<p><strong>Locust 2.43.3 stock</strong> — has the GIL trap for LLM. Only with LLM-Locust extension.</p>
+<h3 id="sla-gate-in-ci"><a class="anchor" href="#sla-gate-in-ci">#</a> SLA gate in CI</h3>
+<p>Run k6 on the PR with:</p>
+<ul>
+<li>30-50 iterations each at baseline RPS.</li>
+<li>Gate: P50/P95 TTFT, 5xx &lt; 5%, TPOT under threshold.</li>
+<li>Break the build on breach.</li>
+</ul>
+<h3 id="realistic-prompt-distribution"><a class="anchor" href="#realistic-prompt-distribution">#</a> Realistic prompt distribution</h3>
+<p>Build from real traffic samples (if you have them) or from published distributions (e.g., ShareGPT prompts for chat, HumanEval for code). Feed the mean + stddev to LLMPerf. Avoid loop-with-one-prompt at all costs.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>k6 Operator 1.0 GA: September 2025.</li>
+<li>k6 v2026.1.0: streaming-aware metrics.</li>
+<li>Typical LLMPerf run: 100-1000 requests at concurrency X.</li>
+<li>Typical CI gate: 30-50 iterations per PR.</li>
+<li>Four patterns: steady, ramp, spike, soak.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">load-pattern-waves</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a load test with realistic prompt distribution, measures effective TPOT, and demonstrates the uniform-prompt trap.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-load-test-plan.md</code>. Given workload and SLA, picks tool and designs the four load patterns.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Compare uniform vs realistic distribution — where is the gap?</li>
+<li>Write the k6 script for a CI gate: TTFT P95 &lt; 800 ms at 100 concurrent, runtime 5 minutes.</li>
+<li>Your soak test shows memory growing 50 MB/hour. Name three causes and the instrumentation to pick between them.</li>
+<li>Spike test from 10 RPS to 100 RPS. What&#39;s the expected recovery time if Karpenter + vLLM production-stack are in place (Phase 17 · 03 + 18)?</li>
+<li>GenAI-Perf reports TPOT=6ms; LLMPerf reports TPOT=11ms on the same server. Explain.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>LLMPerf</td>
+<td>&quot;the LLM harness&quot;</td>
+<td>Anyscale benchmark tool, streaming-aware</td>
+</tr>
+<tr>
+<td>GenAI-Perf</td>
+<td>&quot;NVIDIA tool&quot;</td>
+<td>NVIDIA reference harness</td>
+</tr>
+<tr>
+<td>LLM-Locust</td>
+<td>&quot;Locust for LLMs&quot;</td>
+<td>Locust extension fixing GIL trap</td>
+</tr>
+<tr>
+<td>guidellm</td>
+<td>&quot;synthetic benchmark&quot;</td>
+<td>Large-scale synthetic tool</td>
+</tr>
+<tr>
+<td>k6 Operator</td>
+<td>&quot;K8s k6&quot;</td>
+<td>CRD-based distributed k6</td>
+</tr>
+<tr>
+<td>GIL trap</td>
+<td>&quot;Python client overhead&quot;</td>
+<td>Tokenization backlog inflates reported latency</td>
+</tr>
+<tr>
+<td>Prompt-uniformity trap</td>
+<td>&quot;single-prompt lie&quot;</td>
+<td>Loop with same prompt hits cache, inflates throughput</td>
+</tr>
+<tr>
+<td>Steady-state</td>
+<td>&quot;constant load&quot;</td>
+<td>Flat RPS for N minutes</td>
+</tr>
+<tr>
+<td>Ramp</td>
+<td>&quot;linear up&quot;</td>
+<td>0 to target over duration</td>
+</tr>
+<tr>
+<td>Spike</td>
+<td>&quot;burst test&quot;</td>
+<td>Sudden multiplier then revert</td>
+</tr>
+<tr>
+<td>Soak</td>
+<td>&quot;long test&quot;</td>
+<td>Hours for leak detection</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://tianpan.co/blog/2026-03-19-load-testing-llm-applications">TianPan — Load Testing LLM Applications</a></li>
+<li><a href="https://blog.premai.io/load-testing-llms-tools-metrics-realistic-traffic-simulation-2026/">PremAI — Load Testing LLMs 2026</a></li>
+<li><a href="https://docs.nvidia.com/nim/large-language-models/1.0.0/benchmarking.html">NVIDIA NIM — Introduction to LLM Inference Benchmarking</a></li>
+<li><a href="https://www.truefoundry.com/blog/llm-locust-a-tool-for-benchmarking-llm-performance">TrueFoundry — LLM-Locust</a></li>
+<li><a href="https://github.com/ray-project/llmperf">LLMPerf</a></li>
+<li><a href="https://github.com/grafana/k6-operator">k6 Operator</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./21-ab-testing-llm-features.html"><span>← Previous</span><b>ab testing llm features</b></a>
+      <a class="next" href="./23-sre-for-ai.html"><span>Next →</span><b>sre for ai</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

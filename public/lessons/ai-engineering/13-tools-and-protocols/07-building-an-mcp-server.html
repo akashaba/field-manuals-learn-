@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building an MCP Server: Stateless Python and TypeScript — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/07-building-an-mcp-server/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">Building an MCP Server: Stateless Python and TypeScript</h1>
+    <p class="lesson-sub">A modern MCP server does not remember a handshake. It validates the metadata on every request, runs one handler, and returns one typed result.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python, TypeScript</b></div><div><span>Prerequisites</span><b>Phase 13, Lesson 06</b></div><div><span>Time</span><b>~85 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.0,76.8 L65.5,50.5 L83.1,76.8 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.2" y="44.4" width="33.9" height="33.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(241 60.1 61.4)"/>
+        <rect x="38.4" y="40.2" width="32.6" height="32.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(223 54.7 56.4)"/>
+        <rect x="33.6" y="35.9" width="31.3" height="31.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(206 49.3 51.5)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Building an MCP</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Server: Stateless…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement mandatory <code>server/discover</code> for MCP <code>2026-07-28</code>.</li>
+<li>Validate protocol version and client capabilities on every request.</li>
+<li>Expose tools, resources, and prompts with deterministic list ordering.</li>
+<li>Return <code>resultType</code>, server identity, and cache hints on the correct results.</li>
+<li>Serve the same stateless contract over newline-delimited stdio in Python and TypeScript.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A server that stores client capabilities after the first message is easy to build and hard to operate. The same process may serve sequential clients. A remote request may land on a different worker. A stale capability declaration can leak behavior across authorization boundaries.</p>
+<p>MCP <code>2026-07-28</code> solves the protocol part of that problem by making every request self-describing. Your application can still keep durable notes, jobs, or explicit state handles. What it cannot keep is hidden protocol state that changes how a later request is decoded.</p>
+<p>This lesson builds a notes server twice. The Python and TypeScript versions use only their standard libraries for the protocol core. Both expose the same methods and enforce the same wire contract.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-modern-dispatch-loop"><a class="anchor" href="#the-modern-dispatch-loop">#</a> The modern dispatch loop</h3>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">read one JSON-RPC line
+parse the envelope
+if it is a notification, do not respond
+validate params._meta for this request
+route by method
+wrap success with resultType and serverInfo
+write one JSON-RPC response line
+forget request-scoped metadata</code></pre>
+      </div>
+    <p>Three stdio rules still matter:</p>
+<ul>
+<li>Write only JSON-RPC messages to stdout. Send diagnostics to stderr.</li>
+<li>Delimit messages with a newline and flush each response.</li>
+<li>Exit promptly when stdin reaches EOF.</li>
+</ul>
+<p>The process lifetime is a transport lifetime. It is not a modern MCP session.</p>
+<h3 id="request-validation"><a class="anchor" href="#request-validation">#</a> Request validation</h3>
+<p>Every request must have:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;params&quot;: {
+    &quot;_meta&quot;: {
+      &quot;io.modelcontextprotocol/protocolVersion&quot;: &quot;2026-07-28&quot;,
+      &quot;io.modelcontextprotocol/clientCapabilities&quot;: {},
+      &quot;io.modelcontextprotocol/clientInfo&quot;: {
+        &quot;name&quot;: &quot;notes-client&quot;,
+        &quot;version&quot;: &quot;1.0.0&quot;
+      }
+    }
+  }
+}</code></pre>
+      </div>
+    <p>The first two fields are required. <code>clientInfo</code> is recommended. Validate a present identity shape, but do not treat it as authentication.</p>
+<p>If the version is unsupported, return code <code>-32022</code> with <code>requested</code> and <code>supported</code>. Missing request metadata is invalid params, code <code>-32602</code>. Never fill missing fields from a previous call.</p>
+<h3 id="mandatory-discovery"><a class="anchor" href="#mandatory-discovery">#</a> Mandatory discovery</h3>
+<p>Modern servers must implement <code>server/discover</code>. A complete discovery result includes supported modern versions, capabilities, optional instructions, cache hints, and server identity in result <code>_meta</code>:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;resultType&quot;: &quot;complete&quot;,
+  &quot;supportedVersions&quot;: [&quot;2026-07-28&quot;],
+  &quot;capabilities&quot;: {
+    &quot;tools&quot;: {&quot;listChanged&quot;: false},
+    &quot;resources&quot;: {&quot;listChanged&quot;: false, &quot;subscribe&quot;: false},
+    &quot;prompts&quot;: {&quot;listChanged&quot;: false}
+  },
+  &quot;ttlMs&quot;: 3600000,
+  &quot;cacheScope&quot;: &quot;public&quot;,
+  &quot;_meta&quot;: {
+    &quot;io.modelcontextprotocol/serverInfo&quot;: {
+      &quot;name&quot;: &quot;notes-server&quot;,
+      &quot;version&quot;: &quot;2.0.0&quot;
+    }
+  }
+}</code></pre>
+      </div>
+    <p>Discovery does not unlock the server. A client may call <code>tools/list</code> without calling discovery because <code>tools/list</code> already carries the same request metadata.</p>
+<h3 id="tools"><a class="anchor" href="#tools">#</a> Tools</h3>
+<p><code>tools/list</code> returns a deterministic list of tool descriptors. Stable ordering improves response caching and keeps model context stable. The result also requires <code>ttlMs</code> and <code>cacheScope</code>.</p>
+<p><code>tools/call</code> returns content blocks and <code>isError</code>. Use a JSON-RPC error when the protocol envelope or method parameters are invalid. Use <code>isError: true</code> when a valid tool invocation runs but the tool itself fails.</p>
+<p>Tool annotations remain hints, not enforcement:</p>
+<ul>
+<li><code>readOnlyHint</code></li>
+<li><code>destructiveHint</code></li>
+<li><code>idempotentHint</code></li>
+<li><code>openWorldHint</code></li>
+</ul>
+<p>The host should use them for confirmation and presentation. The server must still enforce real authorization.</p>
+<h3 id="resources"><a class="anchor" href="#resources">#</a> Resources</h3>
+<p><code>resources/list</code> returns stable URI descriptors. <code>resources/read</code> returns typed contents. Both are cacheable in <code>2026-07-28</code>, so both include <code>ttlMs</code> and <code>cacheScope</code>.</p>
+<p>Use <code>cacheScope: &quot;private&quot;</code> for user-specific note data. A shared cache must not reuse a private response across authorization contexts.</p>
+<p>Modern change delivery does not use <code>resources/subscribe</code>. A client opens <code>subscriptions/listen</code> and requests <code>resourceSubscriptions</code> or list-change categories. Lesson 10 builds that flow.</p>
+<h3 id="prompts"><a class="anchor" href="#prompts">#</a> Prompts</h3>
+<p><code>prompts/list</code> is cacheable and deterministic. <code>prompts/get</code> renders a named prompt with arguments. The rendered prompt result is complete, but it is not one of the cacheable list or read results that requires cache hints.</p>
+<h3 id="every-successful-result-is-typed"><a class="anchor" href="#every-successful-result-is-typed">#</a> Every successful result is typed</h3>
+<p>The examples use one wrapper for every success:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def complete(payload):
+    return {
+        &quot;resultType&quot;: &quot;complete&quot;,
+        **payload,
+        &quot;_meta&quot;: {SERVER_INFO_KEY: SERVER_INFO},
+    }</code></pre>
+      </div>
+    <p>List, read, and discovery handlers add <code>ttlMs</code> plus <code>cacheScope</code>. Centralizing this wrapper prevents one handler from silently omitting modern result fields.</p>
+<h3 id="no-server-initiated-requests"><a class="anchor" href="#no-server-initiated-requests">#</a> No server-initiated requests</h3>
+<p>A modern server may send notifications related to a client request, or notifications on a client-opened <code>subscriptions/listen</code> stream. It must not send its own JSON-RPC request.</p>
+<p>When a handler needs sampling, elicitation, or roots input, it returns an <code>input_required</code> result. The client fulfills the embedded input requests and retries the original method with a new request id. Lesson 11 covers that Multi Round-Trip Request pattern.</p>
+<h3 id="explicit-legacy-compatibility"><a class="anchor" href="#explicit-legacy-compatibility">#</a> Explicit legacy compatibility</h3>
+<p>A dual-era server may also implement the <code>2025-11-25</code> handshake on a clearly separate legacy branch. It chooses modern behavior when required modern <code>_meta</code> fields are present and legacy behavior when it receives <code>initialize</code>.</p>
+<p>Do not put a <code>2026-07-28</code> request through the legacy handshake path. Do not stamp modern <code>resultType</code> fields onto legacy initialization results. The code in this lesson is deliberately modern-only so its invariants stay visible.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">t3-dispatch-loop</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Run the Python server&#39;s finite demo and tests:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">cd code
+python3 main.py --demo
+python3 -m unittest discover tests -v</code></pre>
+      </div>
+    <p>Run the TypeScript port with a TypeScript runner:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">npx tsx main.ts --demo</code></pre>
+      </div>
+    <p>The demo sends <code>server/discover</code>, lists each primitive, invokes tools, and shows an unsupported-version error. Every modern request repeats metadata. Every success includes server identity.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson ships <code>outputs/skill-mcp-server-scaffolder.md</code>. It produces a modern server plan with a discovery contract, per-request validation, deterministic cacheable lists, and an optional isolated legacy adapter.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Remove capabilities from one request and prove the server does not reuse the previous request&#39;s declaration.</li>
+<li>Reverse the <code>TOOLS</code>, <code>PROMPTS</code>, and note insertion order. Confirm all list results remain stable.</li>
+<li>Add a destructive <code>notes_delete</code> tool and require an authorization check inside the executor. Keep <code>destructiveHint</code> as a UX hint only.</li>
+<li>Add <code>resources/templates/list</code> with <code>ttlMs</code>, <code>cacheScope</code>, and deterministic ordering.</li>
+<li>Build a separate legacy adapter for <code>2025-11-25</code>. Add tests proving a modern request never enters it.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Stateless server</td>
+<td>Handles each request from its own metadata without protocol-session memory</td>
+</tr>
+<tr>
+<td><code>server/discover</code></td>
+<td>Mandatory modern method that advertises versions and capabilities</td>
+</tr>
+<tr>
+<td>Complete result</td>
+<td>Successful modern result with <code>resultType: &quot;complete&quot;</code></td>
+</tr>
+<tr>
+<td>Cacheable result</td>
+<td>Discovery, list, or resource-read result with <code>ttlMs</code> and <code>cacheScope</code></td>
+</tr>
+<tr>
+<td>Deterministic list</td>
+<td>Same logical registry produces the same item order</td>
+</tr>
+<tr>
+<td>Server identity</td>
+<td>Recommended <code>io.modelcontextprotocol/serverInfo</code> in result <code>_meta</code></td>
+</tr>
+<tr>
+<td>Tool error</td>
+<td>Valid tool call that returns content with <code>isError: true</code></td>
+</tr>
+<tr>
+<td>Protocol error</td>
+<td>Invalid JSON-RPC or MCP request returned through <code>error</code></td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/">MCP Specification 2026-07-28</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover">MCP Server Discovery</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools">MCP Tools</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/resources">MCP Resources</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/server/prompts">MCP Prompts</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio">MCP stdio Transport</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-mcp-fundamentals.html"><span>← Previous</span><b>mcp fundamentals</b></a>
+      <a class="next" href="./08-building-an-mcp-client.html"><span>Next →</span><b>building an mcp client</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

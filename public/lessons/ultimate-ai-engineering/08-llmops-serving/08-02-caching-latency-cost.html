@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>08.02 — Caching, Latency &amp; Cost — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/08.%20LLMOps%20%26%20Serving/08-02-caching-latency-cost.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMOps &amp; Serving</div>
+    <ol class="toc"><li><a href="#1-where-the-milliseconds-and-dollars-go">1. Where the Milliseconds and Dollars Go</a></li><li><a href="#2-the-cache-hierarchy">2. The Cache Hierarchy</a></li><li><a href="#3-tail-latency-engineering">3. Tail Latency Engineering</a></li><li><a href="#4-cost-engineering">4. Cost Engineering</a></li><li><a href="#5-production-challenges-how-to-solve-them">5. Production Challenges &amp; How to Solve Them</a></li><li><a href="#6-hands-on-projects">6. Hands-On Projects</a></li><li><a href="#7-foundational-papers-reading-exact-titles">7. Foundational Papers &amp; Reading (exact titles)</a></li><li><a href="#8-essential-tooling">8. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · LLMOps &amp; Serving</div>
+    <h1 class="lesson-title">08.02 — Caching, Latency &amp; Cost</h1>
+    <p class="lesson-sub">**Module 8: LLMOps &amp; Serving** · Subtopic 2 of 5</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — LLMOps &amp; Serving 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="32.2" y="34.6" width="30.9" height="30.9" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(200 47.6 50.0)"/>
+        <rect x="27.4" y="30.3" width="29.6" height="29.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(182 42.2 45.1)"/>
+        <rect x="22.6" y="126.0" width="28.3" height="28.3" rx="2" fill="none" stroke="#4c1d95" stroke-width="1.1" opacity="0.55" transform="rotate(165 36.8 140.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#4c1d95" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#4c1d95" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#4c1d95" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMOPS &amp; SERVING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">08.02 — Caching,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Latency &amp; Cost</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 01.02 (TTFT/TPOT, prefix caching, speculative decoding), 02.02 §6 (prompt-caching break-even), 04.02 §7 (safe cache keys), 06.03–06.04 (online metrics, tracing), 08.01 (routing).
+<strong>Outcome:</strong> you can decompose any LLM feature&#39;s latency and cost into attributable parts, apply the right cache at the right layer without serving wrong answers, engineer for tail latency, and run an optimisation programme that cuts cost per successful task and P95 latency with measured, guarded changes.</p>
+</blockquote>
+<blockquote>
+<p><strong>Scope:</strong> earlier modules explained the <em>mechanisms</em> (prefix/KV caching in 01.02, provider prompt caching economics in 02.02 §6, safe retrieval and semantic caches in 04.02 §7). This subtopic is the <strong>system-level engineering and FinOps</strong> view that ties them together.</p>
+</blockquote>
+<hr>
+<h2 id="1-where-the-milliseconds-and-dollars-go"><a class="anchor" href="#1-where-the-milliseconds-and-dollars-go">#</a> 1. Where the Milliseconds and Dollars Go</h2>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> request ─► gateway ─► guardrails ─► planner LLM ─► retrieval (‖ legs) ─► rerank ─► answer LLM ─► tools ─► answer LLM ─► guards ─► stream
+ latency:   5 ms        20 ms         400 ms          90 ms                 50 ms      TTFT 900 ms   150 ms   TPOT×n_out    async      …
+ cost:      –           classifier $  small-model $   embed $ + infra       GPU $      large-model $ API $   large-model $ judge $</code></pre>
+      </div>
+    <p><strong>End-to-end latency</strong> for a sequential chain of LLM calls:</p>
+<p>$$
+T_{\text{E2E}} = \sum_{\text{stages}} T_{\text{stage}},\qquad
+T_{\text{LLM call}} \approx T_{\text{queue}} + T_{\text{net}} + \underbrace{T_{\text{prefill}}(n_{\text{in}}^{\text{uncached}})}<em>{\text{TTFT}} + (n</em>{\text{out}} - 1)\cdot \text{TPOT}
+$$</p>
+<p><strong>The single most important observation:</strong> output tokens dominate the latency of most LLM calls. At 50 ms per output token, 400 output tokens take 20 s, while the prefill of 4,000 input tokens takes well under a second on a warm, cached prefix. <strong>Shorter outputs are the biggest latency lever.</strong></p>
+<p><strong>Perceived latency</strong> differs from E2E latency. Streaming makes TTFT the dominant user-facing metric for chat, while agents and batch jobs care about E2E latency (06.03 §2).</p>
+<hr>
+<h2 id="2-the-cache-hierarchy"><a class="anchor" href="#2-the-cache-hierarchy">#</a> 2. The Cache Hierarchy</h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What&#39;s cached</th>
+<th>Hit condition</th>
+<th>Wins</th>
+<th>Risks</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Client / UI</strong></td>
+<td>Rendered answers for repeat views</td>
+<td>Same conversation state</td>
+<td>Instant repeats</td>
+<td>Stale after updates</td>
+</tr>
+<tr>
+<td><strong>Exact response cache</strong> (gateway)</td>
+<td>Full response for (model, params, prompt, versions)</td>
+<td>Byte-identical request</td>
+<td>Zero model cost</td>
+<td>Low hit rate for chat; leaks if not scoped by tenant/ACL</td>
+</tr>
+<tr>
+<td><strong>Semantic cache</strong></td>
+<td>Response for a <em>similar</em> query</td>
+<td>Embedding similarity ≥ τ <strong>and</strong> identifier/constraint equality (04.02 §7)</td>
+<td>Cheap answers for FAQs</td>
+<td>Wrong answers for near-miss queries; must be scoped and versioned</td>
+</tr>
+<tr>
+<td><strong>Retrieval / tool-result cache</strong></td>
+<td>Search results, tool outputs</td>
+<td>Same normalised query + filters + ACL + index version</td>
+<td>Lower retrieval latency, fewer API calls</td>
+<td>Staleness; ACL leaks</td>
+</tr>
+<tr>
+<td><strong>Embedding cache</strong></td>
+<td>Query/document vectors</td>
+<td>Same text + model ID</td>
+<td>Lower embedding cost</td>
+<td>Model migration invalidation (03.01 §6)</td>
+</tr>
+<tr>
+<td><strong>Provider prompt cache</strong></td>
+<td>KV of a stable prompt prefix</td>
+<td>Exact prefix match at breakpoints</td>
+<td>Large input-cost and TTFT reductions (02.02 §6)</td>
+<td>Busted by prefix edits and tool-order changes</td>
+</tr>
+<tr>
+<td><strong>Engine prefix cache</strong> (self-hosted)</td>
+<td>KV blocks by prefix hash / radix tree (01.02 §3.3)</td>
+<td>Shared prefix across requests</td>
+<td>TTFT and GPU savings</td>
+<td>Evictions under memory pressure</td>
+</tr>
+<tr>
+<td><strong>KV offload tiers</strong> (CPU RAM / SSD / remote)</td>
+<td>Evicted KV blocks</td>
+<td>Prefix reuse beyond GPU memory</td>
+<td>Long-document and multi-turn reuse</td>
+<td>Transfer bandwidth; complexity</td>
+</tr>
+</tbody></table>
+<h3 id="21-cache-correctness-rules"><a class="anchor" href="#21-cache-correctness-rules">#</a> 2.1 Cache correctness rules</h3>
+<ol>
+<li><strong>The key includes everything that changes the answer:</strong> model and version, prompt version, parameters (temperature, tools, schema), retrieval/index version, <strong>tenant and ACL scope</strong>, and the as-of date for temporal content.</li>
+<li><strong>Never cache across users or tenants</strong> unless the content is provably public.</li>
+<li><strong>Cache only deterministic-enough outputs</strong> (temperature 0, factual lookups). Avoid caching creative or personalised outputs.</li>
+<li><strong>Invalidate</strong> on source changes (CDC events, 03.03 §5) and on version bumps. TTLs are a backstop, not the strategy.</li>
+<li><strong>Measure the hit rate <em>and</em> the correctness</strong> (sampled judge comparisons of cached vs fresh answers).</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import hashlib
+import json
+import time
+
+
+class ResponseCache:
+    def __init__(self, ttl_s: float = 3600):
+        self.ttl, self.store = ttl_s, {}
+
+    @staticmethod
+    def key(model: str, params: dict, messages: list[dict], versions: dict, tenant: str, acl: list[str]) -&gt; str:
+        payload = {&quot;m&quot;: model, &quot;p&quot;: params, &quot;msg&quot;: messages, &quot;v&quot;: versions, &quot;t&quot;: tenant, &quot;acl&quot;: sorted(acl)}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def get(self, k: str):
+        hit = self.store.get(k)
+        if hit and time.time() - hit[0] &lt; self.ttl:
+            return hit[1]
+        self.store.pop(k, None)
+        return None
+
+    def put(self, k: str, value, cacheable: bool):
+        if cacheable:
+            self.store[k] = (time.time(), value)
+
+    def invalidate(self, predicate) -&gt; int:
+        &quot;&quot;&quot;predicate(value) -&gt; bool; e.g. drop answers citing a changed document.&quot;&quot;&quot;
+        dead = [k for k, (_, v) in self.store.items() if predicate(v)]
+        for k in dead:
+            del self.store[k]
+        return len(dead)</code></pre>
+      </div>
+    <hr>
+<h2 id="3-tail-latency-engineering"><a class="anchor" href="#3-tail-latency-engineering">#</a> 3. Tail Latency Engineering</h2>
+<h3 id="31-fan-out-amplifies-tails"><a class="anchor" href="#31-fan-out-amplifies-tails">#</a> 3.1 Fan-out amplifies tails</h3>
+<p>If a request makes $k$ parallel calls, each with latency CDF $F$, the request waits for the slowest:</p>
+<p>$$
+P(T_{\max} \le t) = F(t)^k \quad\Rightarrow\quad P(\text{any call exceeds its P99}) = 1 - 0.99^k
+$$</p>
+<p>With 10 parallel retrieval legs, tool calls, or sub-agents, <strong>~10% of requests</strong> see at least one P99-latency call (Dean &amp; Barroso, <em>The Tail at Scale</em>).</p>
+<h3 id="32-techniques"><a class="anchor" href="#32-techniques">#</a> 3.2 Techniques</h3>
+<ul>
+<li><strong>Hedged requests:</strong> after a delay $d$ (e.g. the P95), issue a duplicate to another replica or provider and take the first to respond. Latency becomes $\min(X_1,\ d + X_2)$, and extra load ≈ $P(X_1 &gt; d)$ (~5% at P95).</li>
+<li><strong>Timeouts with degradation:</strong> each stage has a budget. On timeout, skip optional stages (reranker → fused order; 03.04 §6.3) instead of failing.</li>
+<li><strong>Deadline propagation:</strong> pass the remaining budget downstream (headers, MCP/A2A metadata). Stages skip work that can&#39;t finish in time.</li>
+<li><strong>Parallelise independent stages:</strong> retrieval legs; the planner running in parallel with speculative retrieval (04.04 §8).</li>
+<li><strong>Warm paths:</strong> keep prompt caches warm for stable prefixes (tools + system prompt), and warm engine replicas before traffic shifts (08.05).</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def p_any_exceeds(k: int, per_call_quantile: float = 0.99) -&gt; float:
+    return 1 - per_call_quantile ** k
+
+
+def simulate_hedging(n: int = 100_000, mu: float = 0.0, sigma: float = 0.6, hedge_at_quantile: float = 0.95,
+                     seed: int = 0) -&gt; dict:
+    &quot;&quot;&quot;Lognormal call latency (seconds). Returns P50/P99 without and with hedging, plus the extra-load rate.&quot;&quot;&quot;
+    rng = np.random.default_rng(seed)
+    x1 = rng.lognormal(mu, sigma, n)
+    x2 = rng.lognormal(mu, sigma, n)
+    d = np.quantile(x1, hedge_at_quantile)
+    hedged = np.where(x1 &gt; d, np.minimum(x1, d + x2), x1)
+    q = lambda a, p: float(np.quantile(a, p))
+    return {&quot;p50&quot;: round(q(x1, .5), 3), &quot;p99&quot;: round(q(x1, .99), 3),
+            &quot;p50_hedged&quot;: round(q(hedged, .5), 3), &quot;p99_hedged&quot;: round(q(hedged, .99), 3),
+            &quot;extra_load&quot;: round(float((x1 &gt; d).mean()), 3)}
+
+
+def e2e_latency_mc(stages: list[dict], n: int = 50_000, seed: int = 0) -&gt; dict:
+    &quot;&quot;&quot;stages: [{&#39;kind&#39;: &#39;seq&#39;|&#39;par&#39;, &#39;samplers&#39;: [callable(rng, n) -&gt; array]}]. Monte Carlo E2E percentiles.&quot;&quot;&quot;
+    rng = np.random.default_rng(seed)
+    total = np.zeros(n)
+    for st in stages:
+        samples = np.stack([s(rng, n) for s in st[&quot;samplers&quot;]])
+        total += samples.max(0) if st[&quot;kind&quot;] == &quot;par&quot; else samples.sum(0)
+    return {p: round(float(np.quantile(total, p / 100)), 3) for p in (50, 95, 99)}</code></pre>
+      </div>
+    <hr>
+<h2 id="4-cost-engineering"><a class="anchor" href="#4-cost-engineering">#</a> 4. Cost Engineering</h2>
+<h3 id="41-unit-economics"><a class="anchor" href="#41-unit-economics">#</a> 4.1 Unit economics</h3>
+<p>Price per <strong>successful task</strong>, not per token:</p>
+<p>$$
+C_{\text{task}} = \frac{1}{s}\sum_{\text{calls } j}\Big(T^{\text{in,uncached}}_j p^{\text{in}} + T^{\text{cache_write}}_j p^{\text{write}} + T^{\text{cache_read}}<em>j p^{\text{read}} + (T^{\text{out}}<em>j + T^{\text{reasoning}}<em>j),p^{\text{out}}\Big) + C</em>{\text{retrieval}} + C</em>{\text{tools}} + C</em>{\text{guards}}
+$$</p>
+<p>where $s$ is the task success rate (06.03). A cheaper model with a lower success rate can cost <em>more</em> per success.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def call_cost(usage: dict, prices: dict) -&gt; float:
+    &quot;&quot;&quot;usage: input_tokens (uncached), cache_creation_input_tokens, cache_read_input_tokens, output_tokens,
+    reasoning_tokens (if billed separately from output). prices: USD per 1M tokens.&quot;&quot;&quot;
+    m = 1e-6
+    return (usage.get(&quot;input_tokens&quot;, 0) * prices[&quot;in&quot;] * m
+            + usage.get(&quot;cache_creation_input_tokens&quot;, 0) * prices.get(&quot;cache_write&quot;, prices[&quot;in&quot;]) * m
+            + usage.get(&quot;cache_read_input_tokens&quot;, 0) * prices.get(&quot;cache_read&quot;, prices[&quot;in&quot;]) * m
+            + (usage.get(&quot;output_tokens&quot;, 0) + usage.get(&quot;reasoning_tokens&quot;, 0)) * prices[&quot;out&quot;] * m)
+
+
+def cost_per_success(records: list[dict], prices_by_model: dict) -&gt; dict:
+    &quot;&quot;&quot;records: one per task: {&#39;feature&#39;, &#39;tenant&#39;, &#39;success&#39;: bool, &#39;calls&#39;: [{&#39;model&#39;, &#39;usage&#39;}], &#39;other_usd&#39;}.&quot;&quot;&quot;
+    agg: dict[str, dict] = {}
+    for r in records:
+        c = sum(call_cost(x[&quot;usage&quot;], prices_by_model[x[&quot;model&quot;]]) for x in r[&quot;calls&quot;]) + r.get(&quot;other_usd&quot;, 0.0)
+        a = agg.setdefault(r[&quot;feature&quot;], {&quot;usd&quot;: 0.0, &quot;tasks&quot;: 0, &quot;successes&quot;: 0})
+        a[&quot;usd&quot;] += c
+        a[&quot;tasks&quot;] += 1
+        a[&quot;successes&quot;] += int(r[&quot;success&quot;])
+    return {f: {**a, &quot;usd_per_task&quot;: round(a[&quot;usd&quot;] / a[&quot;tasks&quot;], 5),
+                &quot;usd_per_success&quot;: round(a[&quot;usd&quot;] / max(a[&quot;successes&quot;], 1), 5)} for f, a in agg.items()}</code></pre>
+      </div>
+    <h3 id="42-the-optimisation-playbook-roughly-in-roi-order"><a class="anchor" href="#42-the-optimisation-playbook-roughly-in-roi-order">#</a> 4.2 The optimisation playbook (roughly in ROI order)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Lever</th>
+<th>Typical effect</th>
+<th>Guard against</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><strong>Measure and attribute</strong> cost per feature, tenant, and stage from traces (06.04)</td>
+<td>Reveals where the money goes</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Prompt-cache the stable prefix</strong> (tools, system, static docs; deterministic ordering)</td>
+<td>Large input-cost and TTFT cuts on multi-turn and agent traffic</td>
+<td>Cache-busting edits; check the hit rate</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Trim context:</strong> tighter retrieval, dedup, observation masking, tool-result shaping (02.02, 04.02 §6)</td>
+<td>Fewer input tokens; often <em>better</em> quality</td>
+<td>Recall loss — evaluate</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Shorten outputs:</strong> concise formats, structured outputs, stop sequences, <code>max_tokens</code></td>
+<td>Big latency and output-cost cuts</td>
+<td>Completeness — evaluate</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Route and cascade</strong> to smaller models (08.01)</td>
+<td>30–70% on mixed traffic</td>
+<td>Quality floor via eval + A/B</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>Batch APIs</strong> for offline work (evals, backfills, labelling) — many providers discount batch traffic (e.g. 50%)</td>
+<td>Halves offline costs</td>
+<td>Latency tolerance (hours)</td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>Effort / thinking budgets</strong> for reasoning models</td>
+<td>Controls reasoning-token spend</td>
+<td>Quality on hard slices</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Self-host high-volume, stable workloads</strong> (08.03–08.04)</td>
+<td>Lower marginal cost at high utilisation</td>
+<td>Ops cost; utilisation reality</td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>Speculative decoding / quantization</strong> (self-hosted)</td>
+<td>Latency and GPU cost cuts</td>
+<td>Quality validation (08.04)</td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>Response and semantic caching</strong> where safe</td>
+<td>Zero-cost repeats</td>
+<td>Correctness and scoping (§2.1)</td>
+</tr>
+</tbody></table>
+<p>Every lever is a change that needs an <strong>eval gate</strong> (06.01) and <strong>online guardrails</strong> (06.03). Cost wins that quietly reduce quality are regressions.</p>
+<h3 id="43-budgets-and-finops"><a class="anchor" href="#43-budgets-and-finops">#</a> 4.3 Budgets and FinOps</h3>
+<ul>
+<li>Show costs back per team or feature, with a budget per tenant (07.02 §6 <code>CostBucket</code>) and alerts on spend velocity.</li>
+<li>Forecast from traffic × cost per task. Model the legislative-session seasonality explicitly.</li>
+<li>Review the top cost drivers monthly. Track <strong>cost per successful task</strong> as a first-class KPI next to quality.</li>
+</ul>
+<hr>
+<h2 id="5-production-challenges-how-to-solve-them"><a class="anchor" href="#5-production-challenges-how-to-solve-them">#</a> 5. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Unattributed spend</strong></td>
+<td>&quot;The bill doubled&quot; with no explanation</td>
+<td>Per-call usage in traces; cost per feature/tenant/stage dashboards</td>
+</tr>
+<tr>
+<td><strong>Cache hit rate collapse</strong></td>
+<td>TTFT and cost jump after a deploy</td>
+<td>Diff rendered prefixes; freeze tool ordering; monitor cache_read ratios (02.02 §6.2)</td>
+</tr>
+<tr>
+<td><strong>Wrong cached answers</strong></td>
+<td>Users see answers for similar-but-different questions</td>
+<td>Full keys, including versions, tenant, and ACL; identifier guards for semantic caches; CDC invalidation</td>
+</tr>
+<tr>
+<td><strong>Tail latency from fan-out</strong></td>
+<td>P99 ≫ P95</td>
+<td>Hedging, timeouts with degradation, deadline propagation, fewer parallel dependencies</td>
+</tr>
+<tr>
+<td><strong>Long outputs</strong></td>
+<td>Slow responses, high output costs</td>
+<td>Output-length budgets; concise formats; structured outputs; summaries with &quot;expand&quot; affordances</td>
+</tr>
+<tr>
+<td><strong>Reasoning-token surprises</strong></td>
+<td>Cost spikes on reasoning models</td>
+<td>Effort controls; route easy queries to non-reasoning paths; per-request caps</td>
+</tr>
+<tr>
+<td><strong>Optimisations degrade quality</strong></td>
+<td>Complaints after a cost-cutting release</td>
+<td>Eval gates + A/B guardrails for every cost change</td>
+</tr>
+<tr>
+<td><strong>Offline jobs at online prices</strong></td>
+<td>Evals and backfills are expensive</td>
+<td>Batch APIs; off-peak self-hosted capacity</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="6-hands-on-projects"><a class="anchor" href="#6-hands-on-projects">#</a> 6. Hands-On Projects</h2>
+<h3 id="project-1-cost-and-latency-attribution-with-an-optimisation-sprint"><a class="anchor" href="#project-1-cost-and-latency-attribution-with-an-optimisation-sprint">#</a> Project 1 — Cost and Latency Attribution with an Optimisation Sprint</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the product owner</em>, I want to know exactly what each feature costs per successful task and where the latency goes, then cut both without hurting quality.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Every model, retrieval, tool, and guard call emits usage and latency in traces (06.04). <code>cost_per_success</code> dashboards per feature, tenant, and stage, with daily trends.</li>
+<li>A latency breakdown per stage (P50/P95/P99), plus an <code>e2e_latency_mc</code> model calibrated to the measured stage distributions (predicted vs observed E2E within ±10%).</li>
+<li>An optimisation sprint applying ≥ 5 levers from §4.2, each behind a flag, eval-gated (06.01), and A/B-tested or canaried (06.03).</li>
+<li>Targets: −40% cost per successful task and −30% P95 E2E latency, with non-inferior quality (CI-based).</li>
+<li>A before/after report with attribution of the gains to each lever.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Instrument the usage and cost attributes; build the dashboards.</li>
+<li>Fit the stage latency distributions; build the Monte Carlo model.</li>
+<li>Rank the levers by expected ROI; implement them one by one behind flags.</li>
+<li>Gate each with evals; roll out with canaries or A/B tests.</li>
+<li>Write the report.</li>
+</ol>
+<hr>
+<h3 id="project-2-multi-layer-cache-with-correctness-guarantees"><a class="anchor" href="#project-2-multi-layer-cache-with-correctness-guarantees">#</a> Project 2 — Multi-Layer Cache with Correctness Guarantees</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a platform engineer</em>, I want caching at every sensible layer with zero cross-tenant leaks and measurable correctness.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Layers: an exact response cache (<code>ResponseCache</code> with full keys), a retrieval-result cache, an embedding cache, provider prompt caching (breakpoints per 02.02 §6.2), and a semantic cache for a public FAQ slice only (with an identifier guard).</li>
+<li>Invalidation on document-change events (CDC → Kafka → cache <code>invalidate</code> by the cited document IDs) and on version bumps. TTLs as a backstop.</li>
+<li>Tests: property tests showing that keys differ whenever the tenant, ACL, model, prompt version, index version, or as-of date differ. A cross-tenant leak test suite (0 leaks).</li>
+<li>Correctness sampling: 1% of cache hits re-computed fresh and judged for equivalence; the alert threshold for divergence is &lt; 1%.</li>
+<li>Reports the hit rates, savings, and latency improvements per layer.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Implement the caches (Redis) with key builders per layer.</li>
+<li>Wire the CDC-driven invalidation (03.03 §5).</li>
+<li>Write the property and leak tests.</li>
+<li>Add correctness sampling with a validated judge (06.01 §4).</li>
+<li>Build the dashboards; tune the TTLs.</li>
+</ol>
+<hr>
+<h3 id="project-3-tail-latency-engineering-for-an-agentic-pipeline"><a class="anchor" href="#project-3-tail-latency-engineering-for-an-agentic-pipeline">#</a> Project 3 — Tail-Latency Engineering for an Agentic Pipeline</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an SRE</em>, I want the P99 latency of the research agent within 2× of its P50, even when providers or tools have bad moments.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Deadline propagation through all stages (HTTP headers, MCP <code>_meta</code>, A2A metadata), with stage-level budgets and graceful degradation paths.</li>
+<li>Hedged requests for LLM calls (hedge at the observed P95 TTFT), with measured extra load; validated against <code>simulate_hedging</code> predictions.</li>
+<li>Timeouts with fallbacks for the optional stages (reranker, groundedness guard → async flagging).</li>
+<li>Load tests with injected latency (Toxiproxy) show P99/P50 ≤ 2 under a 5% slow-call rate, at &lt; 10% extra cost.</li>
+<li>The streaming UX metrics — TTFT, time to first <em>useful</em> content (first citation or first sentence), and abandonment — improve relative to the baseline.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Map the pipeline&#39;s stages and their dependencies; set the budgets.</li>
+<li>Implement the deadline context and propagation; add degradation paths.</li>
+<li>Implement hedging in the gateway (08.01) with per-model delays.</li>
+<li>Run the fault-injection load tests; tune.</li>
+<li>Measure the UX metrics; report.</li>
+</ol>
+<hr>
+<h2 id="7-foundational-papers-reading-exact-titles"><a class="anchor" href="#7-foundational-papers-reading-exact-titles">#</a> 7. Foundational Papers &amp; Reading (exact titles)</h2>
+<ul>
+<li>Dean &amp; Barroso, 2013 — <em>The Tail at Scale</em></li>
+<li>Kwon et al., 2023 — <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em></li>
+<li>Zheng et al., 2024 — <em>SGLang: Efficient Execution of Structured Language Model Programs</em> (RadixAttention prefix reuse)</li>
+<li>Gim et al., 2024 — <em>Prompt Cache: Modular Attention Reuse for Low-Latency Inference</em></li>
+<li>Liu et al., 2024 — <em>CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving</em></li>
+<li>Bang, 2023 — <em>GPTCache: An Open-Source Semantic Cache for LLM Applications Enabling Faster Answers and Cost Savings</em></li>
+<li>Chen, Zaharia &amp; Zou, 2023 — <em>FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance</em></li>
+<li>Provider docs: prompt caching, batch processing, usage fields (verify current prices and multipliers)</li>
+</ul>
+<h2 id="8-essential-tooling"><a class="anchor" href="#8-essential-tooling">#</a> 8. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Redis / Valkey</strong></td>
+<td>Response, retrieval, and embedding caches</td>
+</tr>
+<tr>
+<td><strong>Provider prompt caching + batch APIs</strong></td>
+<td>Input-cost and offline-cost reduction</td>
+</tr>
+<tr>
+<td><strong>vLLM/SGLang prefix caching, LMCache-style KV offload</strong></td>
+<td>Self-hosted KV reuse</td>
+</tr>
+<tr>
+<td><strong>OpenTelemetry + Grafana / ClickHouse</strong></td>
+<td>Cost and latency attribution</td>
+</tr>
+<tr>
+<td><strong>k6 / Locust + Toxiproxy</strong></td>
+<td>Load and tail-latency testing</td>
+</tr>
+<tr>
+<td><strong>LLM gateways</strong> (08.01)</td>
+<td>Hedging, budgets, caching hooks</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-01-model-selection-routing.html"><span>← Previous</span><b>01 model selection routing</b></a>
+      <a class="next" href="./08-03-vllm-tgi.html"><span>Next →</span><b>03 vllm tgi</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

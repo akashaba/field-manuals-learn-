@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Evaluation — FID, CLIP Score, Human Preference — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/14-evaluation-fid-clip-score/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-together">Use together</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-evaluation-is-an-inference-workload-too">Production note: evaluation is an inference workload too</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Evaluation — FID, CLIP Score, Human Preference</h1>
+    <p class="lesson-sub">Every generative model leaderboard cites FID, CLIP score, and a win rate from a human-preference arena. Each number has a failure mode a determined researcher can game. If you do not know the failure modes, you cannot tell a real improvement from a gaming run.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 01 (Taxonomy), Phase 2 · 04 (Evaluation Metrics)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M87.6,98.7 L95.8,86.5 L103.9,98.7 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M82.9,93.4 L90.3,82.1 L97.8,93.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="14.2" y="118.4" width="26.1" height="26.1" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(133 27.2 131.5)"/>
+        <circle cx="21.8" cy="126.5" r="12.4" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.4" cy="121.6" r="11.8" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Evaluation — FID,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">CLIP Score, Human…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A generative model is judged on <em>sample quality</em> and <em>conditioning adherence</em>. Neither has a closed-form measure. Your model has to render 10,000 images; something has to assign them numbers; you have to trust the numbers across model families, across resolutions, across architectures. Three metrics survived the 2014-2026 gauntlet:</p>
+<ul>
+<li><strong>FID (Fréchet Inception Distance).</strong> A distance between two distributions — real and generated — in an Inception network&#39;s feature space. Lower is better.</li>
+<li><strong>CLIP score.</strong> Cosine similarity between a generated image&#39;s CLIP-image embedding and a prompt&#39;s CLIP-text embedding. Higher is better. Measures prompt adherence.</li>
+<li><strong>Human preference.</strong> Pit two models head-to-head on the same prompt, have humans (or a GPT-4-class model) pick the better one, aggregate to an Elo score.</li>
+</ul>
+<p>You will also see: IS (inception score, largely retired), KID, CMMD, ImageReward, PickScore, HPSv2, MJHQ-30k. Each corrects for one failure of the previous.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/14-evaluation-fid-clip-score/assets/evaluation.svg" alt="FID, CLIP, and preference: three axes, different failure modes" loading="lazy" /></figure></p>
+<h3 id="fid-sample-quality"><a class="anchor" href="#fid-sample-quality">#</a> FID — sample quality</h3>
+<p>Heusel et al. (2017). Steps:</p>
+<ol>
+<li>Extract Inception-v3 features (2048-D) for N real images and N generated.</li>
+<li>Fit a Gaussian to each pool: compute mean <code>μ_r, μ_g</code> and covariance <code>Σ_r, Σ_g</code>.</li>
+<li>FID = <code>||μ_r - μ_g||² + Tr(Σ_r + Σ_g - 2 · (Σ_r · Σ_g)^0.5)</code>.</li>
+</ol>
+<p>Interpretation: Fréchet distance between two multivariate Gaussians in feature space. Lower = more similar distributions.</p>
+<p>Failure modes:</p>
+<ul>
+<li><strong>Biased on small N.</strong> FID is mean-squared over the feature distribution — small N under-estimates covariance, gives falsely low FID. Always use N ≥ 10,000.</li>
+<li><strong>Inception-dependent.</strong> Inception-v3 was trained on ImageNet. Domains far from ImageNet (faces, art, text images) produce meaningless FID. Use a domain-specific feature extractor.</li>
+<li><strong>Gaming.</strong> Overfitting to the Inception prior gives low FID without visual quality improvement. Beat it with CMMD (below).</li>
+</ul>
+<h3 id="clip-score-prompt-adherence"><a class="anchor" href="#clip-score-prompt-adherence">#</a> CLIP score — prompt adherence</h3>
+<p>Radford et al. (2021). For a generated image + prompt:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">clip_score = cos_sim( CLIP_image(x_gen), CLIP_text(prompt) )</code></pre>
+      </div>
+    <p>Average across 30k generated images → a scalar comparable between models.</p>
+<p>Failure modes:</p>
+<ul>
+<li><strong>CLIP&#39;s own blind spots.</strong> CLIP has weak compositional reasoning (&quot;a red cube on a blue sphere&quot; often fails). Models can rank well on CLIP score without really following complex prompts.</li>
+<li><strong>Short prompt bias.</strong> Short prompts have more CLIP-image matches in the wild. Longer prompts have lower CLIP scores mechanically.</li>
+<li><strong>Prompt gaming.</strong> Including &quot;high quality, 4k, masterpiece&quot; in the prompt inflates CLIP score without improving image-text binding.</li>
+</ul>
+<p>CMMD (Jayasumana et al., 2024) fixes some of these: uses CLIP features instead of Inception, maximum-mean discrepancy instead of Fréchet. Better at detecting subtle quality differences.</p>
+<h3 id="human-preference-the-ground-truth"><a class="anchor" href="#human-preference-the-ground-truth">#</a> Human preference — the ground truth</h3>
+<p>Pick a pool of prompts. Generate with model A and model B. Show pairs to humans (or a strong LLM judge). Aggregate wins into an Elo or Bradley-Terry score. Benchmarks:</p>
+<ul>
+<li><strong>PartiPrompts (Google)</strong>: 1,600 diverse prompts, 12 categories.</li>
+<li><strong>HPSv2</strong>: 107k human annotations, widely used as automated proxy.</li>
+<li><strong>ImageReward</strong>: 137k prompt-image preference pairs, MIT-licensed.</li>
+<li><strong>PickScore</strong>: trained on Pick-a-Pic 2.6M preferences.</li>
+<li><strong>Chatbot-Arena-style image arenas</strong>: <a href="https://imagearena.ai/">https://imagearena.ai/</a> and others.</li>
+</ul>
+<p>Failure modes:</p>
+<ul>
+<li><strong>Judge variance.</strong> Non-experts have different preferences than experts. Use both.</li>
+<li><strong>Prompt distribution.</strong> Cherry-picked prompts favor one family. Always document.</li>
+<li><strong>LLM-judge reward hacking.</strong> GPT-4-judge gets fooled by pretty-but-wrong outputs. Triangulate with human.</li>
+</ul>
+<h2 id="use-together"><a class="anchor" href="#use-together">#</a> Use together</h2>
+<p>A production eval report should include:</p>
+<ol>
+<li>FID on 10-30k samples against a held-out real distribution (sample quality).</li>
+<li>CLIP score / CMMD on the same samples vs their prompts (adherence).</li>
+<li>Win rate in a blinded arena vs the previous model (overall preference).</li>
+<li>Failure mode analysis: 50 randomly sampled outputs, flagged for known issues (hand anatomy, text rendering, consistent object count).</li>
+</ol>
+<p>Any single metric is a lie. Three corroborating metrics + qualitative review are a claim.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gx-fid-distributions</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements FID, CLIP-score-like, and Elo aggregation on synthetic &quot;feature vectors&quot; (we use 4-D vectors as stand-ins for Inception features). You see:</p>
+<ul>
+<li>FID computation on a small N and on a large N — the bias.</li>
+<li>&quot;CLIP score&quot; as cosine similarity between feature pools.</li>
+<li>Elo update rule from a synthetic preference stream.</li>
+</ul>
+<h3 id="step-1-fid-in-four-lines"><a class="anchor" href="#step-1-fid-in-four-lines">#</a> Step 1: FID in four lines</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def fid(real_features, gen_features):
+    mu_r, cov_r = mean_and_cov(real_features)
+    mu_g, cov_g = mean_and_cov(gen_features)
+    mean_diff = sum((a - b) ** 2 for a, b in zip(mu_r, mu_g))
+    trace_term = trace(cov_r) + trace(cov_g) - 2 * sqrt_cov_product(cov_r, cov_g)
+    return mean_diff + trace_term</code></pre>
+      </div>
+    <h3 id="step-2-clip-style-cosine-similarity"><a class="anchor" href="#step-2-clip-style-cosine-similarity">#</a> Step 2: CLIP-style cosine-similarity</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def clip_like(image_feat, text_feat):
+    dot = sum(a * b for a, b in zip(image_feat, text_feat))
+    norm = math.sqrt(dot_self(image_feat) * dot_self(text_feat))
+    return dot / max(norm, 1e-8)</code></pre>
+      </div>
+    <h3 id="step-3-elo-aggregation"><a class="anchor" href="#step-3-elo-aggregation">#</a> Step 3: Elo aggregation</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def elo_update(r_a, r_b, winner, k=32):
+    expected_a = 1 / (1 + 10 ** ((r_b - r_a) / 400))
+    actual_a = 1.0 if winner == &quot;a&quot; else 0.0
+    r_a_new = r_a + k * (actual_a - expected_a)
+    r_b_new = r_b - k * (actual_a - expected_a)
+    return r_a_new, r_b_new</code></pre>
+      </div>
+    <h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>FID at N=1000.</strong> Heuristic is unreliable under N=10k. Papers reporting low-N FID are gaming.</li>
+<li><strong>Comparing FID across resolutions.</strong> Inception&#39;s 299×299 resize changes the feature distribution. Compare at matched resolution only.</li>
+<li><strong>Reporting one seed.</strong> Run 3 seeds minimum. Report std.</li>
+<li><strong>CLIP score inflation via negative prompts.</strong> Some pipelines boost CLIP by over-fitting the prompt. Check for visual saturation.</li>
+<li><strong>Elo bias from prompt overlap.</strong> If both models saw a benchmark prompt during training, Elo is meaningless. Use held-out prompt sets.</li>
+<li><strong>Human eval paid-crowd skew.</strong> Prolific, MTurk annotators skew younger / tech-friendly. Mix with recruited art/design experts.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production eval protocol in 2026:</p>
+<table>
+<thead>
+<tr>
+<th>Pillar</th>
+<th>Minimum</th>
+<th>Recommended</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sample quality</td>
+<td>FID on 10k vs held-out real</td>
+<td>+ CMMD on 5k + FID on subset per category</td>
+</tr>
+<tr>
+<td>Prompt adherence</td>
+<td>CLIP score on 30k</td>
+<td>+ HPSv2 + ImageReward + VQA-style question answering</td>
+</tr>
+<tr>
+<td>Preference</td>
+<td>200 blinded pairs vs baseline</td>
+<td>+ 2000 paired human + LLM-judge + Chatbot Arena</td>
+</tr>
+<tr>
+<td>Failure analysis</td>
+<td>50 hand-flagged</td>
+<td>500 hand-flagged + automated safety classifier</td>
+</tr>
+</tbody></table>
+<p>All four pillars in one report = claim. Any one alone = marketing.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-eval-report.md</code>. Skill takes a new model checkpoint + baseline and outputs a full eval plan: sample sizes, metrics, failure-mode probes, sign-off criteria.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Compare FID at N=100 vs N=1000 on the same synthetic distributions. Report bias magnitude.</li>
+<li><strong>Medium.</strong> Implement CMMD from synthetic CLIP-style features (see Jayasumana et al., 2024 for the formula). Compare sensitivity to quality differences vs FID.</li>
+<li><strong>Hard.</strong> Replicate the HPSv2 setup: take 1000 image-prompt pairs from a subset of Pick-a-Pic, fine-tune a small CLIP-based scorer on the preferences, and measure its agreement with a held-out set.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FID</td>
+<td>&quot;Fréchet Inception Distance&quot;</td>
+<td>Fréchet distance of Gaussian fits to real vs gen Inception features.</td>
+</tr>
+<tr>
+<td>CLIP score</td>
+<td>&quot;Text-image similarity&quot;</td>
+<td>Cosine similarity between CLIP image and text embeddings.</td>
+</tr>
+<tr>
+<td>CMMD</td>
+<td>&quot;FID&#39;s replacement&quot;</td>
+<td>CLIP-feature MMD; less biased, no Gaussian assumption.</td>
+</tr>
+<tr>
+<td>IS</td>
+<td>&quot;Inception score&quot;</td>
+<td>Exp KL(p(y</td>
+</tr>
+<tr>
+<td>HPSv2 / ImageReward / PickScore</td>
+<td>&quot;Learned preference proxies&quot;</td>
+<td>Small models trained on human preferences; used as automatic judges.</td>
+</tr>
+<tr>
+<td>Elo</td>
+<td>&quot;Chess rating&quot;</td>
+<td>Bradley-Terry aggregation of pairwise wins.</td>
+</tr>
+<tr>
+<td>PartiPrompts</td>
+<td>&quot;The benchmark prompt set&quot;</td>
+<td>1,600 Google-curated prompts across 12 categories.</td>
+</tr>
+<tr>
+<td>FD-DINO</td>
+<td>&quot;Self-sup replacement&quot;</td>
+<td>FD using DINOv2 features; better for out-of-ImageNet domains.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-evaluation-is-an-inference-workload-too"><a class="anchor" href="#production-note-evaluation-is-an-inference-workload-too">#</a> Production note: evaluation is an inference workload too</h2>
+<p>Running FID on 10k samples means generating 10k images. For a 50-step SDXL base at 1024² on a single L4, that is ~11 hours of single-request inference. Evaluation budgets are real, and the framing is exactly the offline-inference scenario (maximize throughput, ignore TTFT):</p>
+<ul>
+<li><strong>Batch hard, forget latency.</strong> Offline eval = static batching at the largest size that fits in memory. <code>pipe(...).images</code> with <code>num_images_per_prompt=8</code> on an 80GB H100 runs 4-6× faster wall-clock than single-request.</li>
+<li><strong>Cache the real features.</strong> The Inception (FID) or CLIP (CLIP-score, CMMD) feature extraction over the real reference set is run <em>once</em>, stored as a <code>.npz</code>. Do not recompute per eval.</li>
+</ul>
+<p>For CI / regression gates: run FID + CLIP score on a 500-sample subset per PR (~30 min); run full 10k FID + HPSv2 + Elo nightly.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.08500">Heusel et al. (2017). GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium (FID)</a> — FID paper.</li>
+<li><a href="https://arxiv.org/abs/2401.09603">Jayasumana et al. (2024). Rethinking FID: Towards a Better Evaluation Metric for Image Generation (CMMD)</a> — CMMD.</li>
+<li><a href="https://arxiv.org/abs/2103.00020">Radford et al. (2021). Learning Transferable Visual Models from Natural Language Supervision (CLIP)</a> — CLIP.</li>
+<li><a href="https://arxiv.org/abs/2306.09341">Wu et al. (2023). HPSv2: A Comprehensive Human Preference Score</a> — HPSv2.</li>
+<li><a href="https://arxiv.org/abs/2304.05977">Xu et al. (2023). ImageReward: Learning and Evaluating Human Preferences for Text-to-Image Generation</a> — ImageReward.</li>
+<li><a href="https://arxiv.org/abs/2206.10789">Yu et al. (2023). Scaling Autoregressive Models for Content-Rich Text-to-Image Generation (Parti + PartiPrompts)</a> — PartiPrompts.</li>
+<li><a href="https://arxiv.org/abs/2306.04675">Stein et al. (2023). Exposing flaws of generative model evaluation metrics</a> — failure-mode survey.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-flow-matching-rectified-flows.html"><span>← Previous</span><b>flow matching rectified flows</b></a>
+      <a class="next" href="./19-visual-autoregressive-var.html"><span>Next →</span><b>visual autoregressive var</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

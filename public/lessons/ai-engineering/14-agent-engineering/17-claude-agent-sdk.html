@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Harness as a Library — Subagents and Session Store — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/17-claude-agent-sdk/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">The Harness as a Library — Subagents and Session Store</h1>
+    <p class="lesson-sub">A harness you can import: built-in tools, subagents for context isolation, hooks, W3C trace propagation, session persistence. The Claude Agent SDK is the reference example — the library form of the Claude Code harness — and Claude Managed Agents is the hosted alternative for long-running async work.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 01 (Agent Loop), Phase 14 · 10 (Skill Libraries)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 17">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="13.6" y="117.9" width="25.9" height="25.9" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(131 26.5 130.8)"/>
+        <circle cx="21.1" cy="125.9" r="12.3" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.7" cy="121.0" r="11.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.3" cy="116.1" r="11.0" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="114.8" cy="111.1" r="10.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">17</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">The Harness as a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Library — Subagents…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain the difference between the Anthropic Client SDK (raw API) and the Claude Agent SDK (harness shape).</li>
+<li>Describe subagents — parallelization and context isolation — and when to reach for them.</li>
+<li>Name the Python SDK&#39;s session store surface (<code>append</code>, <code>load</code>, <code>list_sessions</code>, <code>delete</code>, <code>list_subkeys</code>) and the role of <code>--session-mirror</code>.</li>
+<li>Implement a stdlib harness with built-in tools, subagent spawning with isolated context, lifecycle hooks, and a session store.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A raw LLM API gets you one round-trip. A production agent needs tool execution, MCP servers, lifecycle hooks, subagent spawning, session persistence, trace propagation. Claude Agent SDK ships this shape as a library — the same harness Claude Code uses, exposed for custom agents.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="client-sdk-vs-agent-sdk"><a class="anchor" href="#client-sdk-vs-agent-sdk">#</a> Client SDK vs Agent SDK</h3>
+<ul>
+<li><strong>Client SDK (<code>anthropic</code>).</strong> Raw Messages API. You own the loop, the tools, the state.</li>
+<li><strong>Agent SDK (<code>claude-agent-sdk</code>).</strong> Built-in tool execution, MCP connections, hooks, subagent spawning, session store. The Claude Code loop as a library.</li>
+</ul>
+<h3 id="built-in-tools"><a class="anchor" href="#built-in-tools">#</a> Built-in tools</h3>
+<p>The SDK ships 10+ tools out of the box: file read/write, shell, grep, glob, web fetch, more. Custom tools register via the standard tool-schema interface.</p>
+<h3 id="subagents"><a class="anchor" href="#subagents">#</a> Subagents</h3>
+<p>Two purposes documented by Anthropic:</p>
+<ol>
+<li><strong>Parallelization.</strong> Run independent work concurrently. &quot;Find the test file for each of these 20 modules&quot; is 20 parallel subagent tasks.</li>
+<li><strong>Context isolation.</strong> Subagents use their own context window; only results return to the orchestrator. The orchestrator&#39;s budget is preserved.</li>
+</ol>
+<p>Python SDK recent additions: <code>list_subagents()</code>, <code>get_subagent_messages()</code> for reading subagent transcripts.</p>
+<h3 id="session-store"><a class="anchor" href="#session-store">#</a> Session store</h3>
+<p>Protocol parity with TypeScript:</p>
+<ul>
+<li><code>append(session_id, message)</code> — add a turn.</li>
+<li><code>load(session_id)</code> — restore conversation.</li>
+<li><code>list_sessions()</code> — enumerate.</li>
+<li><code>delete(session_id)</code> — with cascade to subagent sessions.</li>
+<li><code>list_subkeys(session_id)</code> — list subagent keys.</li>
+</ul>
+<p><code>--session-mirror</code> (CLI flag) mirrors the transcript to an external file as it streams, for debugging.</p>
+<h3 id="hooks"><a class="anchor" href="#hooks">#</a> Hooks</h3>
+<p>Lifecycle hooks you can register:</p>
+<ul>
+<li><code>PreToolUse</code>, <code>PostToolUse</code> — gate or audit tool calls.</li>
+<li><code>SessionStart</code>, <code>SessionEnd</code> — set up and tear down.</li>
+<li><code>UserPromptSubmit</code> — act on user input before the model sees it.</li>
+<li><code>PreCompact</code> — run before context compaction.</li>
+<li><code>Stop</code> — cleanup on agent exit.</li>
+<li><code>Notification</code> — side-channel alerts.</li>
+</ul>
+<p>Hooks are how pro-workflow (Phase 14 curriculum reference) and similar systems add cross-cutting behavior.</p>
+<h3 id="w3c-trace-context"><a class="anchor" href="#w3c-trace-context">#</a> W3C trace context</h3>
+<p>OTel spans active on the caller propagate into the CLI subprocess via W3C trace context headers. The whole multi-process trace shows up as one trace in your backend.</p>
+<h3 id="claude-managed-agents"><a class="anchor" href="#claude-managed-agents">#</a> Claude Managed Agents</h3>
+<p>The hosted alternative (beta header <code>managed-agents-2026-04-01</code>). Long-running async work, built-in prompt caching, built-in compaction. Trade control for managed infrastructure.</p>
+<h3 id="where-this-pattern-goes-wrong"><a class="anchor" href="#where-this-pattern-goes-wrong">#</a> Where this pattern goes wrong</h3>
+<ul>
+<li><strong>Subagent over-spawn.</strong> Spawning 100 subagents for 100 tiny tasks. Overhead dominates. Batch instead.</li>
+<li><strong>Hook creep.</strong> Every team adds hooks; startup time balloons. Review hooks quarterly.</li>
+<li><strong>Session bloat.</strong> Sessions accumulate; size grows. Use <code>list_sessions</code> + expiry policy.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ae-subagent-isolation</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements the SDK shape in stdlib:</p>
+<ul>
+<li><code>Tool</code>, <code>ToolRegistry</code> with built-in <code>read_file</code>, <code>write_file</code>, <code>list_dir</code>.</li>
+<li><code>Subagent</code> — private context, isolated run, results returned.</li>
+<li><code>SessionStore</code> — append, load, list, delete, list_subkeys.</li>
+<li><code>Hooks</code> — <code>pre_tool_use</code>, <code>post_tool_use</code>, <code>session_start</code>, <code>session_end</code>.</li>
+<li>A demo: main agent spawns 3 subagents in parallel (each isolated), aggregates results, persists session.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The trace shows subagent context isolation (orchestrator context size stays bounded), hook execution, and session persistence.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li><strong>Claude Agent SDK</strong> for Claude-first products that want the Claude Code harness shape.</li>
+<li><strong>Claude Managed Agents</strong> for hosted long-running async work.</li>
+<li><strong>OpenAI Agents SDK</strong> (Lesson 16) for OpenAI-first counterparts.</li>
+<li><strong>LangGraph + custom tools</strong> if you want the graph-shaped state machine instead.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-claude-agent-scaffold.md</code> scaffolds a Claude Agent SDK app with subagents, hooks, session store, MCP server attachment, and W3C trace propagation.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a subagent spawner that batches 20 tasks into groups of 5 parallel subagents. Measure orchestrator context size vs one-per-task.</li>
+<li>Implement a <code>PreToolUse</code> hook that rate-limits <code>write_file</code> calls (5 per minute per session). Trace the behavior.</li>
+<li>Wire <code>list_subkeys</code> to render a subagent tree. What does deep nesting look like?</li>
+<li>Port the toy to the real <code>claude-agent-sdk</code> Python package. What changes about tool registration?</li>
+<li>Read the Claude Managed Agents docs. When would you switch from self-hosted to managed?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent SDK</td>
+<td>&quot;Claude Code as a library&quot;</td>
+<td>Harness shape: tools, MCP, hooks, subagents, session store</td>
+</tr>
+<tr>
+<td>Subagent</td>
+<td>&quot;Child agent&quot;</td>
+<td>Separate context, own budget; results bubble up</td>
+</tr>
+<tr>
+<td>Session store</td>
+<td>&quot;Conversation DB&quot;</td>
+<td>Persist, load, list, delete turns with subagent cascade</td>
+</tr>
+<tr>
+<td>Hook</td>
+<td>&quot;Lifecycle callback&quot;</td>
+<td>Pre/post tool, session, prompt submit, compact, stop</td>
+</tr>
+<tr>
+<td>W3C trace context</td>
+<td>&quot;Cross-process trace&quot;</td>
+<td>Parent span propagates into CLI subprocess</td>
+</tr>
+<tr>
+<td>Managed Agents</td>
+<td>&quot;Hosted harness&quot;</td>
+<td>Anthropic-hosted long-running async work</td>
+</tr>
+<tr>
+<td><code>--session-mirror</code></td>
+<td>&quot;Transcript mirror&quot;</td>
+<td>Writes session turns to an external file as they stream</td>
+</tr>
+<tr>
+<td>MCP server</td>
+<td>&quot;Tool surface&quot;</td>
+<td>External tool/resource source attached to the agent</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://platform.claude.com/docs/en/agent-sdk/overview">Claude Agent SDK overview</a> — the library form of Claude Code</li>
+<li><a href="https://www.anthropic.com/engineering/building-agents-with-the-claude-agent-sdk">Anthropic, Building agents with the Claude Agent SDK</a> — production patterns</li>
+<li><a href="https://platform.claude.com/docs/en/managed-agents/overview">Claude Managed Agents overview</a> — hosted alternative</li>
+<li><a href="https://openai.github.io/openai-agents-python/">OpenAI Agents SDK</a> — counterpart</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./16-openai-agents-sdk.html"><span>← Previous</span><b>openai agents sdk</b></a>
+      <a class="next" href="./18-agno-and-mastra-runtimes.html"><span>Next →</span><b>agno and mastra runtimes</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

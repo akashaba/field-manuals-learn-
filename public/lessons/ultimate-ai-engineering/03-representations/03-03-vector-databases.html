@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>03.03 — Vector Databases — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/03.%20Representations/03-03-vector-databases.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Representations</div>
+    <ol class="toc"><li><a href="#1-what-a-vector-database-adds-to-an-ann-library">1. What a Vector Database Adds to an ANN Library</a></li><li><a href="#2-internal-architecture-the-segment-model">2. Internal Architecture: The Segment Model</a></li><li><a href="#3-choosing-a-system">3. Choosing a System</a></li><li><a href="#4-data-modelling">4. Data Modelling</a></li><li><a href="#5-ingestion-keeping-the-index-consistent-with-the-source-of-truth">5. Ingestion: Keeping the Index Consistent with the Source of Truth</a></li><li><a href="#6-security-and-access-control">6. Security and Access Control</a></li><li><a href="#7-multi-tenancy-patterns">7. Multi-Tenancy Patterns</a></li><li><a href="#8-capacity-planning-and-scaling">8. Capacity Planning and Scaling</a></li><li><a href="#9-operations">9. Operations</a></li><li><a href="#10-production-challenges-how-to-solve-them">10. Production Challenges &amp; How to Solve Them</a></li><li><a href="#11-hands-on-projects">11. Hands-On Projects</a></li><li><a href="#12-foundational-papers-reading-exact-titles">12. Foundational Papers &amp; Reading (exact titles)</a></li><li><a href="#13-essential-tooling">13. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Representations</div>
+    <h1 class="lesson-title">03.03 — Vector Databases</h1>
+    <p class="lesson-sub">**Module 3: Representations** · Subtopic 3 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Representations 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="13.3" y="117.6" width="25.8" height="25.8" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(130 26.2 130.6)"/>
+        <circle cx="20.8" cy="125.6" r="12.3" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.4" cy="120.7" r="11.6" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6d28d9" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#6d28d9" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#6d28d9" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REPRESENTATIONS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">03.03 — Vector</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Databases</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 03.01 (embeddings, versioning), 03.02 (ANN indexes, filtered search), database fundamentals (WAL, MVCC, indexes, replication), Kafka or another event log, Kubernetes basics.
+<strong>Outcome:</strong> you can design the data layer of a retrieval system end to end: the schema, ingestion via change data capture, consistency and deletion guarantees, access control, multi-tenancy, sharding and capacity, and operations. You can also choose between Postgres + pgvector, a dedicated vector database, or a search engine with measured evidence.</p>
+</blockquote>
+<hr>
+<h2 id="1-what-a-vector-database-adds-to-an-ann-library"><a class="anchor" href="#1-what-a-vector-database-adds-to-an-ann-library">#</a> 1. What a Vector Database Adds to an ANN Library</h2>
+<p>FAISS or hnswlib give you an <strong>index</strong>. A production system also needs:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌───────────────────────────────────────────────────────────────────────────────┐
+│ API: upsert / delete / query (vector + filters + hybrid) / scroll / snapshot │
+├──────────────┬──────────────────┬─────────────────┬───────────────────────────┤
+│ Durability   │ Metadata &amp;       │ Query engine    │ Distribution              │
+│ WAL, fsync,  │ filtering        │ planner, fan-out│ sharding, replication,    │
+│ snapshots    │ payload indexes  │ merge top-k,    │ rebalancing, consistency  │
+│              │ ACL fields       │ rescoring       │ levels                    │
+├──────────────┴──────────────────┴─────────────────┴───────────────────────────┤
+│ Index lifecycle: build (async), incremental insert, deletes/tombstones,       │
+│ compaction, rebuild, tiering (RAM ↔ SSD ↔ object storage)                     │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ Ops &amp; security: authN/Z, multi-tenancy, quotas, encryption, backup/restore,   │
+│ metrics, audit                                                                 │
+└───────────────────────────────────────────────────────────────────────────────┘</code></pre>
+      </div>
+    <p><strong>The core design tension:</strong> ANN indexes (especially graphs) are expensive to build and poor at in-place updates, while databases must accept continuous writes and deletes with bounded freshness. Every vector database is an answer to that tension.</p>
+<hr>
+<h2 id="2-internal-architecture-the-segment-model"><a class="anchor" href="#2-internal-architecture-the-segment-model">#</a> 2. Internal Architecture: The Segment Model</h2>
+<p>Most dedicated vector databases (Milvus, Qdrant, Weaviate, Lucene-based engines) use an LSM-like <strong>segment</strong> design:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> writes ──► WAL (durable) ──► GROWING segment (in memory, small; brute-force or light index)
+                                    │ size/time threshold
+                                    ▼
+                               SEALED segment ──► background INDEX BUILD (HNSW / IVF-PQ / DiskANN)
+                                    │
+                         deletes = tombstone bitmap per segment (filtered out at query time)
+                                    │
+                         COMPACTION merges small segments, drops tombstoned rows, rebuilds index
+                                    │
+                         (optional) tier sealed segments to SSD / object storage
+
+ query ──► planner ──► fan-out to all segments on all shards ──► per-segment top-k ──► merge ──► rescore</code></pre>
+      </div>
+    <p><strong>Consequences you will observe in production:</strong></p>
+<ul>
+<li><strong>Freshness lag:</strong> a newly written vector is searchable via the growing segment immediately (or after a short flush), but is <em>indexed</em> later. Heavy write bursts produce many unindexed segments, and brute-force costs rise.</li>
+<li><strong>Delete cost:</strong> deletes are cheap to issue but make queries slower (more tombstones to filter) until compaction runs. High churn requires scheduled compaction.</li>
+<li><strong>Query latency ∝ number of segments.</strong> Tune segment sizes. Too many small segments are slow, and too few large ones make rebuilds slow.</li>
+<li><strong>Consistency levels:</strong> some systems let you choose per query — strong (read your writes), bounded staleness, session, or eventual. Strong consistency costs latency, because the query must wait for the WAL to be applied.</li>
+</ul>
+<p><strong>Postgres + pgvector</strong> takes a different path: vectors are ordinary columns under MVCC, and HNSW/IVFFlat are index access methods. You get transactions, joins, row-level security, and point-in-time recovery for free. Writes update the index synchronously (slower inserts at scale), and deletes are cleaned up by <code>VACUUM</code>.</p>
+<hr>
+<h2 id="3-choosing-a-system"><a class="anchor" href="#3-choosing-a-system">#</a> 3. Choosing a System</h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Architecture</th>
+<th>Strengths</th>
+<th>Watch out for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Postgres + pgvector</strong></td>
+<td>Extension; HNSW &amp; IVFFlat; <code>vector</code>, <code>halfvec</code>, <code>sparsevec</code>, <code>bit</code> types; iterative index scans</td>
+<td>Transactions, joins, RLS, existing ops/backup tooling; one system for metadata + vectors</td>
+<td>Single-node index memory; HNSW build time at 10M+ rows; filtered queries need iterative scans; index in shared buffers</td>
+</tr>
+<tr>
+<td><strong>Qdrant</strong></td>
+<td>Rust; segments; HNSW with payload-aware filtering; quantization; sparse vectors</td>
+<td>Strong filtered search, multi-tenancy features, compact ops</td>
+<td>Distributed-mode operations; RAM sizing with payload indexes</td>
+</tr>
+<tr>
+<td><strong>Milvus</strong></td>
+<td>Cloud-native, disaggregated (query/data/index nodes, object storage)</td>
+<td>Very large scale; many index types incl. GPU and DiskANN</td>
+<td>Operational complexity (several components)</td>
+</tr>
+<tr>
+<td><strong>Weaviate</strong></td>
+<td>Go; HNSW + BM25 hybrid; modules</td>
+<td>Built-in hybrid search, multi-tenancy</td>
+<td>Memory footprint at scale</td>
+</tr>
+<tr>
+<td><strong>Elasticsearch / OpenSearch</strong></td>
+<td>Lucene HNSW (+ quantization) inside a search engine</td>
+<td>Best-in-class BM25, aggregations, mature ops; hybrid in one query</td>
+<td>Lucene segment merges; memory; vector features vary by version and license</td>
+</tr>
+<tr>
+<td><strong>Vespa</strong></td>
+<td>Search engine with tensors, HNSW, rich ranking phases</td>
+<td>Complex ranking (multi-phase, ColBERT-style), real-time updates</td>
+<td>Learning curve</td>
+</tr>
+<tr>
+<td><strong>LanceDB / Lance format</strong></td>
+<td>Columnar files on object storage; embedded or server</td>
+<td>Cheap, versioned datasets; great for batch/ML workflows</td>
+<td>Online high-QPS serving characteristics</td>
+</tr>
+<tr>
+<td><strong>Managed / serverless</strong> (Pinecone, Turbopuffer, Azure AI Search, MongoDB Atlas, cloud Postgres)</td>
+<td>Vendor-operated; object-storage-backed or clustered</td>
+<td>Zero ops, elastic</td>
+<td>Cost at scale, data residency, feature and lock-in constraints</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p>Feature sets change quickly. The table reflects the general architecture. <strong>Verify current features, limits, and licenses</strong> for the versions you would deploy.</p>
+</blockquote>
+<p><strong>Decision heuristics:</strong></p>
+<ol>
+<li><strong>≤ ~10–50M vectors, relational metadata, strong consistency and ACLs matter, and a team that already runs Postgres</strong> → start with <strong>pgvector</strong>. It is the lowest operational risk.</li>
+<li><strong>Lexical search quality is central</strong> (legal, legislative, and code search) → <strong>OpenSearch/Elasticsearch or Vespa</strong>, or Postgres + a search engine side by side (03.04).</li>
+<li><strong>100M+ vectors, high filtered QPS, many tenants</strong> → a dedicated vector database (Qdrant, Milvus) or a managed service. Prove it with a bake-off (Project 2).</li>
+</ol>
+<hr>
+<h2 id="4-data-modelling"><a class="anchor" href="#4-data-modelling">#</a> 4. Data Modelling</h2>
+<h3 id="41-schema-pgvector"><a class="anchor" href="#41-schema-pgvector">#</a> 4.1 Schema (pgvector)</h3>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE documents (
+    doc_id        text PRIMARY KEY,
+    tenant_id     int  NOT NULL,
+    source_uri    text NOT NULL,
+    doc_version   int  NOT NULL,
+    status        text NOT NULL,              -- e.g. introduced | enacted | repealed
+    acl_groups    text[] NOT NULL,            -- who may read
+    updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE chunks (
+    chunk_id        text PRIMARY KEY,         -- deterministic: doc_id || &#39;:&#39; || doc_version || &#39;:&#39; || ordinal
+    doc_id          text NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
+    tenant_id       int  NOT NULL,
+    doc_version     int  NOT NULL,
+    ordinal         int  NOT NULL,
+    section_path    text,                     -- &quot;Title 2 &gt; Ch 18 &gt; 2-18-303&quot;
+    content         text NOT NULL,
+    content_hash    bytea NOT NULL,           -- sha256(normalised content + preprocess_version)
+    model_id        text NOT NULL,            -- embedding model + version (03.01 §6.1)
+    acl_groups      text[] NOT NULL,          -- denormalised for single-table filtering
+    embedding       halfvec(1024) NOT NULL,   -- fp16 halves memory; index limit 4,000 dims
+    tsv             tsvector GENERATED ALWAYS AS (to_tsvector(&#39;english&#39;, content)) STORED
+);
+
+CREATE INDEX chunks_embedding_hnsw ON chunks
+    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 128);
+CREATE INDEX chunks_tenant ON chunks (tenant_id);
+CREATE INDEX chunks_acl    ON chunks USING gin (acl_groups);
+CREATE INDEX chunks_tsv    ON chunks USING gin (tsv);            -- lexical leg of hybrid (03.04)</code></pre>
+      </div>
+    <p><strong>Modelling rules:</strong></p>
+<ul>
+<li><strong>Deterministic IDs</strong> (derived from the document ID, version, and ordinal) make upserts idempotent and deletes exact.</li>
+<li><strong>Denormalise the filter fields</strong> (tenant, ACL, status, dates) onto the chunk row. Joins inside an ANN query defeat the index.</li>
+<li><strong>Store <code>model_id</code></strong> and never mix models in one index (03.01 §6.1). During migrations, use a separate column or table per model.</li>
+<li><strong>Keep the source text or a pointer</strong> so you can re-embed and rerank without reprocessing the original documents.</li>
+</ul>
+<h3 id="42-filtered-queries-with-iterative-scans"><a class="anchor" href="#42-filtered-queries-with-iterative-scans">#</a> 4.2 Filtered queries with iterative scans</h3>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">-- Per session / transaction
+SET hnsw.ef_search = 100;
+SET hnsw.iterative_scan = relaxed_order;   -- keep scanning until enough rows pass the filters
+SET hnsw.max_scan_tuples = 20000;          -- bound the work (latency guard)
+
+WITH candidates AS MATERIALIZED (
+    SELECT chunk_id, doc_id, section_path, content,
+           embedding &lt;=&gt; $1::halfvec AS distance
+    FROM chunks
+    WHERE tenant_id = $2
+      AND acl_groups &amp;&amp; $3::text[]            -- caller&#39;s groups
+    ORDER BY embedding &lt;=&gt; $1::halfvec
+    LIMIT 50
+)
+SELECT * FROM candidates ORDER BY distance LIMIT 10;   -- relaxed_order may be slightly out of order</code></pre>
+      </div>
+    <h3 id="43-binary-quantization-rescoring-inside-postgres"><a class="anchor" href="#43-binary-quantization-rescoring-inside-postgres">#</a> 4.3 Binary quantization + rescoring inside Postgres</h3>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">CREATE INDEX chunks_embedding_bq ON chunks
+    USING hnsw ((binary_quantize(embedding)::bit(1024)) bit_hamming_ops);
+
+SELECT chunk_id, content FROM (
+    SELECT chunk_id, content, embedding
+    FROM chunks
+    ORDER BY binary_quantize(embedding)::bit(1024) &lt;~&gt; binary_quantize($1::halfvec)
+    LIMIT 200                                        -- oversample by Hamming distance
+) c
+ORDER BY embedding &lt;=&gt; $1::halfvec                   -- exact rescoring
+LIMIT 10;</code></pre>
+      </div>
+    <h3 id="44-java-spring-access"><a class="anchor" href="#44-java-spring-access">#</a> 4.4 Java / Spring access</h3>
+
+      <div class="codeblock" data-lang="java">
+        <span class="cb-label">java</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-java hljs">@Repository
+public class ChunkSearchRepository {
+    private final JdbcTemplate jdbc;
+    public ChunkSearchRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public record ChunkHit(String chunkId, String docId, String sectionPath, String content, double distance) {}
+
+    @Transactional(readOnly = true)                      // SET LOCAL applies to this transaction only
+    public List&lt;ChunkHit&gt; search(float[] queryVec, int tenantId, String[] groups, int k) {
+        jdbc.execute(&quot;SET LOCAL hnsw.ef_search = 100&quot;);
+        jdbc.execute(&quot;SET LOCAL hnsw.iterative_scan = relaxed_order&quot;);
+        var vec = new com.pgvector.PGhalfvec(queryVec);  // pgvector-java; register types on the connection
+        return jdbc.query(con -&gt; {
+            var ps = con.prepareStatement(&quot;&quot;&quot;
+                SELECT chunk_id, doc_id, section_path, content, embedding &lt;=&gt; ? AS distance
+                FROM chunks
+                WHERE tenant_id = ? AND acl_groups &amp;&amp; ?
+                ORDER BY embedding &lt;=&gt; ?
+                LIMIT ?&quot;&quot;&quot;);
+            ps.setObject(1, vec);
+            ps.setInt(2, tenantId);
+            ps.setArray(3, con.createArrayOf(&quot;text&quot;, groups));
+            ps.setObject(4, vec);
+            ps.setInt(5, k);
+            return ps;
+        }, (rs, i) -&gt; new ChunkHit(rs.getString(1), rs.getString(2), rs.getString(3),
+                                   rs.getString(4), rs.getDouble(5)));
+    }
+}</code></pre>
+      </div>
+    <hr>
+<h2 id="5-ingestion-keeping-the-index-consistent-with-the-source-of-truth"><a class="anchor" href="#5-ingestion-keeping-the-index-consistent-with-the-source-of-truth">#</a> 5. Ingestion: Keeping the Index Consistent with the Source of Truth</h2>
+<h3 id="51-change-data-capture-pipeline"><a class="anchor" href="#51-change-data-capture-pipeline">#</a> 5.1 Change data capture pipeline</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> source DB (documents) ──► Debezium CDC ──► Kafka topic docs.changes (key = doc_id → per-doc ordering)
+                                                     │
+                                 ┌───────────────────▼────────────────────┐
+                                 │ ingest worker (consumer group)         │
+                                 │ 1. fetch doc @ version                 │
+                                 │ 2. normalise + chunk + contextual hdrs │
+                                 │ 3. hash chunks; skip unchanged hashes  │
+                                 │ 4. embed changed chunks (batched)      │
+                                 │ 5. single transaction:                 │
+                                 │    upsert new/changed chunks           │
+                                 │    delete chunks of old versions       │
+                                 │ 6. commit Kafka offset AFTER db commit │
+                                 └───────────────────┬────────────────────┘
+                                                     ▼
+                                            vector store (+ DLQ for poison messages)</code></pre>
+      </div>
+    <p><strong>Guarantees and how to achieve them:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>No lost updates</td>
+<td>At-least-once consumption; commit offsets after the DB transaction</td>
+</tr>
+<tr>
+<td>No duplicates</td>
+<td>Idempotent upserts keyed by deterministic <code>chunk_id</code>; <code>content_hash</code> skips no-op re-embeds</td>
+</tr>
+<tr>
+<td>Per-document ordering</td>
+<td>Kafka key = <code>doc_id</code>; ignore events older than the stored <code>doc_version</code></td>
+</tr>
+<tr>
+<td>Deletes propagate</td>
+<td>Tombstone events → delete all chunks of the document; periodic reconciliation job (source IDs vs index IDs)</td>
+</tr>
+<tr>
+<td>Right-to-erasure (GDPR etc.)</td>
+<td>Hard delete + <code>VACUUM</code> (Postgres) or compaction (vector databases) + purge from backups per policy; verify with an audit query</td>
+</tr>
+<tr>
+<td>Embedding cost control</td>
+<td>Re-embed only changed chunks (hash diff); batch by length; rate-limit the backfill</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import hashlib
+from dataclasses import dataclass
+from typing import Callable, Protocol
+
+
+class VectorStore(Protocol):
+    def current_version(self, doc_id: str) -&gt; int | None: ...
+    def existing_hashes(self, doc_id: str) -&gt; dict[str, bytes]: ...
+    def apply(self, doc_id: str, version: int, upserts: list[dict], delete_ids: list[str]) -&gt; None: ...
+
+
+@dataclass
+class DocEvent:
+    doc_id: str
+    version: int
+    deleted: bool
+    text: str = &quot;&quot;
+    meta: dict | None = None
+
+
+def chunk_hash(text: str, preprocess_version: str) -&gt; bytes:
+    return hashlib.sha256((preprocess_version + &quot;\x00&quot; + &quot; &quot;.join(text.split())).encode()).digest()
+
+
+def handle_event(ev: DocEvent, store: VectorStore, chunker: Callable[[str], list[str]],
+                 embed: Callable[[list[str]], list[list[float]]], model_id: str,
+                 preprocess_version: str = &quot;pp-3&quot;) -&gt; dict:
+    cur = store.current_version(ev.doc_id)
+    if cur is not None and ev.version &lt; cur:
+        return {&quot;status&quot;: &quot;stale_event_ignored&quot;}
+    old = store.existing_hashes(ev.doc_id)                      # chunk_id -&gt; hash
+    if ev.deleted:
+        store.apply(ev.doc_id, ev.version, [], list(old))
+        return {&quot;status&quot;: &quot;deleted&quot;, &quot;removed&quot;: len(old)}
+
+    chunks = chunker(ev.text)
+    ids = [f&quot;{ev.doc_id}:{ev.version}:{i}&quot; for i in range(len(chunks))]
+    hashes = [chunk_hash(c, preprocess_version) for c in chunks]
+    reusable = set(old.values())
+    to_embed = [i for i, h in enumerate(hashes) if h not in reusable]
+    vecs = dict(zip(to_embed, embed([chunks[i] for i in to_embed]))) if to_embed else {}
+
+    upserts = [{&quot;chunk_id&quot;: ids[i], &quot;ordinal&quot;: i, &quot;content&quot;: chunks[i], &quot;content_hash&quot;: hashes[i],
+                &quot;model_id&quot;: model_id, &quot;embedding&quot;: vecs.get(i), &quot;reuse_embedding_from_hash&quot;: i not in vecs,
+                **(ev.meta or {})} for i in range(len(chunks))]
+    stale = [cid for cid in old if cid not in set(ids)]
+    store.apply(ev.doc_id, ev.version, upserts, stale)          # ONE transaction
+    return {&quot;status&quot;: &quot;upserted&quot;, &quot;chunks&quot;: len(chunks), &quot;embedded&quot;: len(to_embed), &quot;deleted&quot;: len(stale)}</code></pre>
+      </div>
+    <p>The <code>reuse_embedding_from_hash</code> flag lets the store copy an existing vector for an unchanged chunk whose ID changed with the version. This saves embedding cost on small edits to large documents.</p>
+<hr>
+<h2 id="6-security-and-access-control"><a class="anchor" href="#6-security-and-access-control">#</a> 6. Security and Access Control</h2>
+<p><strong>Rule: enforce authorisation inside the retrieval query, never after generation.</strong> If unauthorised chunks reach the LLM&#39;s context, they can leak into the answer regardless of any post-filtering.</p>
+<ul>
+<li><strong>Document-level ACLs</strong> as filter fields (<code>acl_groups &amp;&amp; :user_groups</code>), computed from the identity provider&#39;s group claims (e.g. Azure AD / Entra ID groups in the token).</li>
+<li><strong>Postgres row-level security</strong> makes this a database guarantee rather than an application convention:</li>
+</ul>
+
+      <div class="codeblock" data-lang="sql">
+        <span class="cb-label">sql</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-sql hljs">ALTER TABLE chunks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_and_acl ON chunks
+    USING (tenant_id = current_setting(&#39;app.tenant_id&#39;)::int
+           AND acl_groups &amp;&amp; string_to_array(current_setting(&#39;app.groups&#39;), &#39;,&#39;));
+-- per request, inside the transaction:
+-- SELECT set_config(&#39;app.tenant_id&#39;, &#39;42&#39;, true), set_config(&#39;app.groups&#39;, &#39;legal,staff&#39;, true);</code></pre>
+      </div>
+    <p>  RLS predicates are applied <em>after</em> the index returns candidates, so combine RLS with <strong>iterative scans</strong> (§4.2). Otherwise restrictive policies return fewer than k rows.</p>
+<ul>
+<li><strong>Tenant isolation tests:</strong> automated tests that attempt cross-tenant reads through every API path.</li>
+<li><strong>Embeddings are sensitive data</strong> (03.01 §6.3): encryption at rest, access logging, and deletion propagation.</li>
+<li><strong>Prompt injection through stored content</strong> (02.01 §6): the vector store is a supply chain for your context. Record provenance on every chunk.</li>
+</ul>
+<hr>
+<h2 id="7-multi-tenancy-patterns"><a class="anchor" href="#7-multi-tenancy-patterns">#</a> 7. Multi-Tenancy Patterns</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Isolation</th>
+<th>Efficiency</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Shared index + tenant filter</strong></td>
+<td>Logical (filter)</td>
+<td>Best packing</td>
+<td>Many small tenants; needs good filtered search</td>
+</tr>
+<tr>
+<td><strong>Partition per tenant</strong> (table partitions, partition keys, tenant shards)</td>
+<td>Stronger; per-tenant index</td>
+<td>Good</td>
+<td>Medium tenants with skewed sizes</td>
+</tr>
+<tr>
+<td><strong>Collection/index per tenant</strong></td>
+<td>Strong</td>
+<td>Overhead per collection</td>
+<td>Few large tenants; per-tenant configs</td>
+</tr>
+<tr>
+<td><strong>Database/cluster per tenant</strong></td>
+<td>Physical</td>
+<td>Worst</td>
+<td>Regulated tenants, data residency</td>
+</tr>
+</tbody></table>
+<p>Mix patterns by tier: small tenants share an index, and large or regulated tenants get dedicated partitions or clusters. Enforce <strong>quotas</strong> (vectors, QPS, storage) and monitor <strong>noisy neighbours</strong> (per-tenant P99 latency).</p>
+<hr>
+<h2 id="8-capacity-planning-and-scaling"><a class="anchor" href="#8-capacity-planning-and-scaling">#</a> 8. Capacity Planning and Scaling</h2>
+<p>Per-replica memory for an HNSW deployment:</p>
+<p>$$
+\text{RAM} \approx N,\big(d \cdot b_{\text{vec}} + M_0 \cdot 4 \cdot \phi + p\big)\cdot(1 + h)
+$$</p>
+<p>where $b_{\text{vec}}$ is the bytes per dimension, $M_0 = 2M$ is the number of layer-0 links, $\phi \approx 1.1$ accounts for upper layers and allocator overhead, $p$ is the payload and metadata bytes held in RAM, and $h$ is headroom (0.3–0.5).</p>
+<p>$$
+\text{shards} = \left\lceil \frac{\text{RAM}}{\text{usable RAM per node}} \right\rceil,\qquad
+\text{replicas} = \max!\left(2,\ \left\lceil \frac{\text{QPS}_{\text{peak}}}{\text{QPS per replica at SLO}} \right\rceil\right)
+$$</p>
+<p><code>QPS per replica at SLO</code> must be <strong>measured</strong> with realistic filters and concurrent writes. Every query fans out to all shards, so per-query latency is bounded by the <em>slowest</em> shard. Tail latency grows with the shard count.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+
+def plan_capacity(n_vectors: int, dim: int, bytes_per_dim: float, M: int = 16,
+                  payload_bytes: int = 200, headroom: float = 0.4, node_ram_gb: float = 64,
+                  usable_frac: float = 0.75, peak_qps: float = 200, qps_per_replica: float = 150):
+    per_vec = dim * bytes_per_dim + 2 * M * 4 * 1.1 + payload_bytes
+    total_gb = n_vectors * per_vec * (1 + headroom) / 1e9
+    shards = math.ceil(total_gb / (node_ram_gb * usable_frac))
+    replicas = max(2, math.ceil(peak_qps / qps_per_replica))
+    return {&quot;bytes_per_vector&quot;: round(per_vec), &quot;total_ram_gb&quot;: round(total_gb, 1),
+            &quot;shards&quot;: shards, &quot;replicas&quot;: replicas, &quot;nodes&quot;: shards * replicas}</code></pre>
+      </div>
+    <p><strong>Scaling levers, in order of cost:</strong> compress vectors (fp16 → int8 → binary + rescoring; 03.01 §3) → tune <code>M</code> and <code>ef_search</code> → partition by tenant or time so that queries touch fewer shards → add replicas for QPS → add shards for size → move to disk-based indexes (03.02 §5.2).</p>
+<hr>
+<h2 id="9-operations"><a class="anchor" href="#9-operations">#</a> 9. Operations</h2>
+<ul>
+<li><strong>Index builds:</strong> in pgvector, raise <code>maintenance_work_mem</code> so the graph fits during the build (otherwise it is much slower) and use parallel maintenance workers. Build new indexes concurrently. For large reloads, bulk-load first and build the index after.</li>
+<li><strong>Rebuild strategy:</strong> blue/green indexes (build a new index or collection → validate → switch an alias).</li>
+<li><strong>Backups:</strong> Postgres PITR (WAL archiving) or vector-database snapshots to object storage. <strong>Restore drills</strong> on a schedule, measuring RTO (restore + index warm-up time).</li>
+<li><strong>Monitoring:</strong><ul>
+<li>Query latency P50/P99 by tenant and filter type; result-count &lt; k rate.</li>
+<li>Index freshness lag (event time → searchable).</li>
+<li>Ingest throughput and DLQ size; tombstone ratio and compaction backlog.</li>
+<li>Memory and disk; cache hit rates.</li>
+<li><strong>Recall canary:</strong> a fixed query sample compared against exact search on a snapshot.</li>
+</ul>
+</li>
+</ul>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+
+def recall_canary(query_vecs: np.ndarray, ann_search, exact_search, k: int = 10,
+                  threshold: float = 0.9) -&gt; dict:
+    &quot;&quot;&quot;Run on a schedule; alert if recall vs exact drops below threshold.&quot;&quot;&quot;
+    rec = [len(set(ann_search(q, k)) &amp; set(exact_search(q, k))) / k for q in query_vecs]
+    r = float(np.mean(rec))
+    return {&quot;recall_at_k&quot;: round(r, 4), &quot;p10&quot;: round(float(np.percentile(rec, 10)), 4),
+            &quot;alert&quot;: r &lt; threshold}</code></pre>
+      </div>
+    <hr>
+<h2 id="10-production-challenges-how-to-solve-them"><a class="anchor" href="#10-production-challenges-how-to-solve-them">#</a> 10. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Stale or ghost results</strong></td>
+<td>Deleted or edited content still retrieved</td>
+<td>Tombstone events, versioned chunk IDs, reconciliation job, compaction/VACUUM monitoring</td>
+</tr>
+<tr>
+<td><strong>ACL leaks</strong></td>
+<td>Users see content they shouldn&#39;t</td>
+<td>Filter inside the query; RLS; isolation tests; never post-filter after generation</td>
+</tr>
+<tr>
+<td><strong>Filtered queries return too few rows</strong></td>
+<td>Empty answers for restrictive users or tenants</td>
+<td>Iterative scans; selectivity-aware planning (03.02 §6); partitions for big tenants</td>
+</tr>
+<tr>
+<td><strong>Write amplification on re-embed</strong></td>
+<td>Embedding bills spike on minor edits</td>
+<td>Hash-diff chunks; reuse vectors; batch; rate-limit backfills</td>
+</tr>
+<tr>
+<td><strong>Slow index builds</strong></td>
+<td>Deploys blocked for hours</td>
+<td>More <code>maintenance_work_mem</code>/parallel workers; blue/green builds; GPU builds in dedicated engines</td>
+</tr>
+<tr>
+<td><strong>Tail latency with many shards</strong></td>
+<td>P99 grows as you scale out</td>
+<td>Fewer, larger shards; tenant-aware routing; replicas; hedged requests</td>
+</tr>
+<tr>
+<td><strong>Noisy tenants</strong></td>
+<td>Other tenants&#39; latency degrades</td>
+<td>Quotas, per-tenant partitions, rate limits</td>
+</tr>
+<tr>
+<td><strong>Unverified backups</strong></td>
+<td>Restore fails when needed</td>
+<td>Scheduled restore drills with RTO measurement</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="11-hands-on-projects"><a class="anchor" href="#11-hands-on-projects">#</a> 11. Hands-On Projects</h2>
+<h3 id="project-1-production-pgvector-retrieval-store-with-cdc-acls-and-rls"><a class="anchor" href="#project-1-production-pgvector-retrieval-store-with-cdc-acls-and-rls">#</a> Project 1 — Production pgvector Retrieval Store with CDC, ACLs, and RLS</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a backend engineer</em> on a legislative platform, I want document changes in our system of record reflected in vector search within seconds, with no duplicates or ghosts, so that attorneys always search current text.</li>
+<li><em>As a security officer</em>, I want retrieval to respect document ACLs at the database layer, so that no one can retrieve content outside their groups.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Postgres 16+ with pgvector (≥ 0.8), the §4.1 schema, an HNSW index on <code>halfvec</code>, and RLS (§6).</li>
+<li>The CDC pipeline follows §5.1: Debezium → Kafka (key = <code>doc_id</code>) → Spring Boot or Python worker with <code>handle_event</code> semantics, a DLQ, and offset commit after the transaction.</li>
+<li><strong>Freshness SLO:</strong> P95 event-to-searchable time &lt; 10 s under 50 documents/s of updates.</li>
+<li><strong>Correctness tests:</strong><ul>
+<li>Replaying the whole topic twice yields identical row counts and hashes.</li>
+<li>Deleting a source document removes all its chunks within the SLO.</li>
+<li>A reconciliation job reports zero drift.</li>
+</ul>
+</li>
+<li><strong>Security tests:</strong> ≥ 20 cross-tenant and ACL attack cases (API parameter tampering, direct SQL via the app role) all fail. Filtered queries for low-privilege users return k results via iterative scans.</li>
+<li>Everything is deployed on Kubernetes (Helm or Kustomize), with dashboards for latency, freshness lag, and DLQ size.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Stand up Postgres, Kafka, and Debezium with Docker Compose for development, and Kubernetes manifests for staging.</li>
+<li>Create the schema and indexes; tune <code>maintenance_work_mem</code>; load an initial corpus in bulk before building the index.</li>
+<li>Implement the worker (Spring Kafka or confluent-kafka) with idempotent upserts and version checks.</li>
+<li>Implement the RLS policies and a request filter that sets <code>app.tenant_id</code> and <code>app.groups</code> from the JWT claims.</li>
+<li>Write the correctness, chaos (kill worker mid-batch), and security test suites.</li>
+<li>Add Micrometer or Prometheus metrics and Grafana dashboards, and write a runbook.</li>
+</ol>
+<hr>
+<h3 id="project-2-vector-database-bake-off-on-your-workload"><a class="anchor" href="#project-2-vector-database-bake-off-on-your-workload">#</a> Project 2 — Vector Database Bake-Off on Your Workload</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a platform architect</em>, I need evidence-based selection between pgvector, a dedicated vector database, and a search engine for our 20M-chunk corpus, so that we don&#39;t migrate twice.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Candidates: pgvector, Qdrant, OpenSearch (or Elasticsearch), and Milvus (or a managed service), all on equivalent hardware on Kubernetes or VMs.</li>
+<li>The workload replays <strong>real</strong> query and write distributions: vector-only, filtered (3 selectivity buckets), and hybrid (where supported), plus concurrent upserts and deletes at 5% of QPS.</li>
+<li>Measures:<ul>
+<li>Recall@10 vs exact search.</li>
+<li>QPS at P99 &lt; 50 ms.</li>
+<li>Ingest throughput and index build time.</li>
+<li>Freshness lag.</li>
+<li>Memory and disk footprint.</li>
+<li>Restore time from backup.</li>
+<li>Operational effort (hours to set up, number of components).</li>
+</ul>
+</li>
+<li>A weighted decision matrix with cost projections at 20M and 200M chunks.</li>
+<li>All configs and scripts are reproducible (Terraform/Helm + benchmark code in the repo).</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Freeze the dataset and embeddings, and compute exact ground truth.</li>
+<li>Deploy each engine with vendor-recommended settings, then tune <code>M</code>/<code>ef</code> to a common recall target (e.g. 0.95).</li>
+<li>Build a workload driver (Python asyncio or k6) with Poisson arrivals and mixed operations.</li>
+<li>Run each scenario for ≥ 15 minutes after warm-up, 3 repetitions.</li>
+<li>Run failure drills: kill a node, restore from a snapshot.</li>
+<li>Write the decision document.</li>
+</ol>
+<hr>
+<h3 id="project-3-multi-tenant-vector-platform-with-quotas-and-a-recall-canary"><a class="anchor" href="#project-3-multi-tenant-vector-platform-with-quotas-and-a-recall-canary">#</a> Project 3 — Multi-Tenant Vector Platform with Quotas and a Recall Canary</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a platform team</em>, we want to offer vector search as an internal service to many product teams, with isolation, quotas, and SLOs, so that each team doesn&#39;t run its own database.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A service API (REST/gRPC) supporting tenant provisioning, upsert, delete, query (vector + filters), and snapshot/restore. Tier-based placement: shared index for small tenants, dedicated partitions for large ones (§7).</li>
+<li>Enforces per-tenant quotas (vector count, QPS, storage) with clear errors. Rate limiting uses a token bucket.</li>
+<li>A recall canary per tenant tier (<code>recall_canary</code>) plus freshness probes, exported as metrics, with alerts.</li>
+<li>A noisy-neighbour test: one tenant at 10× load doesn&#39;t push other tenants&#39; P99 beyond their SLO.</li>
+<li>A disaster-recovery drill: restore a tenant from snapshot to a point in time, and measure RTO and RPO.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Choose a backend (pgvector with partitioning, or Qdrant/Milvus) and design the tenant → placement mapping.</li>
+<li>Implement the control plane (tenants, quotas, placement) and the data plane (query routing).</li>
+<li>Implement the canary job with sampled queries per tenant, exact search on a snapshot, and metric export.</li>
+<li>Build the load and noisy-neighbour tests and tune the isolation (rate limits, partitioning).</li>
+<li>Write the SLO document and the runbooks.</li>
+</ol>
+<hr>
+<h2 id="12-foundational-papers-reading-exact-titles"><a class="anchor" href="#12-foundational-papers-reading-exact-titles">#</a> 12. Foundational Papers &amp; Reading (exact titles)</h2>
+<ul>
+<li>Wang et al., 2021 — <em>Milvus: A Purpose-Built Vector Data Management System</em></li>
+<li>Guo et al., 2022 — <em>Manu: A Cloud Native Vector Database Management System</em></li>
+<li>Pan, Wang &amp; Li, 2024 — <em>Survey of Vector Database Management Systems</em></li>
+<li>Zhang et al., 2023 — <em>VBase: Unifying Online Vector Similarity Search and Relational Queries via Relaxed Monotonicity</em></li>
+<li>Wei et al., 2020 — <em>AnalyticDB-V: A Hybrid Analytical Engine Towards Query Fusion for Structured and Unstructured Data</em></li>
+<li>Patel et al., 2024 — <em>ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and Structured Data</em></li>
+<li>O&#39;Neil et al., 1996 — <em>The Log-Structured Merge-Tree (LSM-Tree)</em></li>
+<li>Kleppmann, 2017 — <em>Designing Data-Intensive Applications</em> (book: replication, partitioning, CDC, consistency)</li>
+<li>pgvector README and CHANGELOG (HNSW/IVFFlat parameters, iterative scans, types); Debezium documentation (outbox pattern, ordering)</li>
+</ul>
+<h2 id="13-essential-tooling"><a class="anchor" href="#13-essential-tooling">#</a> 13. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PostgreSQL + pgvector</strong> (+ <code>pgvector-java</code>, <code>pgvector-python</code>)</td>
+<td>Transactional vector store with RLS</td>
+</tr>
+<tr>
+<td><strong>Qdrant / Milvus / Weaviate / OpenSearch / Vespa</strong></td>
+<td>Dedicated and search-engine alternatives</td>
+</tr>
+<tr>
+<td><strong>Debezium + Kafka (+ Kafka Connect)</strong></td>
+<td>Change data capture and ordered event streams</td>
+</tr>
+<tr>
+<td><strong>Spring Kafka / Spring JDBC</strong>, <strong>confluent-kafka (Python)</strong></td>
+<td>Ingest workers</td>
+</tr>
+<tr>
+<td><strong>VectorDBBench</strong>, <strong>k6</strong>, <strong>Locust</strong></td>
+<td>Benchmarking and load testing</td>
+</tr>
+<tr>
+<td><strong>Prometheus + Grafana</strong>, <strong>OpenTelemetry</strong></td>
+<td>Metrics, tracing, and canary dashboards</td>
+</tr>
+<tr>
+<td><strong>Helm / Kustomize / Terraform</strong></td>
+<td>Reproducible deployments</td>
+</tr>
+<tr>
+<td><strong>pgBackRest / WAL-G</strong>, engine snapshot APIs</td>
+<td>Backups and point-in-time recovery</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-02-similarity-search.html"><span>← Previous</span><b>02 similarity search</b></a>
+      <a class="next" href="./03-04-hybrid-retrieval.html"><span>Next →</span><b>04 hybrid retrieval</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

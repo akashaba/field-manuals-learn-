@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>07.01 — Guardrails — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/07.%20Safety/07-01-guardrails.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">Safety</div>
+    <ol class="toc"><li><a href="#1-what-guardrails-are-and-arent">1. What Guardrails Are (and Aren&#39;t)</a></li><li><a href="#2-policy-as-code">2. Policy as Code</a></li><li><a href="#3-detectors">3. Detectors</a></li><li><a href="#4-layering-why-multiple-imperfect-guards-help-and-their-limits">4. Layering: Why Multiple Imperfect Guards Help — and Their Limits</a></li><li><a href="#5-groundedness-guards">5. Groundedness Guards</a></li><li><a href="#6-streaming-output-guards">6. Streaming Output Guards</a></li><li><a href="#7-evaluating-and-operating-guardrails">7. Evaluating and Operating Guardrails</a></li><li><a href="#8-production-challenges-how-to-solve-them">8. Production Challenges &amp; How to Solve Them</a></li><li><a href="#9-hands-on-projects">9. Hands-On Projects</a></li><li><a href="#10-foundational-papers-reading-exact-titles">10. Foundational Papers &amp; Reading (exact titles)</a></li><li><a href="#11-essential-tooling">11. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · Safety</div>
+    <h1 class="lesson-title">07.01 — Guardrails</h1>
+    <p class="lesson-sub">**Module 7: Safety** · Subtopic 1 of 3</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — Safety 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M68.8,77.7 L74.4,69.3 L80.0,77.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M51.0,80.2 L69.0,53.2 L86.9,80.2 Z" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.2,74.9 L63.5,48.9 L80.9,74.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.4" y="42.9" width="33.4" height="33.4" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(234 58.1 59.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="48" lengthAdjust="spacingAndGlyphs">SAFETY</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">07.01 — Guardrails</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> 02.03 (validation layers), 04.03 §5 (calibration), 05.01 (tool runtime), 05.06 (approvals, escalation economics), 06.01–06.02 (evals, datasets).
+<strong>Outcome:</strong> you can design, implement, evaluate, and operate <strong>runtime guardrails</strong>: layered controls on inputs, retrieval, actions, and outputs, expressed as versioned policy. You can choose classifiers and thresholds by cost, guard streaming outputs without destroying latency, verify groundedness, and measure guardrails like any other model: precision, recall, over-refusal, and latency.</p>
+</blockquote>
+<blockquote>
+<p><strong>Scope:</strong> this subtopic covers <em>policy enforcement around model behaviour</em>. 07.02 covers system security (threat modelling, supply chain, output handling). 07.03 goes deep on prompt injection. Guardrails are one control among several — they are <strong>not</strong> a security boundary by themselves (see 07.03 on why classifiers alone fail against adaptive attackers).</p>
+</blockquote>
+<hr>
+<h2 id="1-what-guardrails-are-and-arent"><a class="anchor" href="#1-what-guardrails-are-and-arent">#</a> 1. What Guardrails Are (and Aren&#39;t)</h2>
+<p><strong>Guardrails</strong> are runtime checks that enforce a deployment&#39;s policy on what goes into the model, what it can do, and what comes out. They complement, not replace:</p>
+<ul>
+<li>the model&#39;s own trained safety behaviour;</li>
+<li>a secure architecture (least privilege, isolation — 07.02, 07.03);</li>
+<li>human oversight (05.06).</li>
+</ul>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs"> user / upstream ──►┌──────────────┐   ┌───────────────┐   ┌───────────────┐   ┌──────────────┐──► user
+                    │ INPUT RAILS  │──►│ CONTEXT RAILS │──►│ ACTION RAILS  │──►│ OUTPUT RAILS │
+                    │ authN/quota  │   │ source trust  │   │ tool policy   │   │ PII leakage  │
+                    │ PII redact   │   │ ACL filtering │   │ arg validation│   │ policy class.│
+                    │ topic/scope  │   │ injection scan│   │ approvals     │   │ groundedness │
+                    │ injection    │   │ (07.03)       │   │ egress rules  │   │ format/schema│
+                    │ detection    │   │               │   │ budgets       │   │ disclaimers  │
+                    └──────┬───────┘   └──────┬────────┘   └──────┬────────┘   └──────┬───────┘
+                           └──────────────────┴── audit log, metrics, human review queue ─┘</code></pre>
+      </div>
+    <p><strong>Design principles:</strong></p>
+<ol>
+<li><strong>Policy first, tooling second.</strong> Write down what the system must never do, must always do, and must escalate — per deployment.</li>
+<li><strong>Deterministic where possible.</strong> Regexes, schemas, allowlists, and permission checks are cheap and unbypassable. Use classifiers only for what rules can&#39;t express.</li>
+<li><strong>Layered, not monolithic.</strong> Independent layers catch different failures (§4).</li>
+<li><strong>Measured like a model.</strong> Every guardrail has precision, recall, and latency, measured on an eval set (§6).</li>
+<li><strong>Actions, not just verdicts:</strong> block, redact, rewrite, warn, escalate, or log — chosen per category and severity.</li>
+</ol>
+<hr>
+<h2 id="2-policy-as-code"><a class="anchor" href="#2-policy-as-code">#</a> 2. Policy as Code</h2>
+<h3 id="21-from-policy-document-to-enforceable-rules"><a class="anchor" href="#21-from-policy-document-to-enforceable-rules">#</a> 2.1 From policy document to enforceable rules</h3>
+<p>For a legislative-services assistant, an illustrative policy might read:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Rule</th>
+<th>Stage</th>
+<th>Detector</th>
+<th>Action</th>
+<th>Severity</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Constituent PII</td>
+<td>Never reveal personal contact or ID data from records</td>
+<td>Output</td>
+<td>Regex + NER</td>
+<td>Redact</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Confidential drafting requests</td>
+<td>Don&#39;t disclose unreleased draft requests to unauthorised users</td>
+<td>Context + output</td>
+<td>ACL filter + classifier</td>
+<td>Block + log</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Legal advice to the public</td>
+<td>Don&#39;t give individualised legal advice; provide information with a referral</td>
+<td>Output</td>
+<td>Classifier</td>
+<td>Rewrite with disclaimer</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>Political neutrality</td>
+<td>Bill summaries must not advocate for or against</td>
+<td>Output</td>
+<td>Rubric judge (sampled) + prompt rules</td>
+<td>Warn / regenerate</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>Out of scope</td>
+<td>Unrelated tasks (e.g. personal errands)</td>
+<td>Input</td>
+<td>Topic classifier</td>
+<td>Polite refusal</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Ungrounded legal claims</td>
+<td>Every legal claim must cite a source in context</td>
+<td>Output</td>
+<td>Groundedness check (§5)</td>
+<td>Remove claim / regenerate</td>
+<td>High</td>
+</tr>
+<tr>
+<td>Destructive actions</td>
+<td>Filing, sharing, publishing</td>
+<td>Action</td>
+<td>Tool annotations</td>
+<td>Approval token (05.06)</td>
+<td>High</td>
+</tr>
+</tbody></table>
+<p><strong>Version the policy</strong> like code: rule IDs, owners, changelog, and tests. The policy file is the contract between legal/compliance and engineering.</p>
+<h3 id="22-a-minimal-policy-engine"><a class="anchor" href="#22-a-minimal-policy-engine">#</a> 2.2 A minimal policy engine</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import re
+import time
+from dataclasses import dataclass, field
+from typing import Callable
+
+ACTION_ORDER = {&quot;allow&quot;: 0, &quot;log&quot;: 1, &quot;warn&quot;: 2, &quot;redact&quot;: 3, &quot;rewrite&quot;: 4, &quot;escalate&quot;: 5, &quot;block&quot;: 6}
+
+
+@dataclass
+class Rule:
+    id: str
+    stage: str                                      # input | context | action | output
+    check: Callable[[str, dict], tuple[bool, str]]  # (violated?, detail)
+    action: str
+    severity: str = &quot;medium&quot;
+    fail_closed: bool = False                       # if the detector errors/times out: block (True) or allow (False)
+    timeout_s: float = 0.2
+
+
+@dataclass
+class Decision:
+    action: str
+    hits: list[dict] = field(default_factory=list)
+    text: str | None = None
+
+
+class PolicyEngine:
+    def __init__(self, rules: list[Rule], redactor: Callable[[str], str] | None = None):
+        self.rules, self.redactor = rules, redactor
+
+    def evaluate(self, stage: str, text: str, ctx: dict) -&gt; Decision:
+        hits, worst = [], &quot;allow&quot;
+        for r in (r for r in self.rules if r.stage == stage):
+            t0 = time.perf_counter()
+            try:
+                violated, detail = r.check(text, ctx)
+                if time.perf_counter() - t0 &gt; r.timeout_s:
+                    raise TimeoutError(&quot;detector exceeded budget&quot;)
+            except Exception as e:                  # detector failure: apply the fail mode explicitly
+                violated, detail = r.fail_closed, f&quot;detector error: {type(e).__name__}&quot;
+            if violated:
+                hits.append({&quot;rule&quot;: r.id, &quot;action&quot;: r.action, &quot;severity&quot;: r.severity, &quot;detail&quot;: detail})
+                if ACTION_ORDER[r.action] &gt; ACTION_ORDER[worst]:
+                    worst = r.action
+        out = text
+        if worst == &quot;block&quot;:
+            out = None                                   # never hand blocked content to the caller
+        elif worst == &quot;redact&quot; and self.redactor:
+            out = self.redactor(text)
+        return Decision(worst, hits, out)
+
+
+SSN = re.compile(r&quot;\b\d{3}-\d{2}-\d{4}\b&quot;)
+EMAIL = re.compile(r&quot;[\w.+-]+@[\w-]+\.[\w.]+&quot;)
+
+
+def pii_check(text: str, ctx: dict) -&gt; tuple[bool, str]:
+    found = [n for n, p in ((&quot;ssn&quot;, SSN), (&quot;email&quot;, EMAIL)) if p.search(text)]
+    return bool(found), &quot;,&quot;.join(found)
+
+
+def redact_pii(text: str) -&gt; str:
+    return EMAIL.sub(&quot;[EMAIL]&quot;, SSN.sub(&quot;[SSN]&quot;, text))</code></pre>
+      </div>
+    <p><strong>Fail-open vs fail-closed</strong> is a <em>per-rule</em> decision. PII leakage and destructive-action checks fail <strong>closed</strong>, meaning a detector outage blocks. Low-severity topic checks fail <strong>open</strong>, so the product keeps working. Log every detector failure, because an unmonitored fail-open rule is a silent hole.</p>
+<hr>
+<h2 id="3-detectors"><a class="anchor" href="#3-detectors">#</a> 3. Detectors</h2>
+<table>
+<thead>
+<tr>
+<th>Detector</th>
+<th>Use for</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Rules</strong> (regex, allowlists, schemas, permission checks)</td>
+<td>PII formats, identifiers, URLs/domains, schema validity, tool permissions</td>
+<td>Deterministic, fast, unbypassable for what they cover</td>
+</tr>
+<tr>
+<td><strong>NER / PII models</strong> (e.g. Presidio + spaCy/transformers)</td>
+<td>Names, addresses, free-form PII</td>
+<td>Tune per domain; public officials&#39; names aren&#39;t PII in legislative text</td>
+</tr>
+<tr>
+<td><strong>Safety classifiers</strong> (Llama Guard family, provider moderation / content-safety APIs, fine-tuned small models)</td>
+<td>Harm categories, jailbreak and injection attempts</td>
+<td>Map their taxonomy to <em>your</em> policy; calibrate thresholds on your data</td>
+</tr>
+<tr>
+<td><strong>LLM-as-guard</strong> (a prompted rubric judge with structured output)</td>
+<td>Nuanced, deployment-specific policies (neutrality, legal-advice boundary)</td>
+<td>Slow and costly; validate like any judge (06.01 §4); use on sampled traffic or high-risk paths</td>
+</tr>
+<tr>
+<td><strong>Groundedness / NLI checkers</strong></td>
+<td>Unsupported claims (§5)</td>
+<td>Claim-level; needs the context manifest (02.02 §8)</td>
+</tr>
+</tbody></table>
+<h3 id="31-thresholds-by-cost"><a class="anchor" href="#31-thresholds-by-cost">#</a> 3.1 Thresholds by cost</h3>
+<p>Each classifier outputs a score $s$. Choose the blocking threshold $\tau$ per category, from the costs of the two error types. Missing a violation costs $C_{\text{fn}}$ (harm, legal exposure). Blocking a legitimate request costs $C_{\text{fp}}$ (lost utility, user frustration, extra escalations). With a calibrated $p = P(\text{violation}\mid s)$, block when</p>
+<p>$$
+p,C_{\text{fn}} &gt; (1-p),C_{\text{fp}} \iff p &gt; \frac{C_{\text{fp}}}{C_{\text{fp}} + C_{\text{fn}}}
+$$</p>
+<p>High-harm categories get low thresholds (block aggressively). Low-harm categories get high thresholds, to avoid over-refusal. <strong>Calibrate first</strong> (04.03 §5): vendor classifier scores are rarely calibrated to your traffic.</p>
+<hr>
+<h2 id="4-layering-why-multiple-imperfect-guards-help-and-their-limits"><a class="anchor" href="#4-layering-why-multiple-imperfect-guards-help-and-their-limits">#</a> 4. Layering: Why Multiple Imperfect Guards Help — and Their Limits</h2>
+<p>If layers fail <strong>independently</strong>, with miss rates $m_i$ and false-positive rates $f_i$:</p>
+<p>$$
+P(\text{miss all}) = \prod_i m_i, \qquad P(\text{at least one false block}) = 1 - \prod_i (1 - f_i)
+$$</p>
+<p>Three layers each missing 20% catch 99.2% jointly, but three layers each with a 2% false-positive rate block ~5.9% of benign traffic. <strong>Stacking guards trades recall for over-refusal</strong> — measure both.</p>
+<p>The independence assumption is <strong>optimistic against adversaries.</strong> An attacker who adapts to your guards produces inputs that evade all of them together (07.03 §2). Layering reduces <em>accidental</em> failures dramatically, and makes attacks harder. It does not make them impossible. Pair it with architectural containment.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def cascade_rates(miss_rates: list[float], fp_rates: list[float]) -&gt; dict:
+    p_miss, p_pass_benign = 1.0, 1.0
+    for m in miss_rates:
+        p_miss *= m
+    for f in fp_rates:
+        p_pass_benign *= (1 - f)
+    return {&quot;joint_recall&quot;: round(1 - p_miss, 4), &quot;joint_false_block&quot;: round(1 - p_pass_benign, 4)}</code></pre>
+      </div>
+    <hr>
+<h2 id="5-groundedness-guards"><a class="anchor" href="#5-groundedness-guards">#</a> 5. Groundedness Guards</h2>
+<p>For RAG and legal content, the highest-value output guard is <strong>claim verification</strong>:</p>
+<ol>
+<li>Split the answer into atomic claims (sentences, or LLM-extracted propositions, as in FActScore).</li>
+<li>For each claim, check whether it is <strong>entailed</strong> by the cited or retrieved sources: an NLI model, or a validated LLM judge prompted with the claim plus its evidence.</li>
+<li>Act on the unsupported claims: remove them, or flag them inline (&quot;⚠ not found in the provided sources&quot;), or regenerate with feedback, or abstain.</li>
+</ol>
+<p>$$
+\text{Groundedness} = \frac{#{\text{claims entailed by the context}}}{#{\text{claims}}}
+$$</p>
+<p>Track it per response and per release (06.03).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import re
+from typing import Callable
+
+
+def split_claims(answer: str) -&gt; list[str]:
+    return [s.strip() for s in re.split(r&quot;(?&lt;=[.!?])\s+&quot;, answer) if len(s.strip()) &gt; 3]
+
+
+def groundedness_guard(answer: str, sources: list[str], entails: Callable[[str, list[str]], float],
+                       threshold: float = 0.7, mode: str = &quot;flag&quot;) -&gt; dict:
+    &quot;&quot;&quot;entails(claim, sources) -&gt; probability the claim is supported (NLI model or validated judge).&quot;&quot;&quot;
+    claims = split_claims(answer)
+    scored = [(c, entails(c, sources)) for c in claims]
+    unsupported = [c for c, p in scored if p &lt; threshold]
+    if mode == &quot;remove&quot;:
+        text = &quot; &quot;.join(c for c, p in scored if p &gt;= threshold)
+    elif mode == &quot;flag&quot;:
+        text = &quot; &quot;.join(c if p &gt;= threshold else f&quot;{c} [⚠ not supported by the provided sources]&quot; for c, p in scored)
+    else:
+        text = answer
+    ratio = 1 - len(unsupported) / len(claims) if claims else 1.0
+    return {&quot;groundedness&quot;: round(ratio, 3), &quot;unsupported&quot;: unsupported, &quot;text&quot;: text,
+            &quot;action&quot;: &quot;regenerate&quot; if ratio &lt; 0.5 else &quot;ok&quot;}</code></pre>
+      </div>
+    <hr>
+<h2 id="6-streaming-output-guards"><a class="anchor" href="#6-streaming-output-guards">#</a> 6. Streaming Output Guards</h2>
+<p>Users expect streaming (01.02 §1). Waiting for the full response before checking it destroys the time to first token, and checking only per chunk misses violations that span chunk boundaries. Use a <strong>holdback buffer</strong>: emit text only once it is at least $H$ characters (or tokens) behind the model&#39;s frontier, and scan <em>emitted + buffer</em> on every chunk.</p>
+<p>$$
+\text{added latency per token} \approx \frac{H}{\text{tokens/s}}, \qquad H \ge \text{longest pattern you must catch}
+$$</p>
+<p>For semantic checks (a classifier on the full text), run them on sentence boundaries, asynchronously. If a late check fails, <strong>retract</strong>: stop the stream, replace the rendered text with a safe message in the UI, and log the event. Design the UI protocol so that retraction is possible (a message ID plus a &quot;replace&quot; event).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import re
+
+
+class StreamingGuard:
+    def __init__(self, patterns: list[re.Pattern], holdback: int = 32):
+        self.patterns, self.h = patterns, holdback
+        self.emitted, self.buffer, self.stopped = &quot;&quot;, &quot;&quot;, False
+
+    def _violates(self, text: str) -&gt; bool:
+        return any(p.search(text) for p in self.patterns)
+
+    def push(self, chunk: str) -&gt; str:
+        &quot;&quot;&quot;Returns text safe to emit now (&#39;&#39; if holding back or stopped).&quot;&quot;&quot;
+        if self.stopped:
+            return &quot;&quot;
+        self.buffer += chunk
+        if self._violates(self.emitted + self.buffer):
+            self.stopped = True
+            return &quot;&quot;
+        safe_len = max(0, len(self.buffer) - self.h)
+        out, self.buffer = self.buffer[:safe_len], self.buffer[safe_len:]
+        self.emitted += out
+        return out
+
+    def finish(self) -&gt; str:
+        if self.stopped or self._violates(self.emitted + self.buffer):
+            self.stopped = True
+            return &quot;&quot;
+        out, self.buffer = self.buffer, &quot;&quot;
+        self.emitted += out
+        return out</code></pre>
+      </div>
+    <hr>
+<h2 id="7-evaluating-and-operating-guardrails"><a class="anchor" href="#7-evaluating-and-operating-guardrails">#</a> 7. Evaluating and Operating Guardrails</h2>
+<h3 id="71-evaluation-sets"><a class="anchor" href="#71-evaluation-sets">#</a> 7.1 Evaluation sets</h3>
+<p>For each policy category:</p>
+<ul>
+<li><strong>Positives:</strong> real violations, red-team examples, and paraphrases.</li>
+<li><strong>Hard negatives:</strong> benign requests that look similar (e.g. &quot;what is the statute on stalking?&quot; is not a request to stalk; public officials&#39; names are not PII).</li>
+<li><strong>Benign traffic sample:</strong> to measure over-refusal at production rates.</li>
+</ul>
+<p>Report per-category precision, recall, <strong>over-refusal rate</strong>, and <strong>latency overhead</strong> (P50/P95), with CIs (06.01). Re-run the evaluation whenever a detector, a threshold, or the underlying model changes.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def guard_metrics(y_true: list[int], y_pred: list[int], benign_flags: list[int] | None = None) -&gt; dict:
+    tp = sum(t and p for t, p in zip(y_true, y_pred))
+    fp = sum((not t) and p for t, p in zip(y_true, y_pred))
+    fn = sum(t and (not p) for t, p in zip(y_true, y_pred))
+    res = {&quot;precision&quot;: tp / (tp + fp) if tp + fp else 1.0, &quot;recall&quot;: tp / (tp + fn) if tp + fn else 1.0}
+    if benign_flags is not None:
+        res[&quot;over_refusal&quot;] = sum(benign_flags) / len(benign_flags)
+    return res</code></pre>
+      </div>
+    <h3 id="72-operations"><a class="anchor" href="#72-operations">#</a> 7.2 Operations</h3>
+<ul>
+<li><strong>Audit log</strong> of every guard decision (rule ID, action, scores, redacted excerpt) → monitoring dashboards (06.03).</li>
+<li><strong>Human review queues</strong> for escalations and a sample of blocks, to find false positives (05.06).</li>
+<li><strong>Shadow mode</strong> for new rules: log the decisions without enforcing, measure, then enforce.</li>
+<li><strong>Kill switches and per-tenant configuration</strong>: different deployments (public site vs internal staff) get different policies.</li>
+<li><strong>User experience:</strong> refusals explain <em>what</em> the system can do instead, without revealing detector internals that help attackers tune their evasion.</li>
+</ul>
+<hr>
+<h2 id="8-production-challenges-how-to-solve-them"><a class="anchor" href="#8-production-challenges-how-to-solve-them">#</a> 8. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Over-refusal</strong></td>
+<td>Legitimate legal-research questions blocked</td>
+<td>Hard-negative eval sets; cost-based thresholds; category-specific policies; shadow-mode tuning</td>
+</tr>
+<tr>
+<td><strong>Latency overhead</strong></td>
+<td>TTFT doubles</td>
+<td>Rules first; parallel detectors; small classifiers; streaming holdback instead of full buffering; async semantic checks with retraction</td>
+</tr>
+<tr>
+<td><strong>Vendor taxonomy mismatch</strong></td>
+<td>The classifier blocks the wrong things</td>
+<td>Map categories to your policy; recalibrate on your data; fine-tune a small model</td>
+</tr>
+<tr>
+<td><strong>Detector outages</strong></td>
+<td>Silent fail-open</td>
+<td>Explicit per-rule fail modes; alert on detector errors</td>
+</tr>
+<tr>
+<td><strong>Chunk-boundary leaks</strong></td>
+<td>PII split across chunks slips through</td>
+<td>Holdback buffer scanning emitted + buffer</td>
+</tr>
+<tr>
+<td><strong>Hallucinated legal claims</strong></td>
+<td>Confident but unsupported statements</td>
+<td>Claim-level groundedness guard; citation validation; abstention (04.03 §5)</td>
+</tr>
+<tr>
+<td><strong>Adversarial evasion</strong></td>
+<td>Attackers rephrase around the classifiers</td>
+<td>Don&#39;t rely on classifiers as a boundary; architectural containment (07.03); approvals for consequential actions</td>
+</tr>
+<tr>
+<td><strong>Policy drift</strong></td>
+<td>Rules and compliance expectations diverge</td>
+<td>Policy as code with owners, reviews, tests, and changelogs</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="9-hands-on-projects"><a class="anchor" href="#9-hands-on-projects">#</a> 9. Hands-On Projects</h2>
+<h3 id="project-1-guardrail-service-for-a-legislative-assistant"><a class="anchor" href="#project-1-guardrail-service-for-a-legislative-assistant">#</a> Project 1 — Guardrail Service for a Legislative Assistant</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a compliance officer</em>, I want the assistant&#39;s policies (PII, confidential drafts, legal-advice boundary, neutrality, grounding) enforced consistently and auditable, without relying on prompt wording alone.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A policy file (YAML) with ≥ 8 rules across the input, context, action, and output stages (IDs, owners, actions, severities, fail modes), loaded by a <code>PolicyEngine</code> service (FastAPI or Spring Boot) and exposed to the assistant as middleware.</li>
+<li>Detectors: regex/PII (Presidio), a safety or injection classifier, an LLM rubric guard for the legal-advice boundary (validated on ≥ 150 labelled items), and the groundedness guard (§5).</li>
+<li>Streaming: <code>StreamingGuard</code> with holdback, plus asynchronous sentence-level checks with UI retraction events. Measures the added TTFT and inter-token latency.</li>
+<li>An audit log of every decision, a dashboard of block/redact/escalate rates per rule, and a shadow mode for new rules.</li>
+<li>Tests: unit tests per rule; an end-to-end suite of violations and hard negatives; a detector-outage test that verifies the fail-closed/fail-open behaviour.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Draft the policy with stakeholders; encode the rules; write the tests first.</li>
+<li>Implement the engine and the detectors; integrate them as pre- and post-processing around the model and tool calls (05.01 runtime hooks).</li>
+<li>Implement the streaming guard and the retraction protocol in the React client.</li>
+<li>Add audit logging (OpenTelemetry events, 06.04) and the dashboards.</li>
+<li>Run in shadow mode on replayed traffic, tune, then enforce.</li>
+</ol>
+<hr>
+<h3 id="project-2-guardrail-evaluation-and-threshold-tuning"><a class="anchor" href="#project-2-guardrail-evaluation-and-threshold-tuning">#</a> Project 2 — Guardrail Evaluation and Threshold Tuning</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the safety lead</em>, I want evidence that each guardrail catches what it should and doesn&#39;t block legitimate use, with thresholds set by explicit cost trade-offs.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>A per-category evaluation set: ≥ 100 positives, ≥ 100 hard negatives, and a 2,000-item benign traffic sample (redacted), with labelling guidelines and κ ≥ 0.7 (06.02).</li>
+<li>Compares ≥ 3 detector options per category (e.g. a vendor moderation API, an open guard model, an LLM rubric judge, a small fine-tuned classifier): precision, recall, over-refusal, P95 latency, and cost per 1k requests.</li>
+<li>Calibrates the scores; sets per-category thresholds with the §3.1 cost rule; reports the operating points.</li>
+<li>Measures the cascade behaviour empirically, compares it against <code>cascade_rates</code> (the independence assumption), and explains the gap.</li>
+<li>Recommends a configuration, documented in the policy file.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Build the datasets (red-team prompts, paraphrases, hard negatives, benign samples).</li>
+<li>Run all the detectors; store the scores.</li>
+<li>Calibrate (Platt/isotonic); compute the thresholds; compute the metrics with CIs.</li>
+<li>Evaluate the stacked configurations; analyse the correlated failures.</li>
+<li>Write the recommendation.</li>
+</ol>
+<hr>
+<h3 id="project-3-claim-level-groundedness-guard-for-legal-answers"><a class="anchor" href="#project-3-claim-level-groundedness-guard-for-legal-answers">#</a> Project 3 — Claim-Level Groundedness Guard for Legal Answers</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an attorney</em>, I want every legal statement in the assistant&#39;s answers either supported by a cited source or clearly flagged, so that I never rely on an unsupported claim.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Claim extraction (sentence split, plus LLM proposition extraction for compound sentences) and entailment scoring (an NLI cross-encoder and an LLM judge), both validated on ≥ 300 labelled claim–evidence pairs.</li>
+<li>Modes: flag, remove, and regenerate with feedback (listing the unsupported claims). Measures their effect on answer correctness, groundedness, and user-perceived helpfulness (a small user study or expert ratings).</li>
+<li>On ≥ 200 questions: reduces the unsupported-claim rate by ≥ 50% relative to no guard, with ≤ 5 points loss in answer completeness.</li>
+<li>The added latency is measured; the guard runs asynchronously with streaming, using retraction or inline flags.</li>
+<li>Groundedness is exported as an online metric with EWMA alerting (06.03).</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Label the claims from sampled answers against their retrieved context.</li>
+<li>Implement the extraction and the two entailment backends; validate them (κ, sensitivity/specificity).</li>
+<li>Implement <code>groundedness_guard</code> with the three modes; run the evaluation.</li>
+<li>Integrate it into the streaming pipeline and the UI.</li>
+<li>Deploy the monitoring and alerting.</li>
+</ol>
+<hr>
+<h2 id="10-foundational-papers-reading-exact-titles"><a class="anchor" href="#10-foundational-papers-reading-exact-titles">#</a> 10. Foundational Papers &amp; Reading (exact titles)</h2>
+<ul>
+<li>Inan et al., 2023 — <em>Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations</em></li>
+<li>Rebedea et al., 2023 — <em>NeMo Guardrails: A Toolkit for Controllable and Safe LLM Applications with Programmable Rails</em></li>
+<li>Markov et al., 2023 — <em>A Holistic Approach to Undesired Content Detection in the Real World</em></li>
+<li>Bai et al., 2022 — <em>Constitutional AI: Harmlessness from AI Feedback</em></li>
+<li>Sharma et al., 2025 — <em>Constitutional Classifiers: Defending against Universal Jailbreaks across Thousands of Hours of Red Teaming</em></li>
+<li>Röttger et al., 2023 — <em>XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models</em></li>
+<li>Min et al., 2023 — <em>FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation</em></li>
+<li>Honovich et al., 2022 — <em>TRUE: Re-evaluating Factual Consistency Evaluation</em></li>
+<li>OWASP — <em>Top 10 for LLM Applications 2025</em>; NIST — <em>AI 600-1: Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile</em> (2024)</li>
+</ul>
+<h2 id="11-essential-tooling"><a class="anchor" href="#11-essential-tooling">#</a> 11. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>NeMo Guardrails</strong>, <strong>Guardrails AI</strong></td>
+<td>Programmable rails and validators</td>
+</tr>
+<tr>
+<td><strong>Llama Guard / open guard models</strong>, provider moderation and content-safety APIs (e.g. Azure AI Content Safety, Bedrock Guardrails)</td>
+<td>Safety classification</td>
+</tr>
+<tr>
+<td><strong>Microsoft Presidio</strong></td>
+<td>PII detection and anonymisation</td>
+</tr>
+<tr>
+<td><strong>NLI cross-encoders</strong> (sentence-transformers), validated LLM judges</td>
+<td>Groundedness checks</td>
+</tr>
+<tr>
+<td><strong>OpenTelemetry + Grafana</strong></td>
+<td>Guard decision auditing and dashboards</td>
+</tr>
+<tr>
+<td><strong>promptfoo / Inspect AI / garak</strong></td>
+<td>Guardrail regression and red-team testing</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <span></span>
+      <a class="next" href="./07-02-ai-security.html"><span>Next →</span><b>02 ai security</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

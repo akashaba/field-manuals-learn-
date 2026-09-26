@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cosine LR with Linear Warmup — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/44-cosine-lr-warmup/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#production-patterns">Production Patterns</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Cosine LR with Linear Warmup</h1>
+    <p class="lesson-sub">The learning-rate schedule is the second most important decision after the loss function. AdamW with a cosine decay and a linear warmup is the modern default for language-model training because it lets the model see a small effective step size during the brittle first thousand updates, ramps up to a configured peak, and decays smoothly back toward zero. This lesson builds that schedule, plots the curve over training steps, logs gradient norms next to the schedule, and proves the schedule honors warmup, peak, and decay boundaries.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 44">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="102.6" cy="100.0" r="8.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.8,100.0 L97.1,87.6 L105.4,100.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.1,94.7 L91.7,83.2 L99.4,94.7 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.3,89.4 L86.3,78.9 L93.3,89.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.5,84.1 L80.9,74.5 L87.3,84.1 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">44</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Cosine LR with</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Linear Warmup</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement an AdamW optimizer wired to a cosine learning-rate schedule with linear warmup.</li>
+<li>Compute the schedule&#39;s exact value at any step without floating-point drift across runs.</li>
+<li>Log gradient L2 norm side by side with the learning rate so training health is observable.</li>
+<li>Render the schedule to a text plot the eye can read and a CSV any tool can consume.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The first thousand training updates are the loudest. The model&#39;s weights are still close to initialization. The optimizer&#39;s running second-moment estimate has not stabilised. The gradient norm is large and noisy. If the learning rate is at its peak during these updates the model either diverges outright or settles into a loss plateau it never escapes. The two well-known fixes are gradient clipping, which is the subject of Phase 19 lesson 45, and a learning-rate schedule that starts small and ramps up.</p>
+<p>The cosine-with-warmup schedule has three regions. From step zero to step <code>warmup_steps</code> the learning rate scales linearly from zero to the configured peak <code>lr_max</code>. From step <code>warmup_steps</code> to step <code>total_steps</code> the learning rate follows the upper half of a cosine curve, decaying from <code>lr_max</code> to <code>lr_min</code>. After <code>total_steps</code> the learning rate is pinned at <code>lr_min</code> so a misconfigured trainer that overshoots does not silently exit the schedule.</p>
+<p>The build problem is that schedules are easy to get wrong off by one. The off-by-one shows up six hours into a training run as a learning rate that is 1 percent too high or too low at the moment the model starts overfitting, which is invisible unless the schedule is exhaustively tested at boundaries.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+  Step[Training step] --&gt; Branch{step state}
+  Branch -- step &lt;= warmup --&gt; Linear[Linear ramp from 0 to lr_max]
+  Branch -- warmup &lt; step &lt;= total --&gt; Cosine[Cosine decay from lr_max to lr_min]
+  Branch -- step &gt; total --&gt; Floor[Pin at lr_min]
+  Linear --&gt; Apply[AdamW.step]
+  Cosine --&gt; Apply
+  Floor --&gt; Apply
+  Apply --&gt; GradNorm[Compute gradient L2 norm]
+  GradNorm --&gt; Log[Step log row]
+  Log --&gt; Plot[Text plot + CSV]</pre></div><h3 id="warmup-formula"><a class="anchor" href="#warmup-formula">#</a> Warmup formula</h3>
+<p>For <code>step</code> in <code>[0, warmup_steps]</code> with <code>warmup_steps &gt; 0</code>, the learning rate is <code>lr_max * step / warmup_steps</code>. The degenerate <code>warmup_steps = 0</code> case is treated as &quot;no warmup&quot;: the schedule starts directly at <code>lr_max</code> at step zero and immediately enters cosine decay. Some test harnesses pass <code>warmup_steps = 0</code> to check the schedule still produces a usable curve.</p>
+<h3 id="cosine-formula"><a class="anchor" href="#cosine-formula">#</a> Cosine formula</h3>
+<p>For <code>step</code> in <code>(warmup_steps, total_steps]</code> the learning rate is <code>lr_min + 0.5 * (lr_max - lr_min) * (1 + cos(pi * progress))</code> where <code>progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)</code>. At <code>step = warmup_steps</code> the cosine evaluates to <code>cos(0) = 1</code>, which gives <code>lr_max</code>, matching the warmup endpoint exactly. At <code>step = total_steps</code> the cosine evaluates to <code>cos(pi) = -1</code>, which gives <code>lr_min</code>, matching the decay endpoint exactly.</p>
+<p>The continuity at both endpoints is not an accident. It is the reason the schedule is implemented as a single function over <code>step</code>, not as three different functions glued together. A glued schedule loses one boundary the first time <code>lr_max</code> is changed.</p>
+<h3 id="floor-after-total-steps"><a class="anchor" href="#floor-after-total-steps">#</a> Floor after total steps</h3>
+<p>For <code>step &gt; total_steps</code> the learning rate stays at <code>lr_min</code>. The contract is explicit: the schedule does not error out and does not extrapolate; it pins at the floor and lets the trainer log a warning. Trainers that need to extend training change the schedule&#39;s <code>total_steps</code>, not the loop.</p>
+<h3 id="gradient-norm-logging-alongside-the-rate"><a class="anchor" href="#gradient-norm-logging-alongside-the-rate">#</a> Gradient norm logging alongside the rate</h3>
+<p>The schedule is half of training health. The gradient norm is the other half. The training loop logs both per step. A divergent training run shows the gradient norm spike before the loss does; a well-tuned warmup keeps the norm rising linearly with the rate; a too-aggressive peak shows up as a norm that stays high after warmup. The dataset on disk is <code>step, lr, grad_l2_norm, loss</code>. The CSV is the only durable record.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-cosine-warmup</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>CosineWithWarmup</code> - a stateless function <code>lr(step) -&gt; float</code> over the configured schedule.</li>
+<li><code>TrainState</code> - wraps a model, an <code>AdamW</code> optimizer, and the schedule into a single step function.</li>
+<li><code>TrainState.step</code> - runs one forward pass, one backward pass, logs gradient L2 norm, and applies <code>lr(step)</code> to the optimizer.</li>
+<li><code>plot_schedule_ascii</code> - renders the schedule as a text plot the eye can read.</li>
+<li><code>write_schedule_csv</code> - emits one row per step with the learning rate.</li>
+</ul>
+<p>A demo at the bottom of the file builds a tiny <code>nn.Linear</code> model, trains for 20 steps over a fixed input batch, and prints the per-step learning rate, gradient norm, and loss. The schedule is also rendered as a text plot for the visual sanity check.</p>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The script exits zero and prints a per-step training log plus the schedule plot.</p>
+<h2 id="production-patterns"><a class="anchor" href="#production-patterns">#</a> Production Patterns</h2>
+<p>Four patterns elevate the schedule to a production artifact.</p>
+<p><strong>Schedule lives in a config, not in code.</strong> The trainer reads <code>warmup_steps</code>, <code>total_steps</code>, <code>lr_max</code>, <code>lr_min</code> from a YAML or JSON config that is committed to git. The schedule is reproducible because the config is content-addressed; the schedule is auditable because the config is part of the PR diff.</p>
+<p><strong>Step counter is monotonic and decoupled from epochs.</strong> Some frameworks confuse step and epoch when the dataset is sharded or the dataloader restarts. The schedule reads <code>global_step</code> from the trainer&#39;s checkpoint, not from a local counter. A resumed run continues at the right schedule position because the step counter is the durable axis.</p>
+<p><strong>Schedule plot in the run directory.</strong> Every training run writes <code>outputs/lr_schedule.png</code> (or in this lesson a text plot) into its run directory. A reviewer who skims the directory can sanity-check the schedule without re-running anything. This catches the misconfigured-schedule class of bugs at PR time.</p>
+<p><strong>Log row schema is fixed.</strong> <code>step, lr, grad_l2_norm, loss</code> in that order. A downstream notebook or dashboard reads the schema; renaming a column without bumping a version invalidates every existing dashboard.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Production patterns:</p>
+<ul>
+<li><strong>Sweep peak before sweeping anything else.</strong> <code>lr_max</code> is the most sensitive knob. Sweep it on a small model first; the optimal <code>lr_max</code> scales weakly with model size, so the small-model sweep is a strong prior.</li>
+<li><strong>Warmup is a fraction of total steps, not an absolute count.</strong> A 200-million-step run with 2,000 warmup steps starts at peak almost immediately; a 20,000-step run with the same number warms up for 10 percent. Configure warmup as a fraction (typical: 1-3 percent) so the schedule scales with training duration.</li>
+<li><strong><code>lr_min</code> is non-zero on purpose.</strong> A floor that is 10 percent of <code>lr_max</code> keeps the optimizer learning during the long tail. A <code>lr_min = 0</code> schedule produces a training curve that looks great on a plot and a model that has not actually finished training.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-cosine-warmup.md</code> would, on a real project, describe which config carries the schedule, which trainer step the global counter is read from, and what <code>lr_max</code> sweep produced the deployed value. This lesson ships the engine.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add an inverse-square-root variant of the schedule and compare it on a 200-step toy training run. Which curve produces the lower final loss?</li>
+<li>Add a <code>--restart</code> flag that adds a second warmup at <code>total_steps / 2</code>. Defend whether warm restarts improve or hurt on the toy run.</li>
+<li>Add a unit test that the schedule is continuous: for every step in <code>[0, total_steps]</code> the difference <code>|lr(step+1) - lr(step)|</code> is bounded by <code>lr_max / warmup_steps</code>.</li>
+<li>Wire the schedule into a <code>torch.optim.lr_scheduler.LambdaLR</code> so it composes with framework code. The lesson uses a plain step function; what does the wrapper change?</li>
+<li>Add a <code>--plot-png</code> flag that writes a real plot via <code>matplotlib</code>. Defend whether the lesson&#39;s text plot or the PNG is the better default for CI runs.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Warmup</td>
+<td>&quot;Slow start&quot;</td>
+<td>Linear ramp from zero to <code>lr_max</code> over the first <code>warmup_steps</code> updates</td>
+</tr>
+<tr>
+<td>Cosine decay</td>
+<td>&quot;Smooth drop&quot;</td>
+<td>Upper-half cosine curve from <code>lr_max</code> to <code>lr_min</code> over the remaining steps</td>
+</tr>
+<tr>
+<td>Floor</td>
+<td>&quot;After training&quot;</td>
+<td>The fixed <code>lr_min</code> value the schedule pins at past <code>total_steps</code></td>
+</tr>
+<tr>
+<td>Gradient norm</td>
+<td>&quot;L2 of grads&quot;</td>
+<td>The Euclidean norm of the concatenated gradient vector, logged each step</td>
+</tr>
+<tr>
+<td>Global step</td>
+<td>&quot;Schedule axis&quot;</td>
+<td>A monotonic step counter that survives restarts and drives the schedule</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1608.03983">Loshchilov and Hutter, SGDR: Stochastic Gradient Descent with Warm Restarts (arXiv 1608.03983)</a> - the cosine schedule&#39;s reference paper</li>
+<li><a href="https://arxiv.org/abs/1711.05101">Loshchilov and Hutter, Decoupled Weight Decay Regularization (arXiv 1711.05101)</a> - AdamW&#39;s reference paper</li>
+<li><a href="https://docs.pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate">PyTorch torch.optim.lr_scheduler</a> - how step functions compose with framework schedulers</li>
+<li>Phase 19 · 42 - the downloader whose corpus this schedule consumes</li>
+<li>Phase 19 · 43 - the dataloader the schedule co-evolves with</li>
+<li>Phase 19 · 45 - gradient clipping and AMP, the next layer in the loop</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./43-hdf5-tokenized-corpus.html"><span>← Previous</span><b>hdf5 tokenized corpus</b></a>
+      <a class="next" href="./45-gradient-clipping-amp.html"><span>Next →</span><b>gradient clipping amp</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conditional GANs &amp; Pix2Pix — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/04-conditional-gans-pix2pix/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#cyclegan-when-you-dont-have-pairs">CycleGAN — when you don&#39;t have pairs</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-pix2pix-as-a-latency-bound-baseline">Production note: Pix2Pix as a latency-bound baseline</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Conditional GANs &amp; Pix2Pix</h1>
+    <p class="lesson-sub">The first big unlock of 2014-2017 was controlling what a GAN makes. Attach a label, or an image, or a sentence. Pix2Pix did the image version and it still beats every generic text-to-image model on narrow image-to-image tasks.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 03 (GANs), Phase 4 · 06 (U-Net), Phase 3 · 07 (CNNs)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 04">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="105.3" cy="102.4" r="9.3" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="99.9" cy="97.5" r="8.6" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.5,97.4 L94.5,85.4 L102.4,97.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M81.7,92.1 L89.0,81.0 L96.4,92.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="13.0" y="117.4" width="25.8" height="25.8" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(129 25.9 130.3)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">04</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Conditional GANs &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Pix2Pix</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>An unconditional GAN samples arbitrary faces. Useful for a demo, useless in production. You want: <em>map a sketch to a photo</em>, <em>map a map to an aerial photo</em>, <em>map a daytime scene to nighttime</em>, <em>colorize a grayscale image</em>. In all of these, you are given an input image <code>x</code> and must output <code>y</code> with some semantic correspondence. There are many plausible <code>y</code>s per <code>x</code>. Mean-squared error flattens them into mush. An adversarial loss doesn&#39;t, because &quot;looks real&quot; is sharp.</p>
+<p>Conditional GAN (Mirza &amp; Osindero, 2014) adds a condition <code>c</code> as an input to both <code>G</code> and <code>D</code>. Pix2Pix (Isola et al., 2017) specialized this: condition is a full input image, generator is a U-Net, discriminator is a <em>patch-based</em> classifier (PatchGAN), and loss is adversarial + L1. That recipe outperforms from-scratch text-to-image models on narrow image-to-image domains even in 2026 because it is trained on <em>paired data</em> — you have exactly the signal you need.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/04-conditional-gans-pix2pix/assets/pix2pix.svg" alt="Pix2Pix: U-Net generator, PatchGAN discriminator" loading="lazy" /></figure></p>
+<p><strong>Conditional G.</strong> <code>G(x, z) → y</code>. In Pix2Pix, <code>z</code> is dropout inside G (no input noise — Isola found explicit noise got ignored).</p>
+<p><strong>Conditional D.</strong> <code>D(x, y) → [0, 1]</code>. Input is the <em>pair</em> (condition, output). This is the key difference: D must judge whether <code>y</code> is consistent with <code>x</code>, not just whether <code>y</code> looks real.</p>
+<p><strong>U-Net generator.</strong> Encoder-decoder with skip connections across the bottleneck. Critical for tasks where input and output share low-level structure (edges, silhouette). Without the skips, high-frequency detail vanishes.</p>
+<p><strong>PatchGAN discriminator.</strong> Instead of outputting a single real/fake score, D outputs an <code>N×N</code> grid where each cell judges a receptive field of ~70×70 pixels. Averaged. This is a Markov random field assumption: realism is local. Much faster to train, fewer parameters, sharper output.</p>
+<p><strong>Loss.</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">loss_G = -log D(x, G(x)) + λ · ||y - G(x)||_1
+loss_D = -log D(x, y) - log (1 - D(x, G(x)))</code></pre>
+      </div>
+    <p>The L1 term stabilizes training and pushes G toward the known target. L1 gives sharper edges than L2 (medians, not means). <code>λ = 100</code> was the Pix2Pix default.</p>
+<h2 id="cyclegan-when-you-dont-have-pairs"><a class="anchor" href="#cyclegan-when-you-dont-have-pairs">#</a> CycleGAN — when you don&#39;t have pairs</h2>
+<p>Pix2Pix needs paired <code>(x, y)</code> data. CycleGAN (Zhu et al., 2017) drops this requirement at the cost of an extra loss: the <em>cycle consistency</em> loss. Two generators <code>G: X → Y</code> and <code>F: Y → X</code>. Train them so <code>F(G(x)) ≈ x</code> and <code>G(F(y)) ≈ y</code>. This lets you translate horses to zebras, summer to winter, without paired examples.</p>
+<p>In 2026, unpaired image-to-image is mostly done via diffusion (ControlNet, IP-Adapter) rather than CycleGAN, but the cycle-consistency idea survives in almost every unpaired domain adaptation paper.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">gx-patchgan</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements a tiny conditional GAN on 1-D data. The condition <code>c</code> is a class label (0 or 1). The task: produce a sample from the conditional distribution for the given class.</p>
+<h3 id="step-1-append-condition-to-both-g-and-d-inputs"><a class="anchor" href="#step-1-append-condition-to-both-g-and-d-inputs">#</a> Step 1: append condition to both G and D inputs</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def G(z, c, params):
+    return mlp(concat([z, one_hot(c)]), params)
+
+def D(x, c, params):
+    return mlp(concat([x, one_hot(c)]), params)</code></pre>
+      </div>
+    <p>One-hot encoding is the simplest way. Larger models use learned embeddings, FiLM modulation, or cross-attention.</p>
+<h3 id="step-2-train-conditional"><a class="anchor" href="#step-2-train-conditional">#</a> Step 2: train conditional</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for step in range(steps):
+    x, c = sample_real_conditional()
+    noise = sample_noise()
+    update_D(x_real=x, x_fake=G(noise, c), c=c)
+    update_G(noise, c)</code></pre>
+      </div>
+    <p>The generator must match the real distribution <em>for the given condition</em>, not the marginal.</p>
+<h3 id="step-3-verify-per-class-output"><a class="anchor" href="#step-3-verify-per-class-output">#</a> Step 3: verify per-class output</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for c in [0, 1]:
+    samples = [G(noise, c) for noise in batch]
+    mean_c = mean(samples)
+    assert_near(mean_c, real_mean_for_class_c)</code></pre>
+      </div>
+    <h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Condition ignored.</strong> G learns to marginalize, D never penalizes because condition signal is weak. Fix: condition D more aggressively (early layer, not just late), use projection discriminator (Miyato &amp; Koyama 2018).</li>
+<li><strong>L1 weight too low.</strong> G drifts to arbitrary real-looking outputs, not faithful ones. Start λ≈100 for Pix2Pix-style tasks.</li>
+<li><strong>L1 weight too high.</strong> G produces blurry outputs because L1 is still an L_p norm. Anneal down once training stabilizes.</li>
+<li><strong>Ground-truth leakage in D.</strong> Concatenate <code>(x, y)</code> as D input, not just <code>y</code>. Without this D cannot check consistency.</li>
+<li><strong>Mode collapse per class.</strong> Each class can collapse independently. Run class-conditional diversity checks.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>2026 state of image-to-image tasks:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Best approach</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sketch → photo, same domain, paired data</td>
+<td>Pix2Pix / Pix2PixHD (still fast, still sharp)</td>
+</tr>
+<tr>
+<td>Sketch → photo, unpaired</td>
+<td>ControlNet with a Scribble conditioning model</td>
+</tr>
+<tr>
+<td>Semantic seg → photo</td>
+<td>SPADE / GauGAN2 or SD + ControlNet-Seg</td>
+</tr>
+<tr>
+<td>Style transfer</td>
+<td>Diffusion with IP-Adapter or LoRA; GAN methods are legacy</td>
+</tr>
+<tr>
+<td>Depth → photo</td>
+<td>ControlNet-Depth over Stable Diffusion</td>
+</tr>
+<tr>
+<td>Super-resolution</td>
+<td>Real-ESRGAN (GAN), ESRGAN-Plus, or SD-Upscale (diffusion)</td>
+</tr>
+<tr>
+<td>Colorization</td>
+<td>ColTran, diffusion-based colorizers, or Pix2Pix-color</td>
+</tr>
+<tr>
+<td>Daytime → nighttime, seasons, weather</td>
+<td>CycleGAN or ControlNet-based</td>
+</tr>
+</tbody></table>
+<p>Pix2Pix remains the right tool when (a) you have thousands of paired examples, (b) the task is narrow and repeatable, and (c) you need fast inference. On generic open-domain tasks, diffusion wins.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-img2img-chooser.md</code>. Skill takes a task description, data availability (paired vs unpaired, N samples), and latency/quality budget, then outputs: approach (Pix2Pix, CycleGAN, ControlNet variant, SDXL + IP-Adapter), training data requirements, inference cost, and eval protocol (LPIPS, FID, task-specific).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Modify <code>code/main.py</code> to add a third class. Confirm G still maps each class&#39;s noise to the correct mode.</li>
+<li><strong>Medium.</strong> Replace L1 with a perceptual-style loss in the 1-D setting (e.g. a small frozen D acting as feature extractor). Does it change sharpness of the conditional distribution?</li>
+<li><strong>Hard.</strong> Sketch a CycleGAN in the 1-D setting: two distributions, two generators, cycle loss. Show that it learns to map between them with no paired data.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Conditional GAN</td>
+<td>&quot;GAN with labels&quot;</td>
+<td>G(z, c), D(x, c). Both networks see the condition.</td>
+</tr>
+<tr>
+<td>Pix2Pix</td>
+<td>&quot;Image-to-image GAN&quot;</td>
+<td>Paired cGAN with U-Net G and PatchGAN D + L1 loss.</td>
+</tr>
+<tr>
+<td>U-Net</td>
+<td>&quot;Encoder-decoder with skips&quot;</td>
+<td>Symmetric conv network; skips preserve high-freq.</td>
+</tr>
+<tr>
+<td>PatchGAN</td>
+<td>&quot;Local-realism classifier&quot;</td>
+<td>D outputs per-patch score instead of global score.</td>
+</tr>
+<tr>
+<td>CycleGAN</td>
+<td>&quot;Unpaired image translation&quot;</td>
+<td>Two G&#39;s + cycle-consistency loss; no paired data.</td>
+</tr>
+<tr>
+<td>SPADE</td>
+<td>&quot;GauGAN&quot;</td>
+<td>Normalizes intermediate activations with the semantic map; segmentation-to-image.</td>
+</tr>
+<tr>
+<td>FiLM</td>
+<td>&quot;Feature-wise linear modulation&quot;</td>
+<td>Per-feature affine transform from the condition; cheap conditioning.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-pix2pix-as-a-latency-bound-baseline"><a class="anchor" href="#production-note-pix2pix-as-a-latency-bound-baseline">#</a> Production note: Pix2Pix as a latency-bound baseline</h2>
+<p>When you have paired data and a narrow task (sketch → render, semantic map → photo, day → night), Pix2Pix&#39;s one-shot inference beats diffusion by an order of magnitude on latency. The production comparison is usually:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Steps</th>
+<th>Typical latency at 512² on a single L4</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pix2Pix (U-Net forward)</td>
+<td>1</td>
+<td>~30 ms</td>
+</tr>
+<tr>
+<td>SD-Inpaint or SD-Img2Img</td>
+<td>20</td>
+<td>~1.2 s</td>
+</tr>
+<tr>
+<td>SDXL-Turbo Img2Img</td>
+<td>1-4</td>
+<td>~0.15-0.35 s</td>
+</tr>
+<tr>
+<td>ControlNet + SDXL base</td>
+<td>20-30</td>
+<td>~3-5 s</td>
+</tr>
+</tbody></table>
+<p>Pix2Pix wins on throughput in static batches (every request is the same FLOPs). Diffusion wins on quality and generalization. The modern play is often to ship a Pix2Pix-style distilled model for the narrow task and a diffusion fallback for tail inputs.</p>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1411.1784">Mirza &amp; Osindero (2014). Conditional Generative Adversarial Nets</a> — the cGAN paper.</li>
+<li><a href="https://arxiv.org/abs/1611.07004">Isola et al. (2017). Image-to-Image Translation with Conditional Adversarial Networks</a> — Pix2Pix.</li>
+<li><a href="https://arxiv.org/abs/1703.10593">Zhu et al. (2017). Unpaired Image-to-Image Translation using Cycle-Consistent Adversarial Networks</a> — CycleGAN.</li>
+<li><a href="https://arxiv.org/abs/1711.11585">Wang et al. (2018). High-Resolution Image Synthesis with Conditional GANs</a> — Pix2PixHD.</li>
+<li><a href="https://arxiv.org/abs/1903.07291">Park et al. (2019). Semantic Image Synthesis with Spatially-Adaptive Normalization</a> — SPADE / GauGAN.</li>
+<li><a href="https://arxiv.org/abs/1802.05637">Miyato &amp; Koyama (2018). cGANs with Projection Discriminator</a> — the projection D.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./03-gans-generator-discriminator.html"><span>← Previous</span><b>gans generator discriminator</b></a>
+      <a class="next" href="./05-stylegan.html"><span>Next →</span><b>stylegan</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

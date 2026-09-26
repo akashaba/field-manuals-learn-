@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>03 — DPO &amp; Preference Tuning — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/Fine-tuning/learning/03-dpo-preference-tuning.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Fine-tuning</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Fine-tuning</div>
+    <h1 class="lesson-title">03 — DPO &amp; Preference Tuning</h1>
+    <p class="lesson-sub">**Module goal:** Understand why SFT alone isn&#39;t enough for aligned, high-quality LLM behavior — and how modern preference-based methods (DPO, ORPO, KTO) close that gap without the operational nightmare of full RLHF. Be able to explain when you&#39;d use DPO in a real project and what its dataset looks like.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Fine-tuning le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="15.5" cy="120.8" r="11.7" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.1" cy="115.9" r="11.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="114.7" cy="111.0" r="10.4" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.3" cy="106.0" r="9.7" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.8" cy="101.1" r="9.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="98.4" cy="96.2" r="8.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="88" lengthAdjust="spacingAndGlyphs">FINE-TUNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">03 — DPO &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Preference Tuning</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p><strong>SFT teaches the model to imitate examples.</strong> But &quot;imitation&quot; has a fundamental limit: the model learns to produce responses <em>like</em> the ones it saw, without any signal about what makes a response <em>better than another</em>.</p>
+<p>Concrete symptom: after SFT on high-quality legal explanations, your model produces reasonable-looking legal explanations. But when a user asks something adversarial or edge-case, the model may still produce something <em>plausible-looking-but-wrong</em> — because it never learned to distinguish &quot;correct&quot; from &quot;confidently incorrect.&quot;</p>
+<p><strong>Preference tuning</strong> solves this by training on <strong>pairs of responses ranked by preference</strong>. Given the same prompt:</p>
+<ul>
+<li>A &quot;chosen&quot; response (better)</li>
+<li>A &quot;rejected&quot; response (worse)</li>
+</ul>
+<p>The model learns to prefer chosen-shaped outputs and avoid rejected-shaped outputs.</p>
+<p>Three modern methods:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Data shape</th>
+<th>Key idea</th>
+<th>Complexity</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RLHF (PPO)</strong></td>
+<td>Preference pairs → train reward model → PPO against it</td>
+<td>Full reinforcement learning loop</td>
+<td>High — 3 models in memory, brittle, expensive</td>
+</tr>
+<tr>
+<td><strong>DPO</strong></td>
+<td>Preference pairs directly</td>
+<td>Reformulate the RLHF objective as a supervised classification loss</td>
+<td>Low — one training script, similar cost to SFT</td>
+</tr>
+<tr>
+<td><strong>ORPO</strong></td>
+<td>Preference pairs, no reference model</td>
+<td>Combine SFT and DPO into a single loss</td>
+<td>Very low — one epoch on the preference data</td>
+</tr>
+<tr>
+<td><strong>KTO</strong></td>
+<td>Just &quot;good&quot; / &quot;bad&quot; labels (no pairs)</td>
+<td>Kahneman-Tversky prospect theory loss</td>
+<td>Low — often easier to collect labels</td>
+</tr>
+</tbody></table>
+<p><strong>Direct Preference Optimization (DPO)</strong> — the current default. It bypasses training a reward model entirely: through a clever derivation, the preference-optimization objective can be expressed as a supervised classification loss over the (prompt, chosen, rejected) triples. Same training loop as SFT, one extra term.</p>
+<p>The DPO objective:</p>
+<p>$$
+\mathcal{L}<em>{\text{DPO}}(\theta) = -\mathbb{E}</em>{(x, y_w, y_l)} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
+$$</p>
+<p>where $\pi_\theta$ is the model being trained, $\pi_{\text{ref}}$ is the frozen reference (usually the SFT checkpoint), $y_w$ is the &quot;chosen&quot; (winning) response, $y_l$ is the &quot;loser,&quot; and $\beta$ controls how strongly to enforce the preference.</p>
+<p>Intuitively: <strong>push the log-probability of chosen up relative to reference; push rejected down; balance so we don&#39;t wander too far from the reference.</strong></p>
+<p><strong>The recipe most teams use in 2026:</strong></p>
+<ol>
+<li>Start from an Instruct base model (already SFT&#39;d by the vendor)</li>
+<li>Do task-specific SFT with LoRA (Modules 01–02)</li>
+<li>Collect a small preference dataset (500–5000 pairs)</li>
+<li>Do DPO (or ORPO) on top of your SFT</li>
+</ol>
+<p>Step 3 is the hard part — see Module 04 on data curation.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-why-rlhf-was-painful-and-why-dpo-is-a-big-deal"><a class="anchor" href="#21-why-rlhf-was-painful-and-why-dpo-is-a-big-deal">#</a> 2.1 Why RLHF Was Painful (and Why DPO Is a Big Deal)</h3>
+<p>Original RLHF loop:</p>
+<ol>
+<li>Train a <strong>reward model</strong> ($r_\phi$) on preference pairs — a small transformer head predicting &quot;which response is better.&quot;</li>
+<li>Load the SFT model as the <strong>policy</strong> ($\pi_\theta$).</li>
+<li>Load a frozen <strong>reference</strong> ($\pi_{\text{ref}}$) — usually the SFT model at start.</li>
+<li>Run <strong>PPO</strong>: policy samples responses, reward model scores them, KL-penalty vs. reference keeps policy close to $\pi_{\text{ref}}$.</li>
+</ol>
+<p>Problems:</p>
+<ul>
+<li><strong>Three models in memory simultaneously</strong> — policy, reference, reward model — VRAM murder.</li>
+<li><strong>PPO is unstable</strong> on language models. Many failed runs, hyperparameter voodoo.</li>
+<li><strong>Reward hacking</strong> — the policy finds ways to score high on the reward model that a human would not endorse (e.g., producing overly verbose responses if length correlates with reward).</li>
+<li>Requires an ML team with deep RL expertise.</li>
+</ul>
+<p>DPO&#39;s insight: <strong>the optimal policy for the RLHF objective has a closed-form relationship to the reward function.</strong> Rewriting the RLHF loss in terms of that relationship eliminates the reward model. You&#39;re left with a supervised loss on preference pairs.</p>
+<p>Result:</p>
+<ul>
+<li><strong>Two models in memory</strong> (policy + reference; reference can even be QLoRA-quantized).</li>
+<li><strong>Stable training</strong> — behaves like standard supervised learning.</li>
+<li><strong>No reward hacking</strong> in the RLHF sense (though DPO has its own failure modes — see below).</li>
+<li><strong>Fits alongside SFT tooling</strong> — TRL&#39;s <code>DPOTrainer</code> is a drop-in.</li>
+</ul>
+<p>DPO is now the default in most open-source alignment recipes (Zephyr, Tulu, StarCoder2-Instruct, dozens more). Frontier labs still use PPO/RLHF for last-mile alignment, but for applied engineering, DPO is what you&#39;ll use.</p>
+<h3 id="22-the-data-preference-pairs"><a class="anchor" href="#22-the-data-preference-pairs">#</a> 2.2 The Data — Preference Pairs</h3>
+<p>A DPO dataset row looks like:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;prompt&quot;: &quot;Explain how contract law handles breach of duty in three sentences.&quot;,
+  &quot;chosen&quot;: &quot;In contract law, a breach of duty occurs when a party fails to perform an obligation established by the contract. The non-breaching party may seek remedies including damages, specific performance, or rescission. Whether relief is available depends on the type and materiality of the breach, and on any limitations agreed to in the contract itself.&quot;,
+  &quot;rejected&quot;: &quot;Breach of duty is when someone doesn&#39;t do what they said in the contract. You can sue them. It depends on stuff.&quot;
+}</code></pre>
+      </div>
+    <p>Sources for preference data:</p>
+<p><strong>1. Human annotators.</strong> Highest quality. Expensive (~$0.50–$5 per pair depending on expertise). For high-stakes domains, this is where the money goes.</p>
+<p><strong>2. Model-graded pairs.</strong> Use a stronger model (Claude Opus, GPT-4) to compare pairs sampled from your SFT model. Cheap, moderately reliable. Prone to LLM-judge biases (Module 07 of Month 6 covers).</p>
+<p><strong>3. Rules-based pairs.</strong> For structured tasks: generate a &quot;correct&quot; response by rule; corrupt it deterministically to make the &quot;rejected.&quot; Works for JSON schema adherence, function-call formatting, refusal patterns.</p>
+<p><strong>4. Public preference datasets.</strong> UltraFeedback, HH-RLHF, Nectar. Good for general-purpose alignment; not for your specific task.</p>
+<p><strong>Dataset size:</strong> DPO typically needs less data than SFT. <strong>500–5000 high-quality pairs</strong> is a solid range. Beyond ~10k pairs, you&#39;re usually not gaining much unless the task is exceptionally broad.</p>
+<h3 id="23-the-beta-hyperparameter"><a class="anchor" href="#23-the-beta-hyperparameter">#</a> 2.3 The Beta Hyperparameter</h3>
+<p>$\beta$ (beta) controls how strongly DPO enforces the preferences vs. how much it stays close to the reference model.</p>
+<ul>
+<li><strong>Low $\beta$</strong> (0.01–0.05): stays close to reference; smaller behavioral change; safer but less alignment.</li>
+<li><strong>Standard $\beta$</strong> (0.1–0.3): sweet spot for most applications.</li>
+<li><strong>High $\beta$</strong> (0.5–1.0): aggressive preference optimization; risk of over-correction, mode collapse, refusal drift.</li>
+</ul>
+<p>$\beta = 0.1$ is TRL&#39;s default and a good starting point. Sweep it if you&#39;re not seeing preference improvement (may need higher) or if the model is becoming brittle (may need lower).</p>
+<h3 id="24-the-reference-model-choice"><a class="anchor" href="#24-the-reference-model-choice">#</a> 2.4 The Reference Model Choice</h3>
+<p>The reference model $\pi_{\text{ref}}$ anchors the policy — DPO&#39;s KL-like regularization pulls the trained model toward it.</p>
+<p>Typical choices:</p>
+<ul>
+<li><strong>Same as init:</strong> reference = SFT checkpoint you start DPO from. Most common; measures &quot;did we improve over SFT?&quot;</li>
+<li><strong>A stronger reference:</strong> rarely done; can help if you want stability more than change.</li>
+</ul>
+<p>Practical detail: the reference model doesn&#39;t need gradients — you can quantize it (4-bit) and save VRAM. TRL supports <code>ref_model</code> as a separate loaded 4-bit model, or <code>ref_model=None</code> (uses the pre-training state, which is more memory-efficient with PEFT).</p>
+<h3 id="25-orpo-skipping-the-reference-model-entirely"><a class="anchor" href="#25-orpo-skipping-the-reference-model-entirely">#</a> 2.5 ORPO — Skipping the Reference Model Entirely</h3>
+<p><strong>Odds Ratio Preference Optimization (ORPO, Hong et al., 2024)</strong> collapses SFT and DPO into one loss:</p>
+<p>$$
+\mathcal{L}<em>{\text{ORPO}} = \mathcal{L}</em>{\text{SFT}}(y_w \mid x) + \lambda \cdot \mathcal{L}_{\text{OR}}(y_w, y_l \mid x)
+$$</p>
+<p>The odds-ratio term penalizes the model for producing rejected-style outputs relative to chosen ones, without needing a reference model. Result:</p>
+<ul>
+<li>One training script (no reference model in memory)</li>
+<li>Combines SFT and preference tuning in one pass</li>
+<li>Often works with only 1 epoch on preference data</li>
+<li>Slightly less flexible than DPO&#39;s separate hyperparameters, but simpler</li>
+</ul>
+<p>If you&#39;re VRAM-constrained or want the fastest path to a preference-tuned model, ORPO is a strong choice. In practice its results are comparable to DPO on most benchmarks.</p>
+<h3 id="26-kto-when-you-only-have-thumbs-up-thumbs-down"><a class="anchor" href="#26-kto-when-you-only-have-thumbs-up-thumbs-down">#</a> 2.6 KTO — When You Only Have Thumbs-Up / Thumbs-Down</h3>
+<p>DPO/ORPO require <strong>paired</strong> preferences: for the same prompt, you need both a chosen and a rejected response.</p>
+<p>Real production feedback data is often not paired: users just thumbs-up or thumbs-down a response. You have a bunch of (prompt, response, label) triples where the label is a binary preference — not &quot;this vs that.&quot;</p>
+<p><strong>Kahneman-Tversky Optimization (KTO)</strong> handles exactly this shape. It uses a loss inspired by prospect theory (humans weight losses ~2× as much as equivalent gains):</p>
+<p>$$
+\mathcal{L}_{\text{KTO}} = \begin{cases}
+1 - \sigma(\beta \cdot \text{logratio}) &amp; \text{if desirable (thumbs-up)} \
+1 - \sigma(-\beta \cdot \text{logratio}) &amp; \text{if undesirable (thumbs-down)}
+\end{cases}
+$$</p>
+<p>Data shape:</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{&quot;prompt&quot;: &quot;...&quot;, &quot;completion&quot;: &quot;...&quot;, &quot;label&quot;: true}   // thumbs-up
+{&quot;prompt&quot;: &quot;...&quot;, &quot;completion&quot;: &quot;...&quot;, &quot;label&quot;: false}  // thumbs-down</code></pre>
+      </div>
+    <p>Advantages:</p>
+<ul>
+<li>Works with your existing user-feedback data</li>
+<li>No need to construct pairs</li>
+<li>Handles imbalanced good/bad ratios gracefully</li>
+</ul>
+<p>Use KTO when you have production user-feedback data; use DPO/ORPO when you&#39;re constructing pairs deliberately.</p>
+<p><code>[IMG-FT03-01]</code> — <em>Prompt: A comparison chart of three preference-tuning methods. Rows: RLHF (PPO), DPO, ORPO, KTO. Columns: &quot;Data needed&quot;, &quot;Models in memory&quot;, &quot;Training stability&quot;, &quot;Compute cost&quot;, &quot;Typical use case&quot;. Fill in with concise labels. Highlight DPO as &quot;modern default&quot; with a subtle bookmark icon. Below the table, three loss-curve sparklines: PPO showing spiky unstable training, DPO showing smooth descent, ORPO showing similarly smooth descent with fewer steps. Clean data-table styling in a soft dark palette.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-feedback-vs-demonstration"><a class="anchor" href="#model-1-feedback-vs-demonstration">#</a> Model 1: Feedback vs. Demonstration</h3>
+<p>Consider teaching a person to write emails.</p>
+<p><strong>SFT is showing them 500 exemplar emails and saying &quot;write like this.&quot;</strong> They learn the shape, tone, and structure.</p>
+<p><strong>DPO is showing them 500 pairs of emails — &quot;this one is good, this one is bad, don&#39;t ask why yet&quot; — and asking them to internalize the difference.</strong> They learn <em>what makes one better than another</em>, not just what a good one looks like.</p>
+<p>The difference matters when the person encounters a novel situation. The SFT-only learner produces something that <em>looks like</em> their training set but may miss why it&#39;s wrong. The DPO learner has internalized the ranking dimension — they can generalize better to &quot;this feels like a good-vs-bad choice I&#39;ve seen before&quot; even if the specific case is new.</p>
+<p>RLHF is the same idea with an intermediary reward-modeler in the middle who&#39;s summarizing the preferences into a grading rubric before teaching. DPO cuts out that intermediary because the math worked out.</p>
+<h3 id="model-2-the-diet-vs-the-trainer"><a class="anchor" href="#model-2-the-diet-vs-the-trainer">#</a> Model 2: The Diet vs. The Trainer</h3>
+<p><strong>SFT is the diet</strong> — you eat what the good athletes eat and hope to become one.
+<strong>RLHF/DPO is the trainer</strong> — someone watches you perform and specifically tells you which movements are better, why, and pushes you toward them.</p>
+<p>You can become reasonably fit on diet alone. But diet-only produces athletes who look like they <em>should</em> be fit — they can&#39;t be corrected when their form is off, because they only ever saw good form, not the delta between good and bad.</p>
+<p>A trainer&#39;s feedback (&quot;this rep was worse than that one, because of X&quot;) is a fundamentally different signal from imitation. It&#39;s also lower-bandwidth per rep, but higher-value per rep. That&#39;s why preference tuning uses far fewer examples than SFT (500–5000 vs 5000–50000) to achieve substantial gains.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Doing DPO before SFT.</strong>
+DPO is a <em>refinement</em> step, not a replacement for SFT. On a base model that hasn&#39;t learned your task, DPO has nothing to work with — the &quot;chosen&quot; vs &quot;rejected&quot; signal degenerates into noise if the model can&#39;t produce either shape yet. Correct sequence: base → SFT → DPO. Skipping SFT and jumping to DPO on top of an Instruct model <em>can</em> work for very light-touch alignment adjustments but usually doesn&#39;t move the needle.</p>
+<p>Corollary: your preference dataset should include responses at approximately the quality <em>level</em> your SFT model produces. Comparing &quot;expert human-written&quot; chosen vs &quot;random-mush&quot; rejected teaches the model very little that it wouldn&#39;t learn from SFT on the chosen alone. The valuable pairs are close-quality pairs where the preference is subtle.</p>
+<p><strong>Pitfall #2 — Preference-collapse and refusal drift.</strong>
+DPO with high $\beta$ or too many steps can cause the model to become brittle: it produces the &quot;chosen&quot;-flavored response even when a different response would be appropriate. Common failure: after DPO training on &quot;helpful&quot; vs &quot;refusal&quot; pairs, the model starts refusing safe requests because the refusal shape is now strongly preferred. Symptoms:</p>
+<ul>
+<li>Refusal rate spikes on your eval set</li>
+<li>Response length collapses to a narrow band</li>
+<li>Model becomes strangely repetitive</li>
+</ul>
+<p>Fixes: lower $\beta$; fewer epochs (1 is often enough); diversify your preference dataset so no single &quot;type of preference&quot; dominates. Watch a general-capability eval alongside your task metric.</p>
+<p><strong>Pitfall #3 — Building preference pairs by asking the model to critique its own output.</strong>
+Tempting: sample two responses from your SFT model, ask the SFT model itself which is better, use that as ground-truth. This is close to &quot;AI feedback&quot; (RLAIF) and has published success stories — but at applied engineering scale, self-critique is usually worse than asking a <em>stronger</em> model to judge. Reasons:</p>
+<ul>
+<li>Self-critique inherits the model&#39;s own biases</li>
+<li>The critic has no better view of the ground truth than the generator</li>
+<li>You&#39;ll amplify whatever tendencies the SFT model already has</li>
+</ul>
+<p>If you&#39;re using model-graded pairs, use a <strong>stronger judge</strong> — Claude Opus judging your Sonnet-tier SFT, GPT-5 judging your 7B open-model SFT, or human labels for high-stakes domains. Same rule as LLM-judge in eval (Month 6 Module 08).</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> DPO&#39;s key mathematical insight is:
+A) A new optimization algorithm faster than PPO
+B) A closed-form relationship between the optimal policy and reward, allowing removal of the reward model
+C) A better prompt template
+D) A way to use RLHF without any preference data</p>
+<p><strong>Q2 (short):</strong> Given preference pairs $(x, y_w, y_l)$, write out (in plain English) what DPO&#39;s loss encourages the model to do.</p>
+<p><strong>Q3 (MC):</strong> In DPO, $\beta = 0.1$ vs $\beta = 0.5$ — which one enforces preferences more aggressively?
+A) $\beta = 0.1$
+B) $\beta = 0.5$
+C) They&#39;re identical
+D) $\beta$ doesn&#39;t control this</p>
+<p><strong>Q4 (short):</strong> Your model has been through SFT and works well. You have a small preference dataset from customer thumbs-up/down feedback. Which method should you use and why?</p>
+<p><strong>Q5 (MC):</strong> Compared to RLHF (PPO), DPO uses:
+A) Same models in memory, faster training
+B) One fewer model (no reward model) and more stable training
+C) Two fewer models
+D) More models</p>
+<p><strong>Q6 (short):</strong> Why is doing DPO <em>before</em> SFT usually a bad idea?</p>
+<p><strong>Q7 (MC):</strong> ORPO&#39;s key feature is:
+A) Better quality than DPO
+B) Combines SFT and preference tuning in one loss, no reference model needed
+C) Uses reinforcement learning
+D) Only works with 4-bit models</p>
+<p><strong>Q8 (short):</strong> After DPO training, your model refuses many safe requests it previously answered. Diagnose the likely cause and propose two fixes.</p>
+<p><strong>Q9 (MC):</strong> A DPO dataset size of ~2000 preference pairs is:
+A) Way too small — you need at least 100k
+B) A reasonable range for a focused task
+C) Way too big — DPO needs only 10 or so
+D) Doesn&#39;t matter, DPO is dataset-independent</p>
+<p><strong>Q10 (short):</strong> Explain the difference in <em>data shape</em> required by DPO vs KTO, and one production scenario where KTO&#39;s shape is more natural to obtain.</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> DPO&#39;s insight is that the RLHF objective (maximize reward subject to KL-constraint to reference) has a known closed-form solution — the optimal policy is proportional to the reference times $\exp(r/\beta)$. Solving for the reward and substituting into the preference likelihood produces a loss over preference pairs that doesn&#39;t require a reward model at all. The math is elegant; the operational win is enormous.</p>
+<p><strong>A2:</strong> DPO&#39;s loss encourages the model to increase the log-probability of the chosen response $y_w$ relative to the reference, while decreasing the log-probability of the rejected response $y_l$ relative to the reference. The margin between these two ratios is passed through a sigmoid, so DPO effectively frames the problem as &quot;predict whether $y_w$ is preferred to $y_l$ using a Bradley-Terry-style model,&quot; but with the reward function replaced by a log-ratio of policy-to-reference probabilities. Net effect: push chosen up, push rejected down, don&#39;t wander too far from the reference (that&#39;s what $\beta$ and the reference log-ratios enforce).</p>
+<p><strong>A3: B.</strong> Higher $\beta$ = more aggressive enforcement of preferences (larger reward differential per pair). Lower $\beta$ = model stays closer to reference. Default $\beta = 0.1$ is a moderate setting. Going to $\beta = 0.5$ typically produces stronger preference following but risks over-fitting to the pairs&#39; idiosyncrasies (mode collapse, refusal drift). Sweep $\beta \in {0.05, 0.1, 0.2, 0.5}$ and pick based on task metric vs general-cap eval trade-off.</p>
+<p><strong>A4:</strong> <strong>KTO</strong> (Kahneman-Tversky Optimization). Customer thumbs data is <em>unpaired</em> — each row is one prompt + one response + one label. DPO requires paired chosen/rejected for the same prompt, which thumbs data doesn&#39;t give you (you&#39;d have to synthesize pairs by matching same-prompt responses across users, which usually doesn&#39;t exist). KTO natively accepts the label-per-response format. It also handles imbalance (typically far more thumbs-up than thumbs-down) more gracefully than trying to force pairs.</p>
+<p><strong>A5: B.</strong> DPO uses two models in memory (policy + frozen reference). RLHF/PPO uses three (policy + reference + reward model). DPO training is also more stable because it&#39;s a standard supervised loss rather than an RL loop, which reduces sensitivity to hyperparameters and rollout-buffer choices.</p>
+<p><strong>A6:</strong> DPO refines preferences <em>between</em> possible responses the model can produce. If the model can&#39;t yet produce either &quot;chosen&quot; or &quot;rejected&quot; shapes (i.e., pre-SFT), the preference signal has nothing to grip. DPO would try to push probabilities of shapes the model doesn&#39;t know how to produce — a weak signal that often just destabilizes the model. Correct order: SFT gives the model the <em>ability</em> to produce responses in the target style, then DPO teaches it <em>which</em> responses within that style are better. Skip SFT and you&#39;re asking DPO to do both jobs at once, which it&#39;s not designed for.</p>
+<p><strong>A7: B.</strong> ORPO combines the SFT loss (learn to produce chosen responses) and an odds-ratio preference loss (avoid rejected patterns) into one loss function trainable in a single pass. Because both signals share the same forward pass, no reference model is needed — the ratio is computed within the batch. Advantages: one training script, fewer models in memory, often one epoch is enough. Not necessarily higher quality than DPO, but simpler ops.</p>
+<p><strong>A8:</strong> Likely <strong>refusal drift from preference collapse</strong>: your preference dataset included refusal patterns as &quot;chosen&quot; (or &quot;helpful&quot; as &quot;rejected&quot;) in some pairs, and DPO amplified the refusal-shaped response mode. Common when the preference data included safety-oriented pairs alongside quality pairs without careful balance. Fixes: (1) lower $\beta$ (say 0.05) so the model stays closer to reference behavior; (2) reduce epochs — DPO overfits with more steps than SFT; (3) audit the preference dataset — remove or rebalance pairs where &quot;chosen&quot; is refusal-shaped; (4) add explicit safe-response-preferred pairs to the dataset if you removed too many.</p>
+<p><strong>A9: B.</strong> 500–5000 pairs is the reasonable working range for DPO. Below that, you&#39;re often not getting signal beyond noise. Above ~10k, gains flatten unless the task is very broad. Compare to SFT which often benefits from 10k-100k+ examples — DPO is a <em>refinement</em> step and gains most of its value from a smaller, higher-quality set.</p>
+<p><strong>A10:</strong> <strong>DPO data shape</strong>: <code>(prompt, chosen, rejected)</code> — every row has two responses to the same prompt, one preferred over the other. Requires you to have or construct pairs.</p>
+<p><strong>KTO data shape</strong>: <code>(prompt, completion, label)</code> — every row has one prompt-response pair with a binary label (good or bad). No pair-construction required.</p>
+<p>Natural KTO scenario: you have user thumbs-up/thumbs-down feedback from your production chatbot. Each user interaction is one prompt + one response + one label. You cannot easily construct DPO pairs from this because there&#39;s no canonical &quot;same prompt&quot; alternative response — but KTO handles this shape natively. This is the main reason KTO has gained ground in industry deployments: real feedback data is almost always unpaired.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/01-sft-fundamentals.md</code> — the necessary prerequisite step</li>
+<li><code>learning/04-dataset-curation.md</code> — where preference datasets come from</li>
+<li><code>learning/05-fine-tuning-ops.md</code> — running DPO in TRL</li>
+<li><code>../production-ai/learning/08-model-evaluation.md</code> — evaluating preference-tuned models</li>
+<li><code>../capstones/07-evaluate-ai-systems.md</code> — including preference-vs-base A/B methodology</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Load a small SFT&#39;d model + a preference dataset (UltraFeedback, or a subset). Run 200 steps of DPO with TRL&#39;s <code>DPOTrainer</code>. Compare a few generations before and after.</li>
+<li>Take 20 responses from your SFT model. Ask a stronger model (Claude/GPT) to pairwise-judge them. Format into a DPO dataset.</li>
+<li>Read the DPO paper&#39;s derivation (Rafailov et al., 2023) section 4.1. Verify you follow the substitution from the RLHF-optimal policy formula to the DPO loss.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Rafailov et al., &quot;Direct Preference Optimization: Your Language Model is Secretly a Reward Model&quot; (2023) — the DPO paper</li>
+<li>Hong et al., &quot;ORPO: Monolithic Preference Optimization without Reference Model&quot; (2024)</li>
+<li>Ethayarajh et al., &quot;KTO: Model Alignment as Prospect Theoretic Optimization&quot; (2024)</li>
+<li>TRL docs: DPOTrainer, ORPOTrainer, KTOTrainer — <a href="https://huggingface.co/docs/trl">https://huggingface.co/docs/trl</a></li>
+<li>Zephyr recipe (Tunstall et al.) — canonical DPO reference implementation</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-02-peft-lora.html"><span>← Previous</span><b>learning 02 peft lora</b></a>
+      <a class="next" href="./learning-04-dataset-curation.html"><span>Next →</span><b>learning 04 dataset curation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

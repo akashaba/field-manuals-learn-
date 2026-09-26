@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 16: Proximity Service — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/16.%20Proximity%20Service/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-understanding-the-problem-and-establishing-scope">Step 1: Understanding the Problem and Establishing Scope</a></li><li><a href="#step-2-high-level-design">Step 2: High-Level Design</a></li><li><a href="#step-3-algorithms-for-fetching-nearby-businesses">Step 3: Algorithms for Fetching Nearby Businesses</a></li><li><a href="#tradeoff-comparison">Tradeoff Comparison</a></li><li><a href="#step-4-scaling-the-database-and-caching-strategy">Step 4: Scaling the Database and Caching Strategy</a></li><li><a href="#step-5-deployment-strategy-and-final-architecture">Step 5: Deployment Strategy and Final Architecture</a></li><li><a href="#steps-to-retrieve-nearby-businesses">Steps to Retrieve Nearby Businesses</a></li><li><a href="#key-optimizations">Key Optimizations</a></li><li><a href="#references">References</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 16: Proximity Service</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.6" y="118.8" width="26.2" height="26.2" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.7 131.9)"/>
+        <circle cx="22.3" cy="127.0" r="12.5" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.9" cy="122.0" r="11.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="121.4" cy="117.1" r="11.2" fill="none" stroke="#6b2b1f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.0" cy="112.2" r="10.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 16:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Proximity Service</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>A <strong>proximity service</strong> is designed to find nearby locations, such as restaurants, hotels, gas stations, and other businesses. This functionality is used in applications like <strong>Google Maps</strong> and <strong>Yelp</strong> to help users discover places within a defined radius.</p>
+<h2 id="step-1-understanding-the-problem-and-establishing-scope"><a class="anchor" href="#step-1-understanding-the-problem-and-establishing-scope">#</a> Step 1: Understanding the Problem and Establishing Scope</h2>
+<h3 id="functional-requirements"><a class="anchor" href="#functional-requirements">#</a> <strong>Functional Requirements</strong></h3>
+<ol>
+<li><strong>Search for businesses</strong> based on user location (latitude, longitude) and search radius.</li>
+<li><strong>Allow business owners</strong> to add, update, or delete businesses (not real-time).</li>
+<li><strong>Provide detailed business information</strong> when requested.</li>
+</ol>
+<h3 id="non-functional-requirements"><a class="anchor" href="#non-functional-requirements">#</a> <strong>Non-Functional Requirements</strong></h3>
+<ul>
+<li><strong>Low latency</strong>: Users should get quick responses.</li>
+<li><strong>Data privacy</strong>: Compliance with GDPR and CCPA regulations.</li>
+<li><strong>High availability</strong>: Handle peak-hour spikes in busy locations.</li>
+</ul>
+<h3 id="back-of-the-envelope-estimation"><a class="anchor" href="#back-of-the-envelope-estimation">#</a> <strong>Back-of-the-Envelope Estimation</strong></h3>
+<ul>
+<li><strong>100 million daily active users</strong>.</li>
+<li><strong>200 million businesses</strong> in the system.</li>
+<li><strong>Search QPS Calculation</strong>:<ul>
+<li>Users make <strong>5 searches per day</strong>.</li>
+<li><strong>Search QPS</strong> = (100M × 5) / 86,400 ≈ <strong>5,000 QPS</strong>.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="step-2-high-level-design"><a class="anchor" href="#step-2-high-level-design">#</a> Step 2: High-Level Design</h2>
+<h3 id="api-design"><a class="anchor" href="#api-design">#</a> <strong>API Design</strong></h3>
+<h4 id="search-nearby-businesses"><a class="anchor" href="#search-nearby-businesses">#</a> <strong>Search Nearby Businesses</strong></h4>
+<p>GET /v1/search/nearby</p>
+<ul>
+<li><strong>Request Parameters</strong>:<ul>
+<li><code>latitude</code>: User’s location latitude.</li>
+<li><code>longitude</code>: User’s location longitude.</li>
+<li><code>radius</code>: Search radius (default: 5000m).</li>
+</ul>
+</li>
+</ul>
+<h4 id="business-apis"><a class="anchor" href="#business-apis">#</a> <strong>Business APIs</strong></h4>
+<table>
+<thead>
+<tr>
+<th>API Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /v1/businesses/{id}</code></td>
+<td>Fetch detailed business info</td>
+</tr>
+<tr>
+<td><code>POST /v1/businesses</code></td>
+<td>Add a new business</td>
+</tr>
+<tr>
+<td><code>PUT /v1/businesses/{id}</code></td>
+<td>Update business details</td>
+</tr>
+<tr>
+<td><code>DELETE /v1/businesses/{id}</code></td>
+<td>Remove a business from the system</td>
+</tr>
+</tbody></table>
+<h3 id="data-model"><a class="anchor" href="#data-model">#</a> <strong>Data Model</strong></h3>
+<ul>
+<li>Since the read volume is high because two features are very commonly used, a realtional database such as MySQL is a good fit.<ul>
+<li>Search for nearby businesses</li>
+<li>View the detailed information of a business</li>
+</ul>
+</li>
+</ul>
+<h3 id="data-schema"><a class="anchor" href="#data-schema">#</a> <strong>Data Schema</strong></h3>
+<ul>
+<li>Key Database tables are the business table and the geospatial index table</li>
+<li>The business table consists the detailed information about a business.</li>
+</ul>
+<h3 id="high-level-system-architecture"><a class="anchor" href="#high-level-system-architecture">#</a> <strong>High-Level System Architecture</strong></h3>
+<p>The system comprises of two parts: Location based service (LBS) and business related service.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/high-level-design.png" alt="HLD" width="400" />
+</div>
+
+<ul>
+<li><strong>Location-Based Service (LBS)</strong>: <ul>
+<li>Processes location-based search queries.</li>
+<li>Read-heavy service with no write requests.</li>
+<li>QPS is high especially during peak hours in dense areas and the system is stateless.</li>
+</ul>
+</li>
+<li><strong>Business Service</strong>: Deals with two types of requests.<ul>
+<li>Business owners create, update or delete businesses.</li>
+<li>Customers view detailed information about a business.</li>
+</ul>
+</li>
+<li><strong>Load Balancer</strong>: Routes traffic to LBS and Business service.</li>
+<li><strong>Database Cluster</strong>: <ul>
+<li>Uses <strong>primary-replica architecture</strong> for read-heavy workloads.</li>
+<li>There might be some discrepancy between data read b/w data read by LBS and data written by by primary database.</li>
+<li>This incosistency is not an issue beacuase the business information is not updated in real-time.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="step-3-algorithms-for-fetching-nearby-businesses"><a class="anchor" href="#step-3-algorithms-for-fetching-nearby-businesses">#</a> Step 3: Algorithms for Fetching Nearby Businesses</h2>
+<h3 id="option-1-two-dimensional-search-naive-approach"><a class="anchor" href="#option-1-two-dimensional-search-naive-approach">#</a> <strong>Option 1: Two-Dimensional Search (Naive Approach)</strong></h3>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/2d-search.png" alt="2D" width="250" />
+</div>
+
+<p>The most intuitive way is to draw a circle with pre-defined radius and find all the businesses within the circle.</p>
+<p><strong>SQL Query:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">SELECT business_id, latitude, longitude
+FROM business
+WHERE (latitude BETWEEN :lat - radius AND :lat + radius)
+AND (longitude BETWEEN :long - radius AND :long + radius);</code></pre>
+      </div>
+    <p><strong>Problems:</strong></p>
+<ul>
+<li><strong>Inefficient</strong>: Requires scanning the entire database.</li>
+<li><strong>Limited by one-dimensional indexes</strong> (latitude/longitude).</li>
+</ul>
+<p>A potiential improvement is to build index on logitude and latitude columns, alhtough this is slighlty better but still vry slow.</p>
+<h3 id="better-approach"><a class="anchor" href="#better-approach">#</a> Better Approach</h3>
+<ul>
+<li><p>The problem with last approach is that the database index can only increase search speed in one dimension.</p>
+</li>
+<li><p>An optimal apporach is to reprsent the two-dimensional data into one dimension using geospatial indexing.</p>
+<ul>
+<li>Hash: Even grid, Geo Hash</li>
+<li>Tree: Quadtree, Google S2, RTree</li>
+</ul>
+<div style="margin-left:3rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/geospatial-index-types.png" alt="2D" width="500" />
+</div></li>
+</ul>
+<h3 id="option-2-evenly-divided-grid"><a class="anchor" href="#option-2-evenly-divided-grid">#</a> <strong>Option 2: Evenly Divided Grid</strong></h3>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/even-grid.png" alt="Even Grid" width="400" />
+  </div>
+
+<ul>
+<li><strong>Divides the world into fixed-size grids</strong>.</li>
+<li><strong>Issue</strong>: Uneven business distribution (high density in cities, sparse in rural areas).</li>
+</ul>
+<h3 id="option-3-geohash"><a class="anchor" href="#option-3-geohash">#</a> <strong>Option 3: Geohash</strong></h3>
+<ul>
+<li><p>Divide the planet into four quadrants along with the prime meridian and equator. And then divide each grid into four smaller grids. </p>
+</li>
+<li><p>Each grids can be represented by altering b/w longitude and latitude bit.</p>
+</li>
+<li><p>Repeat this subdivision</p>
+<div style="margin-left:3rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/geohash.png" alt="Geohash" width="300" />
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/geohash-1.png" alt="Geohash" width="285" />
+</div>
+
+</li>
+<li><p><strong>Encodes latitude and longitude into a single alphanumeric string</strong>. It has 12 precisions (levels)</p>
+</li>
+<li><p><strong>Hierarchical grid structure</strong> allows for efficient searching.</p>
+</li>
+<li><p>The right precision is chosen by using the minimal geohash length according to the table.</p>
+<div style="margin-left:3rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/geohash-radius-mapping.png" alt="Geohash Radius" width="400" />
+</div></li>
+<li><p>Geohash guarantees that the longer a shared prefix is between two geohashes, the closer they are.</p>
+</li>
+<li><p><strong>Challenges</strong>:</p>
+<div style="margin-left:3rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/boundary-issue.png" alt="Boundary Issue" width="300" />
+</div>
+
+<ul>
+<li><strong>Boundary issues</strong> (businesses close to grid edges may get excluded).<ul>
+<li>Two locations can be very close but have no shared prefix at all (can be on other side of equator)</li>
+<li>Two locations can have a long shared prefix but belong to different geohashes.</li>
+</ul>
+</li>
+<li>Solution: Need to search neighboring grids.</li>
+</ul>
+</li>
+</ul>
+<h3 id="option-4-quadtree"><a class="anchor" href="#option-4-quadtree">#</a> <strong>Option 4: Quadtree</strong></h3>
+<p>  A quadtree is a tree data structure that recursively divides a two-dimensional space into four quadrants, with each internal node having exactly four children, representing the four sub-regions of the space.</p>
+<ul>
+<li>The quadtree is an in-memory data structure and it runs on each LBS server and built on server startup time.</li>
+</ul>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/quadtree.png" alt="Quadtree" width="500" />
+  </div>
+
+<ul>
+<li>The root node is recursively broken down into 4 quadrants until no nodes are left with more than x number of businesses (100 in this case).</li>
+</ul>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/building-quadtree.png" alt="Building Quadtree" width="500" />
+  </div>
+
+<ul>
+<li><p>The quadtree index doen&#39;t take too much memory (typically in GBs) and can easily fit in one server.</p>
+</li>
+<li><p>Since tge time complexity to build the tree is nlogn, it might take a few minutes to build the tree.</p>
+</li>
+<li><p><strong>Efficient for k-nearest search queries</strong> (e.g., find the closest gas station).</p>
+<div style="margin-left:3rem">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/realworld-quadtree.png" alt="Real World Quadtree" width="400" />
+</div></li>
+</ul>
+<h4 id="operational-considerations"><a class="anchor" href="#operational-considerations">#</a> Operational considerations</h4>
+<ul>
+<li>For around 200 million businesses, it might take few minutes to build a quadtree at the server start time.</li>
+<li>While the quadtree is built it cannot serve traffic, therefore a new release should be rolled out incrementally to a subset of servers.</li>
+<li>When updating a business or adding a new the easiest approach is to incrementally rebuild the quadtree. (Leading to a lot of cache invalidation)</li>
+<li>Also possible to update the quadtree on the fly but more complex to implement. (Needs locking mechanism)</li>
+</ul>
+<h3 id="option-5-google-s2"><a class="anchor" href="#option-5-google-s2">#</a> <strong>Option 5: Google S2</strong></h3>
+<p>It maps a sphere to a !D index based on Hilbert curve.Two points that are close to each other on the Hilbert curve are close in 1D space.</p>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/hilbert-curve.png" alt="Hilbert curve" width="300" />
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/geofence.png" alt="Geofence" width="355" />
+  </div>
+
+<ul>
+<li><strong>Divides the earth into small cells using a Hilbert curve</strong>.</li>
+<li>Great for geofencing becuase it can cover arbitrary areas with varying levels.</li>
+<li>Geofencing also allows to define parameters that surround the area of interest.</li>
+<li>Aother advantage if instead of having a fixed level of precision, we can specify min,max level and max cells in S2.</li>
+</ul>
+<h2 id="tradeoff-comparison"><a class="anchor" href="#tradeoff-comparison">#</a> Tradeoff Comparison</h2>
+<h4 id="geohash"><a class="anchor" href="#geohash">#</a> Geohash</h4>
+<ul>
+<li>Easy to use and implement- No need to build/rebuild a tree</li>
+<li>Supports fixed radius results</li>
+<li>Updating the index is easy.</li>
+<li>Cannot dynamically adjust the grid size based on population density.</li>
+</ul>
+<h4 id="quadtree"><a class="anchor" href="#quadtree">#</a> Quadtree</h4>
+<ul>
+<li>Slightly harder to implement.</li>
+<li>Supports fetching k-nearest businesses.</li>
+<li>Can dynamically adjust the grid size based on population desnsity.</li>
+<li>Updating the index is more complicated as might need to rebuild the whole tree.</li>
+</ul>
+<hr>
+<h2 id="step-4-scaling-the-database-and-caching-strategy"><a class="anchor" href="#step-4-scaling-the-database-and-caching-strategy">#</a> Step 4: Scaling the Database and Caching Strategy</h2>
+<h3 id="scaling-the-business-table"><a class="anchor" href="#scaling-the-business-table">#</a> <strong>Scaling the Business Table</strong></h3>
+<ul>
+<li><strong>Sharding by business ID</strong> ensures even data distribution.</li>
+<li>We have separate rows for each business in the table.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Geohash</th>
+<th>Business ID</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>9q9hvu</td>
+<td>343</td>
+</tr>
+<tr>
+<td>9q9hvu</td>
+<td>347</td>
+</tr>
+<tr>
+<td>9q9hvu</td>
+<td>112</td>
+</tr>
+</tbody></table>
+<h3 id="scaling-the-geospatial-index"><a class="anchor" href="#scaling-the-geospatial-index">#</a> <strong>Scaling the Geospatial Index</strong></h3>
+<ul>
+<li>Might not be a good fit for the geohash table. In this case everything can fit in a single server so there&#39;s no tehcnical reason for sharding.</li>
+<li>A better approach is to have read-replicas to help with read loads.</li>
+</ul>
+<hr>
+<h3 id="cache-strategy"><a class="anchor" href="#cache-strategy">#</a> <strong>Cache Strategy</strong></h3>
+<p>The most obvious cache key choice is the location coordinate, however it has a few issues:</p>
+<ul>
+<li>Location coordinates from gps are not accurate.</li>
+<li>A user can move casuing the location coordinate to change.</li>
+<li>A better key is the geohash.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Cache Key</th>
+<th>Cache Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>geohash</code></td>
+<td>List of business IDs in that grid</td>
+</tr>
+<tr>
+<td><code>business_id</code></td>
+<td>Business details (name, address, reviews, etc.)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="step-5-deployment-strategy-and-final-architecture"><a class="anchor" href="#step-5-deployment-strategy-and-final-architecture">#</a> Step 5: Deployment Strategy and Final Architecture</h2>
+<h3 id="region-and-availability-zones"><a class="anchor" href="#region-and-availability-zones">#</a> <strong>Region and Availability Zones</strong></h3>
+<ul>
+<li>Deploy LBS and Business Service <strong>across multiple regions</strong>.</li>
+</ul>
+<h3 id="handling-real-time-updates"><a class="anchor" href="#handling-real-time-updates">#</a> <strong>Handling Real-Time Updates</strong></h3>
+<ul>
+<li><strong>Business updates are batch processed daily</strong>.</li>
+</ul>
+<h3 id="final-system-architecture"><a class="anchor" href="#final-system-architecture">#</a> <strong>Final System Architecture</strong></h3>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/16.%20Proximity%20Service/images/final-design.png" alt="Final Design" width="500" />
+  </div>
+
+
+<p>This final algorithm looks like this:</p>
+<h2 id="steps-to-retrieve-nearby-businesses"><a class="anchor" href="#steps-to-retrieve-nearby-businesses">#</a> Steps to Retrieve Nearby Businesses</h2>
+<ol>
+<li><p><strong>User Request:</strong>  </p>
+<ul>
+<li>A user searches for restaurants within <strong>500 meters</strong>.  </li>
+<li>The client sends <strong>latitude (37.776720), longitude (-122.416730), and radius (500m)</strong> to the <strong>load balancer</strong>.</li>
+</ul>
+</li>
+<li><p><strong>Request Forwarding:</strong>  </p>
+<ul>
+<li>The <strong>load balancer (LB)</strong> forwards the request to the <strong>Location-Based Service (LBS)</strong>.</li>
+</ul>
+</li>
+<li><p><strong>Geohash Calculation:</strong>  </p>
+<ul>
+<li>LBS determines the <strong>geohash length</strong> matching the radius.  </li>
+<li>Using a reference table, <strong>500m corresponds to geohash length = 6</strong>.</li>
+</ul>
+</li>
+<li><p><strong>Fetching Neighboring Geohashes:</strong>  </p>
+<ul>
+<li>LBS calculates <strong>neighboring geohashes</strong> to include nearby areas.  </li>
+<li>The result is a list:  
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">[my_geohash, neighbor1_geohash, neighbor2_geohash, ..., neighbor8_geohash]</code></pre>
+      </div>
+    </li>
+</ul>
+</li>
+<li><p><strong>Fetching Business IDs from Redis:</strong>  </p>
+<ul>
+<li>For each geohash in the list, LBS queries the <strong>Geohash Redis server</strong> to fetch <strong>business IDs</strong>.  </li>
+<li>Parallel queries are used to minimize latency.</li>
+</ul>
+</li>
+<li><p><strong>Retrieving &amp; Ranking Businesses:</strong>  </p>
+<ul>
+<li>LBS fetches <strong>full business details</strong> from the <strong>Business Info Redis server</strong>.  </li>
+<li>Businesses are <strong>sorted by distance</strong> from the user’s location.  </li>
+<li>The <strong>ranked results</strong> are sent back to the client.</li>
+</ul>
+</li>
+</ol>
+<h2 id="key-optimizations"><a class="anchor" href="#key-optimizations">#</a> Key Optimizations</h2>
+<ul>
+<li><strong>Parallel Redis Calls</strong>: Reduces response time.  </li>
+<li><strong>Geohash Indexing</strong>: Ensures efficient spatial queries.  </li>
+<li><strong>Caching</strong>: Speeds up lookup and retrieval of business data.</li>
+</ul>
+<p>This method ensures <strong>low-latency, scalable</strong> retrieval of businesses near a user’s location.</p>
+<hr>
+<h3 id="choosing-the-best-indexing-method"><a class="anchor" href="#choosing-the-best-indexing-method">#</a> <strong>Choosing the Best Indexing Method</strong></h3>
+<table>
+<thead>
+<tr>
+<th>Indexing Method</th>
+<th>Pros</th>
+<th>Cons</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Geohash</strong></td>
+<td>Easy to implement, efficient for proximity search</td>
+<td>Boundary issues, fixed grid size</td>
+</tr>
+<tr>
+<td><strong>Quadtree</strong></td>
+<td>Dynamically adjusts to density, supports k-nearest queries</td>
+<td>More complex, requires tree rebalancing</td>
+</tr>
+<tr>
+<td><strong>Google S2</strong></td>
+<td>Advanced geofencing, used in Google Maps</td>
+<td>Harder to implement</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="references"><a class="anchor" href="#references">#</a> References</h2>
+<ol>
+<li><a href="https://www.movable-type.co.uk/scripts/geohash.html">Geohash Algorithm</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Quadtree">Quadtree Indexing</a></li>
+<li><a href="https://s2geometry.io/">Google S2 Geometry</a></li>
+</ol>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-google-drive.html"><span>← Previous</span><b>google drive</b></a>
+      <a class="next" href="./17-nearby-friends.html"><span>Next →</span><b>nearby friends</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

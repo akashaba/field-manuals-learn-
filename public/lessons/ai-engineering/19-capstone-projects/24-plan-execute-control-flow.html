@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan-Execute Control Flow — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/24-plan-execute-control-flow/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#plan-and-execute-not-chain-of-thought">Plan and execute, not chain-of-thought</a></li><li><a href="#the-step-shape">The Step shape</a></li><li><a href="#the-planner-shape">The planner shape</a></li><li><a href="#the-executor">The executor</a></li><li><a href="#plan-diffs-on-revision">Plan diffs on revision</a></li><li><a href="#two-budgets-both-hard">Two budgets, both hard</a></li><li><a href="#the-deterministic-planner-in-this-lesson">The deterministic planner in this lesson</a></li><li><a href="#result-shape">Result shape</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Plan-Execute Control Flow</h1>
+    <p class="lesson-sub">A plan that cannot survive a failure is a script. A script that can replan is an agent. Build the replanner first.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 lessons 01-07, Phase 14 lesson 01</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 24">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M47.9,76.7 L65.4,50.4 L83.0,76.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.1" y="44.4" width="33.8" height="33.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(241 60.0 61.3)"/>
+        <rect x="38.3" y="40.1" width="32.5" height="32.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(223 54.6 56.4)"/>
+        <rect x="33.5" y="35.8" width="31.3" height="31.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(205 49.2 51.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">24</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Plan-Execute Control</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Flow</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Represent a plan as an ordered list of typed steps so the executor can reason about progress and outcome.</li>
+<li>Execute steps sequentially with a controlled failure handoff back to the planner.</li>
+<li>Replan from the current cursor with the prior error in the context so the next plan is informed.</li>
+<li>Emit a plan diff on each revision so a downstream tracer or UI can show why the plan changed.</li>
+<li>Enforce two budgets: a hard step ceiling and a hard replan ceiling.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-plan-replan</code></pre>
+      </div>
+    <h2 id="plan-and-execute-not-chain-of-thought"><a class="anchor" href="#plan-and-execute-not-chain-of-thought">#</a> Plan and execute, not chain-of-thought</h2>
+<p>A chain-of-thought agent emits tokens and lets the loop guess where the tool call ends. A plan-and-execute agent emits a structured plan first, then executes each step deterministically. The plan is data the harness can introspect. The execution is the harness running that data through a dispatcher.</p>
+<p>Two pieces. A planner that produces a plan. An executor that runs the plan. The interesting work is what happens when the executor hits a failure. Three options:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">1. Abort         (return failed, surface the error)
+2. Skip          (mark step failed, continue with the rest)
+3. Replan        (hand the error to the planner, get a new plan from the cursor)</code></pre>
+      </div>
+    <p>Replan is the one that turns a script into an agent.</p>
+<h2 id="the-step-shape"><a class="anchor" href="#the-step-shape">#</a> The Step shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">Step
+  id              : int           (monotonic within a plan revision)
+  tool_name       : str
+  args            : dict
+  expected_outcome: str           (planner&#39;s stated success condition)
+  result          : Any | None
+  error           : str | None</code></pre>
+      </div>
+    <p><code>expected_outcome</code> is a short sentence the planner emits alongside the step. It is not enforced by the executor. It is for two things: the replanner reads it when revising the plan; the event stream emits it so a tracer can show &quot;this step was supposed to do X.&quot;</p>
+<h2 id="the-planner-shape"><a class="anchor" href="#the-planner-shape">#</a> The planner shape</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def planner(goal: str, history: list[Step], last_error: str | None) -&gt; list[Step]:
+    ...</code></pre>
+      </div>
+    <p>A pure function. <code>goal</code> is the user goal. <code>history</code> is the steps already executed (with results and errors filled in). <code>last_error</code> is None on the first call and the most recent failure message on every subsequent call. The planner returns the next plan starting from the cursor.</p>
+<p>The planner does not know about the executor. It does not know about retries. It does not know about timeouts. It produces a plan. That is all.</p>
+<h2 id="the-executor"><a class="anchor" href="#the-executor">#</a> The executor</h2>
+<p>The executor is a small state machine. Each step runs through the dispatcher. The outcome is one of three things: success, failure-replannable, failure-fatal. Replannable failures hand back to the planner. Fatal failures (budget exceeded, replan ceiling hit) return a <code>FAILED</code> session result.</p>
+<div class="fig"><pre class="mermaid">stateDiagram-v2
+    [*] --&gt; EXEC
+    EXEC --&gt; NEXT: success
+    NEXT --&gt; EXEC: n+1 &lt; len(plan)
+    NEXT --&gt; DONE: n+1 == len(plan)
+    EXEC --&gt; REPLAN: failure
+    REPLAN --&gt; EXEC: new plan, replans_used &lt; max_replans
+    REPLAN --&gt; FAILED: replans_used &gt;= max_replans
+    FAILED --&gt; [*]
+    DONE --&gt; [*]</pre></div><h2 id="plan-diffs-on-revision"><a class="anchor" href="#plan-diffs-on-revision">#</a> Plan diffs on revision</h2>
+<p>When the planner returns a new plan after a failure, the executor emits a <code>plan.diff</code> event with three fields.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">removed: list of step ids that were in the old plan and are not in the new
+added  : list of step ids in the new plan that were not in the old
+revised: list of step ids whose tool_name or args changed</code></pre>
+      </div>
+    <p>A tracer or UI can render this as a strikethrough on the removed steps and a highlight on the added ones. The point is not the diff format. The point is that revision is a visible event, not a silent rewrite.</p>
+<h2 id="two-budgets-both-hard"><a class="anchor" href="#two-budgets-both-hard">#</a> Two budgets, both hard</h2>
+<p><code>max_steps</code> caps total step executions across the whole session, including replans. Default is twelve. A linear five-step plan that replans twice and adds three steps each time hits sixteen executions and would exceed the budget. The executor will refuse the replan and return FAILED.</p>
+<p><code>max_replans</code> caps the number of times the planner is called after the first plan. Default is five. This is the more important limit. A planner that returns the same broken plan five times in a row would otherwise loop until the step budget catches it. Capping replans makes the failure faster and the reason clearer.</p>
+<h2 id="the-deterministic-planner-in-this-lesson"><a class="anchor" href="#the-deterministic-planner-in-this-lesson">#</a> The deterministic planner in this lesson</h2>
+<p>We do not call a model in this lesson. The lesson ships a deterministic planner that picks a plan based on <code>last_error</code>.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">last_error is None    -&gt; emit a four-step plan
+last_error matches X  -&gt; emit a three-step plan that routes around X
+last_error matches Y  -&gt; emit a two-step plan that gives up gracefully
+otherwise             -&gt; return [] (signals nothing to replan)</code></pre>
+      </div>
+    <p>This is enough to test the executor&#39;s behavior on every transition path: success, replan-once, replan-twice, replan-exhaustion, and step-budget exhaustion.</p>
+<h2 id="result-shape"><a class="anchor" href="#result-shape">#</a> Result shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">SessionResult
+  status      : &quot;completed&quot; | &quot;failed&quot;
+  reason      : str     (&quot;goal_met&quot; | &quot;step_budget&quot; | &quot;replan_budget&quot; | &quot;no_plan&quot;)
+  history     : list[Step]
+  revisions   : list[PlanDiff]
+  events      : list[Event]</code></pre>
+      </div>
+    <p>The harness loop from lesson twenty can read this directly. The dispatcher from lesson twenty-three is what executes each step. The registry from lesson twenty-one validates each step&#39;s args. The transport from lesson twenty-two would surface this whole flow over JSON-RPC to a model client.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>PlanExecuteAgent</code>, <code>Step</code>, <code>PlanDiff</code>, <code>SessionResult</code>, and the deterministic planner. The executor is a single <code>run(goal)</code> method that returns a <code>SessionResult</code>. The plan diff is computed by comparing step ids and <code>(tool_name, args)</code> tuples.</p>
+<p><code>code/tests/test_agent.py</code> covers a linear success, a mid-plan failure that replans once, replan exhaustion that returns <code>failed:replan_budget</code>, step-budget exhaustion, and the plan-diff event format.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>Two extensions you will want once you wire this to a real model. First, partial-plan caching: when a plan succeeds for the first three of six steps and then fails, you do not want to re-run the first three. The executor already keeps history; the planner just needs to read it. Second, parallel branches: the current executor is strictly sequential. A planner that emits an independent branch (<code>gather_step</code> instead of <code>next_step</code>) can run two tool calls concurrently through the dispatcher.</p>
+<p>Both add real complexity. Both are easier to add once the linear executor is pinned. That is what this lesson does.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./23-function-call-dispatcher.html"><span>← Previous</span><b>function call dispatcher</b></a>
+      <a class="next" href="./25-verification-gates-observation-budget.html"><span>Next →</span><b>verification gates observation budget</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

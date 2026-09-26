@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multimodal Evaluation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/63-multimodal-eval/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#tests">Tests</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Multimodal Evaluation</h1>
+    <p class="lesson-sub">Training is half the loop. The other half is measurement. This lesson builds three evaluation surfaces from primitives: image-caption retrieval reported as R@1, R@5, R@10; visual question answering reported as exact match accuracy; and image captioning reported as BLEU-4. Each metric is a function over the model&#39;s outputs and a synthetic eval suite that runs in seconds.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 58-62 (Track E foundations: encoder, transformer, projection, cross-attention fusion, pretraining)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 63">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M49.2,78.2 L66.9,51.6 L84.6,78.2 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M44.4,72.9 L61.5,47.2 L78.6,72.9 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.6" y="41.2" width="32.9" height="32.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.0 57.7)"/>
+        <rect x="34.8" y="36.9" width="31.6" height="31.6" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(210 50.6 52.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">63</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Multimodal</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Evaluation</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compute Recall@K from a similarity matrix between image and caption embeddings.</li>
+<li>Compute exact-match VQA accuracy from a model that maps (image, question) pairs to a fixed answer vocabulary.</li>
+<li>Compute BLEU-4 from generated and reference token sequences without any external library.</li>
+<li>Run all three evals against a synthetic suite built on top of the trained model from lesson 62.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The temptation is to declare a multimodal model finished when the training loss plateaus. Training loss measures fit on the training distribution; it does not measure whether the model can rank pairs in a held-out batch, answer a question, or write a caption a human would accept. Three eval surfaces are standard:</p>
+<ul>
+<li><strong>Retrieval (R@1, R@5, R@10).</strong> Build the joint embedding for a query caption; rank every image in the eval pool by cosine; report whether the matching image lands in the top 1, top 5, top 10. Symmetric (image-to-text) form runs the same way.</li>
+<li><strong>Visual question answering (exact match).</strong> Given (image, question), the model outputs an answer token. Exact match is one-bit per sample: did the predicted answer equal the reference answer? Average over the eval set.</li>
+<li><strong>Captioning (BLEU-4).</strong> Generate a caption. Compute the geometric mean of 1-gram through 4-gram precisions against reference captions, with a brevity penalty. Multi-reference is the standard form (one image, several reference captions).</li>
+</ul>
+<p>Each metric is a thin function. The lesson builds them all in code so the math is concrete and the surface stays under your control. Real benchmark suites (MS-COCO, VQA v2, GQA, OK-VQA) plug into the same function shapes.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+  Model[trained multimodal model] --&gt; Embed[joint embeddings on eval set]
+  Embed --&gt; Sim[similarity matrix]
+  Sim --&gt; R1[R at 1]
+  Sim --&gt; R5[R at 5]
+  Sim --&gt; R10[R at 10]
+  Model --&gt; VQA[predict answer token per question]
+  VQA --&gt; EM[exact match accuracy]
+  Model --&gt; Caps[generated captions]
+  Caps --&gt; BLEU[BLEU-4 vs references]</pre></div><h3 id="recallk-from-a-similarity-matrix"><a class="anchor" href="#recallk-from-a-similarity-matrix">#</a> Recall@K from a similarity matrix</h3>
+<p>Build the <code>(N, N)</code> cosine similarity matrix between image and caption embeddings. For each row, sort the columns by descending similarity. Recall@K is the fraction of rows where the diagonal column index lies within the top K positions. Symmetric Recall@K (caption-to-image) is computed on the transposed matrix. Both numbers are reported. For an N=100 eval, R@1 = 0.6 means 60 of the 100 captions retrieved their correct image as the top match.</p>
+<h3 id="vqa-exact-match"><a class="anchor" href="#vqa-exact-match">#</a> VQA exact match</h3>
+<p>For each (image, question, answer), encode the image, embed the question, fuse via the decoder, and read out the next token. The predicted token id is compared to the reference id; correct if equal. Average over the eval set. Real VQA datasets ship with multiple human-annotated answers per question and use a soft-accuracy formula (1.0 if at least 3 of 10 annotators agree, scaled below); the lesson uses single-answer exact match for clarity.</p>
+<h3 id="bleu-4"><a class="anchor" href="#bleu-4">#</a> BLEU-4</h3>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">BLEU-4 = BP * exp(mean(log p1, log p2, log p3, log p4))</code></pre>
+      </div>
+    <p>Where <code>p_n</code> is the modified n-gram precision (clipped count of generated n-grams that appear in any reference, divided by total generated n-grams), and <code>BP</code> is the brevity penalty:</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">BP = 1                if generated length &gt; reference length
+   = exp(1 - r/g)     otherwise, where r is reference length and g is generated</code></pre>
+      </div>
+    <p>Smoothing is needed for small samples where some <code>p_n</code> is zero. The implementation uses Chen and Cherry &quot;method 1&quot; (add 1 to numerator and denominator for any zero count), which is the safest default for low-count regimes.</p>
+<h3 id="synthetic-eval-suite"><a class="anchor" href="#synthetic-eval-suite">#</a> Synthetic eval suite</h3>
+<p>A 50-sample eval suite is built in memory from the same mock corpus pattern used in lesson 62, with a held-out seed. Three lists make up the suite:</p>
+<ul>
+<li><code>pairs</code>: 50 (image, caption_ids) pairs for retrieval.</li>
+<li><code>vqa</code>: 50 (image, question_ids, answer_id) triples.</li>
+<li><code>caps</code>: 50 (image, [reference_caption_ids, ...]) entries with up to 3 references per image.</li>
+</ul>
+<p>The suite is deterministic from the seed and held out from the training corpus, so the metrics are computed on data the model never saw. Persisting the suite to JSON is left as an exercise (see below).</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Range</th>
+<th>Random baseline (N=50)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>R@1</td>
+<td>0 to 1</td>
+<td>0.02 (1 / N)</td>
+</tr>
+<tr>
+<td>R@5</td>
+<td>0 to 1</td>
+<td>0.10</td>
+</tr>
+<tr>
+<td>R@10</td>
+<td>0 to 1</td>
+<td>0.20</td>
+</tr>
+<tr>
+<td>VQA EM</td>
+<td>0 to 1</td>
+<td>1 / vocab</td>
+</tr>
+<tr>
+<td>BLEU-4</td>
+<td>0 to 1</td>
+<td>small but nonzero</td>
+</tr>
+</tbody></table>
+<p>For a 50-step training run on synthetic data, the metrics are not expected to be high; they are expected to be above the random baseline, which is what the demo checks.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-recall-window</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>recall_at_k(sim_matrix, k)</code>, returning a float in <code>[0, 1]</code> for both directions.</li>
+<li><code>vqa_exact_match(predictions, references)</code>, returning the mean over <code>int</code> equality.</li>
+<li><code>bleu4(generated, references, smoothing=True)</code>, with multi-reference support.</li>
+<li><code>build_eval_suite(seed, n_samples, vocab_size, max_len)</code>, returning three deterministic eval lists.</li>
+<li><code>evaluate(model, suite)</code>, which runs all three metrics and returns a <code>dict</code> of numbers.</li>
+<li>A demo that loads a freshly-initialized multimodal model from lesson 62, evaluates it, then trains it for 50 steps and evaluates again, printing the before/after metrics.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: the before/after metric table shows retrieval improving from near-random toward the model&#39;s learned signal, VQA improving above random, and BLEU-4 improving (the synthetic structure is enough for a 4-gram precision lift).</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Each metric maps directly onto a production benchmark:</p>
+<ul>
+<li><strong>Retrieval.</strong> MS-COCO 5K val, Flickr30K, ImageNet zero-shot are all R@K problems on the same similarity matrix. Replace the synthetic eval with the real files and the function signature is unchanged.</li>
+<li><strong>VQA.</strong> VQA v2, GQA, OK-VQA use the same exact-match shape (with soft-acc instead of single-answer EM for VQA v2).</li>
+<li><strong>BLEU-4.</strong> MS-COCO captioning, NoCaps, Flickr30K captioning all use BLEU-4 plus CIDEr and METEOR. Adding CIDEr is one more function.</li>
+</ul>
+<p>For real benchmarks, swap <code>build_eval_suite</code> for a real loader and keep the function bodies. The math is benchmark-agnostic.</p>
+<h2 id="tests"><a class="anchor" href="#tests">#</a> Tests</h2>
+<p><code>code/test_main.py</code> covers:</p>
+<ul>
+<li>recall@k returns 1.0 on a perfect identity similarity matrix and 0.0 on a flipped one for k &lt; N</li>
+<li>recall@k respects <code>k &lt;= N</code> upper bound</li>
+<li>bleu4 returns 1.0 when generated equals one of the references exactly</li>
+<li>bleu4 returns 0.0 on disjoint vocabulary</li>
+<li>vqa exact match equals the fraction of equal pairs</li>
+<li>build_eval_suite returns the expected number of pairs, vqa items, and caption entries</li>
+</ul>
+<p>Run them:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 -m unittest code/test_main.py</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add CIDEr to the captioning metrics. CIDEr uses TF-IDF weighting on n-grams, which rewards informative tokens.</p>
+</li>
+<li><p>Implement soft-accuracy VQA: multiple human answers per question, accuracy is <code>min(human_count / 3, 1)</code> if any matches. Replicates VQA v2.</p>
+</li>
+<li><p>Add a NaN-safe variant of <code>bleu4</code> that handles empty generated sequences without crashing.</p>
+</li>
+<li><p>Compute mean reciprocal rank (MRR) alongside R@K. MRR is sensitive to where the correct item lands beyond the top K; R@K is sensitive to whether it lands in the top K.</p>
+</li>
+<li><p>Run the eval on the model at five checkpoints during training (step 0, 10, 20, 30, 40, 50) and plot the learning curve. Confirm the metric trajectories track the loss trajectory.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>R@K</td>
+<td>Fraction of queries where the correct match lands in the top K results</td>
+</tr>
+<tr>
+<td>Exact match</td>
+<td>The simplest VQA scoring: predicted answer equals reference</td>
+</tr>
+<tr>
+<td>BLEU-4</td>
+<td>Geometric mean of 1- to 4-gram precisions, with brevity penalty</td>
+</tr>
+<tr>
+<td>Multi-reference</td>
+<td>A captioning metric accepts several reference captions per image</td>
+</tr>
+<tr>
+<td>Held-out</td>
+<td>The eval set is sampled from a seed disjoint from the training corpus</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>VQA v2 paper for the soft-accuracy formula and dataset statistics.</li>
+<li>CIDEr paper for TF-IDF-weighted n-gram captioning.</li>
+<li>BLEU original (Papineni et al., 2002) for the smoothing variants.</li>
+<li>MS-COCO captioning eval scripts for the canonical reference implementation.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./62-vision-language-pretraining.html"><span>← Previous</span><b>vision language pretraining</b></a>
+      <a class="next" href="./64-chunking-strategies-advanced.html"><span>Next →</span><b>chunking strategies advanced</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

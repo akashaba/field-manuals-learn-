@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Introduction to JAX — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/03-deep-learning-core/12-intro-to-jax/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Deep Learning Core</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Deep Learning Core</div>
+    <h1 class="lesson-title">Introduction to JAX</h1>
+    <p class="lesson-sub">PyTorch mutates tensors. TensorFlow builds graphs. JAX compiles pure functions. That last one changes how you think about deep learning.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 03 Lessons 01-10, basic NumPy</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Deep Learning Core 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="24.9" y="128.1" width="29.0" height="29.0" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(173 39.4 142.6)"/>
+        <rect x="20.2" y="123.8" width="27.7" height="27.7" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(156 34.0 137.6)"/>
+        <rect x="15.4" y="119.5" width="26.4" height="26.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(138 28.6 132.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">DEEP LEARNING CORE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Introduction to JAX</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Write pure-function neural network code using JAX&#39;s functional API (jax.numpy, jax.grad, jax.jit, jax.vmap)</li>
+<li>Explain the key design difference between PyTorch&#39;s eager mutation and JAX&#39;s functional compilation model</li>
+<li>Apply jit compilation and vmap vectorization to accelerate training loops compared to naive Python</li>
+<li>Train a simple network in JAX and contrast the explicit state management with PyTorch&#39;s object-oriented approach</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You know how to build neural networks in PyTorch. You define an <code>nn.Module</code>, call <code>.backward()</code>, step the optimizer. It works. Millions of people use it.</p>
+<p>But PyTorch has a constraint baked into its DNA: it traces operations eagerly, one at a time, in Python. Every <code>tensor + tensor</code> is a separate kernel launch. Every training step re-interprets the same Python code. This works fine until you need to train a 540-billion-parameter model across 2,048 TPUs. Then the overhead kills you.</p>
+<p>Google DeepMind trains Gemini on JAX. Anthropic trained Claude on JAX. These are not small operations -- they are the largest neural network training runs on Earth. They chose JAX because it treats your training loop as a compilable program, not a sequence of Python calls.</p>
+<p>JAX is NumPy with three superpowers: automatic differentiation, JIT compilation to XLA, and automatic vectorization. You write a function that processes one example. JAX gives you a function that processes a batch, computes gradients, compiles to machine code, and runs across multiple devices. All without changing the original function.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-jax-philosophy"><a class="anchor" href="#the-jax-philosophy">#</a> The JAX Philosophy</h3>
+<p>JAX is a functional framework. No classes, no mutable state, no <code>.backward()</code> method. Instead:</p>
+<table>
+<thead>
+<tr>
+<th>PyTorch</th>
+<th>JAX</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nn.Module</code> class with state</td>
+<td>Pure function: <code>f(params, x) -&gt; y</code></td>
+</tr>
+<tr>
+<td><code>loss.backward()</code></td>
+<td><code>jax.grad(loss_fn)(params, x, y)</code></td>
+</tr>
+<tr>
+<td>Eager execution</td>
+<td>JIT compilation via XLA</td>
+</tr>
+<tr>
+<td><code>for x in batch:</code> manual loop</td>
+<td><code>jax.vmap(f)</code> auto-vectorization</td>
+</tr>
+<tr>
+<td><code>DataParallel</code> / <code>FSDP</code></td>
+<td><code>jax.pmap(f)</code> auto-parallelism</td>
+</tr>
+<tr>
+<td>Mutable <code>model.parameters()</code></td>
+<td>Immutable pytree of arrays</td>
+</tr>
+</tbody></table>
+<p>This is not a style preference. It is a compiler constraint. JIT compilation requires pure functions -- same inputs always produce same outputs, no side effects. That restriction is what makes 100x speedups possible.</p>
+<h3 id="jaxnumpy-the-familiar-surface"><a class="anchor" href="#jaxnumpy-the-familiar-surface">#</a> jax.numpy: The Familiar Surface</h3>
+<p>JAX reimplements the NumPy API on accelerators:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import jax.numpy as jnp
+
+a = jnp.array([1.0, 2.0, 3.0])
+b = jnp.array([4.0, 5.0, 6.0])
+c = jnp.dot(a, b)</code></pre>
+      </div>
+    <p>Same function names. Same broadcasting rules. Same slicing semantics. But the arrays live on GPU/TPU, and every operation is traceable by the compiler.</p>
+<p>One critical difference: JAX arrays are immutable. No <code>a[0] = 5</code>. Instead: <code>a = a.at[0].set(5)</code>. This feels awkward for a week, then it clicks -- immutability is what makes transformations like <code>grad</code>, <code>jit</code>, and <code>vmap</code> composable.</p>
+<h3 id="jaxgrad-functional-autodiff"><a class="anchor" href="#jaxgrad-functional-autodiff">#</a> jax.grad: Functional Autodiff</h3>
+<p>PyTorch attaches gradients to tensors (<code>.grad</code>). JAX attaches gradients to functions.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import jax
+
+def f(x):
+    return x ** 2
+
+df = jax.grad(f)
+df(3.0)</code></pre>
+      </div>
+    <p><code>jax.grad</code> takes a function and returns a new function that computes the gradient. No <code>.backward()</code> call. No computation graph stored on tensors. The gradient is just another function you can call, compose, or JIT-compile.</p>
+<p>This composes arbitrarily:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">d2f = jax.grad(jax.grad(f))
+d2f(3.0)</code></pre>
+      </div>
+    <p>Second derivatives. Third derivatives. Jacobians. Hessians. All by composing <code>grad</code>. PyTorch can do this too (<code>torch.autograd.functional.hessian</code>), but it is bolted on. In JAX, it is the foundation.</p>
+<p>The constraint: <code>grad</code> only works on pure functions. No print statements inside (they run during tracing, not execution). No mutation of external state. No random number generation without explicit key management.</p>
+<h3 id="jit-compile-to-xla"><a class="anchor" href="#jit-compile-to-xla">#</a> jit: Compile to XLA</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@jax.jit
+def train_step(params, x, y):
+    loss = loss_fn(params, x, y)
+    return loss
+
+fast_step = jax.jit(train_step)</code></pre>
+      </div>
+    <p>On the first call, JAX traces the function -- it records which operations happen, without executing them. Then it hands that trace to XLA (Accelerated Linear Algebra), Google&#39;s compiler for TPUs and GPUs. XLA fuses operations, eliminates redundant memory copies, and generates optimized machine code.</p>
+<p>Subsequent calls skip Python entirely. The compiled code runs on the accelerator at C++ speed.</p>
+<p>When JIT helps:</p>
+<ul>
+<li>Training steps (same computation repeated thousands of times)</li>
+<li>Inference (same model, different inputs)</li>
+<li>Any function called more than once with similar-shaped inputs</li>
+</ul>
+<p>When JIT hurts:</p>
+<ul>
+<li>Functions with Python control flow that depends on values (<code>if x &gt; 0</code> where x is a traced array)</li>
+<li>One-shot computations (compilation overhead exceeds runtime)</li>
+<li>Debugging (tracing hides the actual execution)</li>
+</ul>
+<p>The control flow restriction is real. <code>jax.lax.cond</code> replaces <code>if/else</code>. <code>jax.lax.scan</code> replaces <code>for</code> loops. These are not optional -- they are the price of compilation.</p>
+<h3 id="vmap-automatic-vectorization"><a class="anchor" href="#vmap-automatic-vectorization">#</a> vmap: Automatic Vectorization</h3>
+<p>You write a function that processes one example:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def predict(params, x):
+    return jnp.dot(params[&#39;w&#39;], x) + params[&#39;b&#39;]</code></pre>
+      </div>
+    <p><code>vmap</code> lifts it to process a batch:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">batch_predict = jax.vmap(predict, in_axes=(None, 0))</code></pre>
+      </div>
+    <p><code>in_axes=(None, 0)</code> means: do not batch over <code>params</code> (shared), batch over axis 0 of <code>x</code>. No manual <code>for</code> loop. No reshaping. No batch dimension threading. JAX figures out the batch dimension and vectorizes the entire computation.</p>
+<p>This is not syntactic sugar. <code>vmap</code> generates fused vectorized code that runs 10-100x faster than a Python loop. And it composes with <code>jit</code> and <code>grad</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">per_example_grads = jax.vmap(jax.grad(loss_fn), in_axes=(None, 0, 0))</code></pre>
+      </div>
+    <p>Per-example gradients. One line. This is nearly impossible in PyTorch without hacks.</p>
+<h3 id="pmap-data-parallelism-across-devices"><a class="anchor" href="#pmap-data-parallelism-across-devices">#</a> pmap: Data Parallelism Across Devices</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">parallel_step = jax.pmap(train_step, axis_name=&#39;devices&#39;)</code></pre>
+      </div>
+    <p><code>pmap</code> replicates the function across all available devices (GPUs/TPUs) and splits the batch. Inside the function, <code>jax.lax.pmean</code> and <code>jax.lax.psum</code> synchronize gradients across devices.</p>
+<p>Google trains Gemini across thousands of TPU v5e chips using <code>pmap</code> (and its successor <code>shard_map</code>). The programming model: write the single-device version, wrap with <code>pmap</code>, done.</p>
+<h3 id="pytrees-the-universal-data-structure"><a class="anchor" href="#pytrees-the-universal-data-structure">#</a> Pytrees: The Universal Data Structure</h3>
+<p>JAX operates on &quot;pytrees&quot; -- nested combinations of lists, tuples, dicts, and arrays. Your model parameters are a pytree:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">params = {
+    &#39;layer1&#39;: {&#39;w&#39;: jnp.zeros((784, 256)), &#39;b&#39;: jnp.zeros(256)},
+    &#39;layer2&#39;: {&#39;w&#39;: jnp.zeros((256, 128)), &#39;b&#39;: jnp.zeros(128)},
+    &#39;layer3&#39;: {&#39;w&#39;: jnp.zeros((128, 10)),  &#39;b&#39;: jnp.zeros(10)},
+}</code></pre>
+      </div>
+    <p>Every JAX transformation -- <code>grad</code>, <code>jit</code>, <code>vmap</code> -- knows how to traverse pytrees. <code>jax.tree.map(f, tree)</code> applies <code>f</code> to every leaf. This is how optimizers update all parameters at once:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">params = jax.tree.map(lambda p, g: p - lr * g, params, grads)</code></pre>
+      </div>
+    <p>No <code>.parameters()</code> method. No parameter registration. The tree structure is the model.</p>
+<h3 id="functional-vs-object-oriented"><a class="anchor" href="#functional-vs-object-oriented">#</a> Functional vs Object-Oriented</h3>
+<p>PyTorch stores state inside objects:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Model(nn.Module):
+    def __init__(self):
+        self.linear = nn.Linear(784, 10)
+
+    def forward(self, x):
+        return self.linear(x)</code></pre>
+      </div>
+    <p>JAX uses pure functions with explicit state:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def predict(params, x):
+    return jnp.dot(x, params[&#39;w&#39;]) + params[&#39;b&#39;]</code></pre>
+      </div>
+    <p>The params are passed in. Nothing is stored. Nothing is mutated. This makes every function testable, composable, and compilable. It also means you manage the params yourself -- or use a library like Flax or Equinox.</p>
+<h3 id="the-jax-ecosystem"><a class="anchor" href="#the-jax-ecosystem">#</a> The JAX Ecosystem</h3>
+<p>JAX gives you primitives. Libraries give you ergonomics:</p>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th>Role</th>
+<th>Style</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Flax</strong> (Google)</td>
+<td>Neural network layers</td>
+<td><code>nn.Module</code> with explicit state</td>
+</tr>
+<tr>
+<td><strong>Equinox</strong> (Patrick Kidger)</td>
+<td>Neural network layers</td>
+<td>Pytree-based, Pythonic</td>
+</tr>
+<tr>
+<td><strong>Optax</strong> (DeepMind)</td>
+<td>Optimizers + LR schedules</td>
+<td>Composable gradient transforms</td>
+</tr>
+<tr>
+<td><strong>Orbax</strong> (Google)</td>
+<td>Checkpointing</td>
+<td>Save/restore pytrees</td>
+</tr>
+<tr>
+<td><strong>CLU</strong> (Google)</td>
+<td>Metrics + logging</td>
+<td>Training loop utilities</td>
+</tr>
+</tbody></table>
+<p>Optax is the standard optimizer library. It separates the gradient transformation (Adam, SGD, clipping) from the parameter update, making it trivial to compose:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">optimizer = optax.chain(
+    optax.clip_by_global_norm(1.0),
+    optax.adam(learning_rate=1e-3),
+)</code></pre>
+      </div>
+    <h3 id="when-to-use-jax-vs-pytorch"><a class="anchor" href="#when-to-use-jax-vs-pytorch">#</a> When to Use JAX vs PyTorch</h3>
+<table>
+<thead>
+<tr>
+<th>Factor</th>
+<th>JAX</th>
+<th>PyTorch</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>TPU support</td>
+<td>First-class (Google built both)</td>
+<td>Community-maintained (torch_xla)</td>
+</tr>
+<tr>
+<td>GPU support</td>
+<td>Good (CUDA via XLA)</td>
+<td>Best-in-class (native CUDA)</td>
+</tr>
+<tr>
+<td>Debugging</td>
+<td>Hard (tracing + compilation)</td>
+<td>Easy (eager, line-by-line)</td>
+</tr>
+<tr>
+<td>Ecosystem</td>
+<td>Research-focused (Flax, Equinox)</td>
+<td>Massive (HuggingFace, torchvision, etc.)</td>
+</tr>
+<tr>
+<td>Hiring</td>
+<td>Niche (Google/DeepMind/Anthropic)</td>
+<td>Mainstream (everywhere)</td>
+</tr>
+<tr>
+<td>Large-scale training</td>
+<td>Superior (XLA, pmap, mesh)</td>
+<td>Good (FSDP, DeepSpeed)</td>
+</tr>
+<tr>
+<td>Prototyping speed</td>
+<td>Slower (functional overhead)</td>
+<td>Faster (mutate and go)</td>
+</tr>
+<tr>
+<td>Production inference</td>
+<td>TensorFlow Serving, Vertex AI</td>
+<td>TorchServe, Triton, ONNX</td>
+</tr>
+<tr>
+<td>Who uses it</td>
+<td>DeepMind (Gemini), Anthropic (Claude)</td>
+<td>Meta (Llama), OpenAI (GPT), Stability AI</td>
+</tr>
+</tbody></table>
+<p>The honest answer: use PyTorch unless you have a specific reason to use JAX. Those reasons are -- TPU access, need for per-example gradients, multi-device training at massive scale, or working at Google/DeepMind/Anthropic.</p>
+<h3 id="random-numbers-in-jax"><a class="anchor" href="#random-numbers-in-jax">#</a> Random Numbers in JAX</h3>
+<p>JAX does not have a global random state. Every random operation requires an explicit PRNG key:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">key = jax.random.PRNGKey(42)
+key1, key2 = jax.random.split(key)
+w = jax.random.normal(key1, shape=(784, 256))</code></pre>
+      </div>
+    <p>This is annoying at first. But it guarantees reproducibility across devices and compilations -- a property that PyTorch&#39;s <code>torch.manual_seed</code> cannot guarantee in multi-GPU settings.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">batchnorm-effect</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-setup-and-data"><a class="anchor" href="#step-1-setup-and-data">#</a> Step 1: Setup and Data</h3>
+<p>We will train a 3-layer MLP on MNIST using JAX and Optax. 784 inputs, two hidden layers of 256 and 128 neurons, 10 output classes.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import jax
+import jax.numpy as jnp
+from jax import random
+import optax
+
+def get_mnist_data():
+    from sklearn.datasets import fetch_openml
+    mnist = fetch_openml(&#39;mnist_784&#39;, version=1, as_frame=False, parser=&#39;auto&#39;)
+    X = mnist.data.astype(&#39;float32&#39;) / 255.0
+    y = mnist.target.astype(&#39;int&#39;)
+    X_train, X_test = X[:60000], X[60000:]
+    y_train, y_test = y[:60000], y[60000:]
+    return X_train, y_train, X_test, y_test</code></pre>
+      </div>
+    <h3 id="step-2-initialize-parameters"><a class="anchor" href="#step-2-initialize-parameters">#</a> Step 2: Initialize Parameters</h3>
+<p>No class. Just a function that returns a pytree:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def init_params(key):
+    k1, k2, k3 = random.split(key, 3)
+    scale1 = jnp.sqrt(2.0 / 784)
+    scale2 = jnp.sqrt(2.0 / 256)
+    scale3 = jnp.sqrt(2.0 / 128)
+    params = {
+        &#39;layer1&#39;: {
+            &#39;w&#39;: scale1 * random.normal(k1, (784, 256)),
+            &#39;b&#39;: jnp.zeros(256),
+        },
+        &#39;layer2&#39;: {
+            &#39;w&#39;: scale2 * random.normal(k2, (256, 128)),
+            &#39;b&#39;: jnp.zeros(128),
+        },
+        &#39;layer3&#39;: {
+            &#39;w&#39;: scale3 * random.normal(k3, (128, 10)),
+            &#39;b&#39;: jnp.zeros(10),
+        },
+    }
+    return params</code></pre>
+      </div>
+    <p>He-initialization, done manually. Three PRNG keys split from one seed. Every weight is an immutable array in a nested dict.</p>
+<h3 id="step-3-forward-pass"><a class="anchor" href="#step-3-forward-pass">#</a> Step 3: Forward Pass</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def forward(params, x):
+    x = jnp.dot(x, params[&#39;layer1&#39;][&#39;w&#39;]) + params[&#39;layer1&#39;][&#39;b&#39;]
+    x = jax.nn.relu(x)
+    x = jnp.dot(x, params[&#39;layer2&#39;][&#39;w&#39;]) + params[&#39;layer2&#39;][&#39;b&#39;]
+    x = jax.nn.relu(x)
+    x = jnp.dot(x, params[&#39;layer3&#39;][&#39;w&#39;]) + params[&#39;layer3&#39;][&#39;b&#39;]
+    return x
+
+def loss_fn(params, x, y):
+    logits = forward(params, x)
+    one_hot = jax.nn.one_hot(y, 10)
+    return -jnp.mean(jnp.sum(jax.nn.log_softmax(logits) * one_hot, axis=-1))</code></pre>
+      </div>
+    <p>Pure functions. Params in, prediction out. No <code>self</code>, no stored state. <code>loss_fn</code> computes cross-entropy from scratch -- softmax, log, negative mean.</p>
+<h3 id="step-4-jit-compiled-training-step"><a class="anchor" href="#step-4-jit-compiled-training-step">#</a> Step 4: JIT-Compiled Training Step</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@jax.jit
+def train_step(params, opt_state, x, y):
+    loss, grads = jax.value_and_grad(loss_fn)(params, x, y)
+    updates, opt_state = optimizer.update(grads, opt_state, params)
+    params = optax.apply_updates(params, updates)
+    return params, opt_state, loss
+
+@jax.jit
+def accuracy(params, x, y):
+    logits = forward(params, x)
+    preds = jnp.argmax(logits, axis=-1)
+    return jnp.mean(preds == y)</code></pre>
+      </div>
+    <p><code>jax.value_and_grad</code> returns both the loss value and the gradients in one pass. The <code>@jax.jit</code> decorator compiles both functions to XLA. After the first call, each training step runs without touching Python.</p>
+<h3 id="step-5-training-loop"><a class="anchor" href="#step-5-training-loop">#</a> Step 5: Training Loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">optimizer = optax.adam(learning_rate=1e-3)
+
+X_train, y_train, X_test, y_test = get_mnist_data()
+X_train, X_test = jnp.array(X_train), jnp.array(X_test)
+y_train, y_test = jnp.array(y_train), jnp.array(y_test)
+
+key = random.PRNGKey(0)
+params = init_params(key)
+opt_state = optimizer.init(params)
+
+batch_size = 128
+n_epochs = 10
+
+for epoch in range(n_epochs):
+    key, subkey = random.split(key)
+    perm = random.permutation(subkey, len(X_train))
+    X_shuffled = X_train[perm]
+    y_shuffled = y_train[perm]
+
+    epoch_loss = 0.0
+    n_batches = len(X_train) // batch_size
+    for i in range(n_batches):
+        start = i * batch_size
+        xb = X_shuffled[start:start + batch_size]
+        yb = y_shuffled[start:start + batch_size]
+        params, opt_state, loss = train_step(params, opt_state, xb, yb)
+        epoch_loss += loss
+
+    train_acc = accuracy(params, X_train[:5000], y_train[:5000])
+    test_acc = accuracy(params, X_test, y_test)
+    print(f&quot;Epoch {epoch + 1:2d} | Loss: {epoch_loss / n_batches:.4f} | &quot;
+          f&quot;Train Acc: {train_acc:.4f} | Test Acc: {test_acc:.4f}&quot;)</code></pre>
+      </div>
+    <p>10 epochs. ~97% test accuracy. The first epoch is slow (JIT compilation). Epochs 2-10 are fast.</p>
+<p>Notice what is missing: no <code>.zero_grad()</code>, no <code>.backward()</code>, no <code>.step()</code>. The entire update is one composed function call. Gradients are computed, transformed by Adam, and applied to parameters -- all inside <code>train_step</code>.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="flax-the-google-standard"><a class="anchor" href="#flax-the-google-standard">#</a> Flax: The Google Standard</h3>
+<p>Flax is the most common JAX neural network library. It adds <code>nn.Module</code> back, but with explicit state management:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import flax.linen as nn
+
+class MLP(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Dense(256)(x)
+        x = nn.relu(x)
+        x = nn.Dense(128)(x)
+        x = nn.relu(x)
+        x = nn.Dense(10)(x)
+        return x
+
+model = MLP()
+params = model.init(jax.random.PRNGKey(0), jnp.ones((1, 784)))
+logits = model.apply(params, x_batch)</code></pre>
+      </div>
+    <p>Same structure as PyTorch, but <code>params</code> is separate from the model. <code>model.init()</code> creates params. <code>model.apply(params, x)</code> runs the forward pass. The model object has no state.</p>
+<h3 id="equinox-the-pythonic-alternative"><a class="anchor" href="#equinox-the-pythonic-alternative">#</a> Equinox: The Pythonic Alternative</h3>
+<p>Equinox (by Patrick Kidger) represents models as pytrees:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import equinox as eqx
+
+model = eqx.nn.MLP(
+    in_size=784, out_size=10, width_size=256, depth=2,
+    activation=jax.nn.relu, key=jax.random.PRNGKey(0)
+)
+logits = model(x)</code></pre>
+      </div>
+    <p>The model itself is a pytree. No <code>.apply()</code> needed. Parameters are just the model&#39;s leaves. This is closer to how JAX thinks.</p>
+<h3 id="optax-composable-optimizers"><a class="anchor" href="#optax-composable-optimizers">#</a> Optax: Composable Optimizers</h3>
+<p>Optax decouples the gradient transformation from the update:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">schedule = optax.warmup_cosine_decay_schedule(
+    init_value=0.0, peak_value=1e-3,
+    warmup_steps=1000, decay_steps=50000
+)
+
+optimizer = optax.chain(
+    optax.clip_by_global_norm(1.0),
+    optax.adamw(learning_rate=schedule, weight_decay=0.01),
+)</code></pre>
+      </div>
+    <p>Gradient clipping, learning rate warmup, weight decay -- all composed as a chain of transforms. Each transform sees the gradients, modifies them, and passes them to the next. No monolithic optimizer class.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><strong>Installation:</strong></p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install jax jaxlib optax flax</code></pre>
+      </div>
+    <p>For GPU support:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install jax[cuda12]</code></pre>
+      </div>
+    <p>For TPU (Google Cloud):</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html</code></pre>
+      </div>
+    <p><strong>Performance gotchas:</strong></p>
+<ul>
+<li>First JIT call is slow (compilation). Warm up before benchmarking.</li>
+<li>Avoid Python loops over JAX arrays inside JIT. Use <code>jax.lax.scan</code> or <code>jax.lax.fori_loop</code>.</li>
+<li><code>jax.debug.print()</code> works inside JIT. Regular <code>print()</code> does not.</li>
+<li>Profile with <code>jax.profiler</code> or TensorBoard. XLA compilation can hide bottlenecks.</li>
+<li>JAX pre-allocates 75% of GPU memory by default. Set <code>XLA_PYTHON_CLIENT_PREALLOCATE=false</code> to disable.</li>
+</ul>
+<p><strong>Checkpointing:</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import orbax.checkpoint as ocp
+checkpointer = ocp.PyTreeCheckpointer()
+checkpointer.save(&#39;/tmp/model&#39;, params)
+restored = checkpointer.restore(&#39;/tmp/model&#39;)</code></pre>
+      </div>
+    <p><strong>This lesson produces:</strong></p>
+<ul>
+<li><code>outputs/prompt-jax-optimizer.md</code> -- a prompt for choosing the right JAX optimizer configuration</li>
+<li><code>outputs/skill-jax-patterns.md</code> -- a skill covering functional patterns in JAX</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add dropout to the MLP. In JAX, dropout requires a PRNG key -- thread a key through the forward pass and split it for each dropout layer. Compare test accuracy with and without.</p>
+</li>
+<li><p>Use <code>jax.vmap</code> to compute per-example gradients for a batch of 32 MNIST images. Compute the gradient norm for each example. Which examples have the largest gradients, and why?</p>
+</li>
+<li><p>Replace the manual forward function with a generic <code>mlp_forward(params, x)</code> that works for any number of layers. Use <code>jax.tree.leaves</code> to determine the depth automatically.</p>
+</li>
+<li><p>Benchmark the training step with and without <code>@jax.jit</code>. Time 100 steps of each. How large is the speedup on your hardware? What is the compilation overhead on the first call?</p>
+</li>
+<li><p>Implement gradient clipping by composing <code>optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-3))</code>. Train with and without clipping. Plot the gradient norm over training to see the effect.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>XLA</td>
+<td>&quot;The thing that makes JAX fast&quot;</td>
+<td>Accelerated Linear Algebra -- a compiler that fuses operations and generates optimized GPU/TPU kernels from a computation graph</td>
+</tr>
+<tr>
+<td>JIT</td>
+<td>&quot;Just-in-time compilation&quot;</td>
+<td>JAX traces the function on first call, compiles to XLA, then runs the compiled version on subsequent calls</td>
+</tr>
+<tr>
+<td>Pure function</td>
+<td>&quot;No side effects&quot;</td>
+<td>A function where the output depends only on inputs -- no global state, no mutation, no randomness without explicit keys</td>
+</tr>
+<tr>
+<td>vmap</td>
+<td>&quot;Auto-batching&quot;</td>
+<td>Transforms a function that processes one example into one that processes a batch, without rewriting</td>
+</tr>
+<tr>
+<td>pmap</td>
+<td>&quot;Auto-parallelism&quot;</td>
+<td>Replicates a function across multiple devices and splits the input batch</td>
+</tr>
+<tr>
+<td>Pytree</td>
+<td>&quot;Nested dict of arrays&quot;</td>
+<td>Any nested structure of lists, tuples, dicts, and arrays that JAX can traverse and transform</td>
+</tr>
+<tr>
+<td>Tracing</td>
+<td>&quot;Recording the computation&quot;</td>
+<td>JAX executes the function with abstract values to build a computation graph, without computing real results</td>
+</tr>
+<tr>
+<td>Functional autodiff</td>
+<td>&quot;grad of a function&quot;</td>
+<td>Computing derivatives by transforming functions, not by attaching gradient storage to tensors</td>
+</tr>
+<tr>
+<td>Optax</td>
+<td>&quot;JAX&#39;s optimizer library&quot;</td>
+<td>A composable library of gradient transformations -- Adam, SGD, clipping, scheduling -- that chain together</td>
+</tr>
+<tr>
+<td>Flax</td>
+<td>&quot;JAX&#39;s nn.Module&quot;</td>
+<td>Google&#39;s neural network library for JAX, adding layer abstractions while keeping state explicit</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>JAX documentation: <a href="https://jax.readthedocs.io/">https://jax.readthedocs.io/</a> -- the official docs, with excellent tutorials on grad, jit, and vmap</li>
+<li>&quot;JAX: composable transformations of Python+NumPy programs&quot; (Bradbury et al., 2018) -- the original paper explaining the design philosophy</li>
+<li>Flax documentation: <a href="https://flax.readthedocs.io/">https://flax.readthedocs.io/</a> -- Google&#39;s neural network library for JAX</li>
+<li>Patrick Kidger, &quot;Equinox: neural networks in JAX via callable PyTrees and filtered transformations&quot; (2021) -- the Pythonic alternative to Flax</li>
+<li>DeepMind, &quot;Optax: composable gradient transformation and optimisation&quot; -- the standard optimizer library</li>
+<li>&quot;You Don&#39;t Know JAX&quot; (Colin Raffel, 2020) -- a practical guide to JAX gotchas and patterns, from one of the T5 authors</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-intro-to-pytorch.html"><span>← Previous</span><b>intro to pytorch</b></a>
+      <a class="next" href="./13-debugging-neural-networks.html"><span>Next →</span><b>debugging neural networks</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

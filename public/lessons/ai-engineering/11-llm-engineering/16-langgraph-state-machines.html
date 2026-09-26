@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent State Machines — Graphs, Nodes, Checkpoints — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/16-langgraph-state-machines/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#the-skill">The Skill</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Agent State Machines — Graphs, Nodes, Checkpoints</h1>
+    <p class="lesson-sub">A ReAct loop written by hand is a `while True`. The same loop written as an explicit graph is something you can checkpoint, interrupt, branch, and time-travel through. The agent hasn&#39;t changed. The harness around it has.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 · 09 (Function Calling), Phase 11 · 14 (Model Context Protocol)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M74.0,83.6 L80.3,74.1 L86.7,83.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M69.3,78.2 L74.9,69.7 L80.6,78.2 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M64.5,72.9 L69.5,65.4 L74.5,72.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.7,75.4 L64.1,49.3 L81.5,75.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.9" y="43.3" width="33.5" height="33.5" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(236 58.7 60.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Agent State Machines</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— Graphs, Nodes…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You ship a function-calling agent. It works for three turns, then something goes wrong: the model tries a tool that returns 500, the user changes their mind mid-task, or the agent decides to refund an order without a human signing off. The <code>while True:</code> loop has no hooks. You can&#39;t pause it, you can&#39;t rewind it, and you can&#39;t branch off into &quot;what if the model had picked the other tool.&quot; The moment you ship this past a demo, the agent becomes a black box that either worked or didn&#39;t.</p>
+<p>The next step is obvious once you see it. The agent is already a state machine — system prompt plus message history plus pending tool calls plus the next action. Make the state machine explicit: nodes for &quot;the model thinks,&quot; &quot;a tool runs,&quot; &quot;a human approves,&quot; and edges for the conditional transitions between them. Once the graph is explicit, the harness gets four things for free: checkpointing (save state between steps), interrupts (pause for a human), streaming (stream tokens and intermediate events), and time-travel (rewind to a prior state and try a different branch).</p>
+<p>The reference implementation of this abstraction is LangGraph. It is not an agent framework in the LangChain sense (&quot;here is an AgentExecutor, good luck&quot;). It is a graph runtime with first-class state, first-class persistence, and first-class interrupts. The agent loop is something you draw, not something you hand-write.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/11-llm-engineering/16-langgraph-state-machines/assets/langgraph-stategraph.svg" alt="LangGraph StateGraph: nodes, edges, and the checkpointer" loading="lazy" /></figure></p>
+<p>A <code>StateGraph</code> has three things.</p>
+<ol>
+<li><strong>State.</strong> A typed dict (TypedDict or Pydantic model) that flows through the graph. Every node receives the full state and returns a partial update, which LangGraph merges using a <em>reducer</em> per field — <code>operator.add</code> for lists that should accumulate, overwrite by default.</li>
+<li><strong>Nodes.</strong> Python functions <code>state -&gt; partial_state</code>. Each is a discrete step: &quot;call the model,&quot; &quot;run tools,&quot; &quot;summarize.&quot;</li>
+<li><strong>Edges.</strong> Transitions between nodes. Static edges go one place. Conditional edges take a router function <code>state -&gt; next_node_name</code> so the graph can branch on model output.</li>
+</ol>
+<p>You compile the graph. Compile binds the topology, attaches a checkpointer (optional but essential for production), and returns a runnable. You invoke it with an initial state and a <code>thread_id</code>. Every step of execution persists a checkpoint keyed on <code>(thread_id, checkpoint_id)</code>.</p>
+<h3 id="the-four-superpowers"><a class="anchor" href="#the-four-superpowers">#</a> The four superpowers</h3>
+<p><strong>Checkpointing.</strong> Every node transition writes the new state to a store (in-memory for tests, Postgres/Redis/SQLite for prod). Resume by calling the graph again with the same <code>thread_id</code>. The graph picks up where it paused.</p>
+<p><strong>Interrupts.</strong> Mark a node with <code>interrupt_before=[&quot;human_review&quot;]</code> and execution stops before that node runs. The state persists. Your API responds to the user with &quot;awaiting approval.&quot; A later request to the same <code>thread_id</code> with <code>Command(resume=...)</code> resumes execution.</p>
+<p><strong>Streaming.</strong> <code>graph.stream(state, mode=&quot;updates&quot;)</code> yields state deltas as they happen. <code>mode=&quot;messages&quot;</code> streams the LLM tokens inside model nodes. <code>mode=&quot;values&quot;</code> yields full snapshots. You pick what to surface in your UI.</p>
+<p><strong>Time-travel.</strong> <code>graph.get_state_history(thread_id)</code> returns the full checkpoint log. Pass any prior <code>checkpoint_id</code> to <code>graph.invoke</code> and you fork from that point. Great for debugging (&quot;what if the model had picked tool B instead?&quot;) and for regression tests that replay production traces.</p>
+<h3 id="reducers-are-the-point"><a class="anchor" href="#reducers-are-the-point">#</a> Reducers are the point</h3>
+<p>Every state field has a reducer. Most defaults are fine — a new value overwrites the old. But message lists need <code>operator.add</code> so new messages append instead of replacing. Parallel edges merge their updates through the reducer. If two nodes both update <code>messages</code> and you forgot the <code>Annotated[list, add_messages]</code>, the second wins silently and you lose half the turn. The reducer is the only subtle thing in the library; get it right and the rest composes.</p>
+<h3 id="the-react-graph-in-four-nodes"><a class="anchor" href="#the-react-graph-in-four-nodes">#</a> The ReAct graph in four nodes</h3>
+<p>A production ReAct agent is four nodes and two edges:</p>
+<ol>
+<li><code>agent</code> — calls the LLM with the current message history. Returns the assistant message (which may contain tool_calls).</li>
+<li><code>tools</code> — executes any tool_calls in the last assistant message, appends the tool results as tool messages.</li>
+<li>A conditional edge from <code>agent</code> that routes to <code>tools</code> if the last message has tool_calls, else to <code>END</code>.</li>
+<li>A static edge from <code>tools</code> back to <code>agent</code>.</li>
+</ol>
+<p>That is it. You get the full ReAct loop (Thought → Action → Observation → Thought → …) with checkpointing, interrupts, and streaming, in roughly 40 lines of code.</p>
+<h3 id="stategraph-vs-send-fanout"><a class="anchor" href="#stategraph-vs-send-fanout">#</a> StateGraph vs Send (fanout)</h3>
+<p><code>Send(node_name, state)</code> lets a node dispatch parallel subgraphs. Example: the agent decides to query three retrievers at once. Each <code>Send</code> spawns a parallel execution of the target node; their outputs merge through the state reducer. This is how LangGraph expresses the orchestrator-workers pattern without threading primitives.</p>
+<h3 id="subgraphs"><a class="anchor" href="#subgraphs">#</a> Subgraphs</h3>
+<p>A compiled graph can be a node in another graph. The outer graph sees a single node; the inner graph has its own state and its own checkpoints. This is how teams build supervisor-worker agents: the supervisor graph routes user intent to a per-domain worker subgraph.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-state-graph-ledger</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-state-and-nodes"><a class="anchor" href="#step-1-state-and-nodes">#</a> Step 1: state and nodes</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from typing import Annotated, TypedDict
+from langchain_core.messages import AnyMessage, HumanMessage, AIMessage
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import MemorySaver
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+
+def agent_node(state: State) -&gt; dict:
+    response = llm.invoke(state[&quot;messages&quot;])
+    return {&quot;messages&quot;: [response]}
+
+def should_continue(state: State) -&gt; str:
+    last = state[&quot;messages&quot;][-1]
+    return &quot;tools&quot; if getattr(last, &quot;tool_calls&quot;, None) else END
+
+tool_node = ToolNode(tools=[search_web, read_file])
+
+graph = StateGraph(State)
+graph.add_node(&quot;agent&quot;, agent_node)
+graph.add_node(&quot;tools&quot;, tool_node)
+graph.set_entry_point(&quot;agent&quot;)
+graph.add_conditional_edges(&quot;agent&quot;, should_continue, {&quot;tools&quot;: &quot;tools&quot;, END: END})
+graph.add_edge(&quot;tools&quot;, &quot;agent&quot;)
+
+app = graph.compile(checkpointer=MemorySaver())</code></pre>
+      </div>
+    <p><code>add_messages</code> is the reducer that makes the message list accumulate instead of overwrite. Forgetting it is the most common LangGraph bug.</p>
+<h3 id="step-2-run-with-a-thread"><a class="anchor" href="#step-2-run-with-a-thread">#</a> Step 2: run with a thread</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">config = {&quot;configurable&quot;: {&quot;thread_id&quot;: &quot;user-42&quot;}}
+for event in app.stream(
+    {&quot;messages&quot;: [HumanMessage(&quot;find the Anthropic headquarters address&quot;)]},
+    config,
+    stream_mode=&quot;updates&quot;,
+):
+    print(event)</code></pre>
+      </div>
+    <p>Every update is a dict <code>{node_name: state_delta}</code>. Your frontend can stream these to the UI so users see &quot;agent is thinking… calling search_web… got result… answering.&quot;</p>
+<h3 id="step-3-add-a-human-in-the-loop-interrupt"><a class="anchor" href="#step-3-add-a-human-in-the-loop-interrupt">#</a> Step 3: add a human-in-the-loop interrupt</h3>
+<p>Mark a node so execution pauses before it runs.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">app = graph.compile(
+    checkpointer=MemorySaver(),
+    interrupt_before=[&quot;tools&quot;],  # pause before every tool call
+)
+
+state = app.invoke({&quot;messages&quot;: [HumanMessage(&quot;delete the production database&quot;)]}, config)
+# state[&quot;__interrupt__&quot;] is set. Inspect proposed tool calls.
+# If approved:
+from langgraph.types import Command
+app.invoke(Command(resume=True), config)
+# If denied: write a rejection message and resume
+app.update_state(config, {&quot;messages&quot;: [AIMessage(&quot;Blocked by human reviewer.&quot;)]})</code></pre>
+      </div>
+    <p>The state, the checkpoint, and the thread all persist across the interrupt. Nothing is in memory except during execution.</p>
+<h3 id="step-4-time-travel-for-debugging"><a class="anchor" href="#step-4-time-travel-for-debugging">#</a> Step 4: time-travel for debugging</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">history = list(app.get_state_history(config))
+for snapshot in history:
+    print(snapshot.values[&quot;messages&quot;][-1].content[:80], snapshot.config)
+
+# Fork from a prior checkpoint
+target = history[3].config  # three steps back
+for event in app.stream(None, target, stream_mode=&quot;values&quot;):
+    pass  # replay from that point forward</code></pre>
+      </div>
+    <p>Passing <code>None</code> as the input replays from the given checkpoint; passing a value appends it as an update to that checkpoint&#39;s state before resuming. This is how you reproduce a bad agent run without re-running the whole conversation.</p>
+<h3 id="step-5-swap-the-checkpointer-for-production"><a class="anchor" href="#step-5-swap-the-checkpointer-for-production">#</a> Step 5: swap the checkpointer for production</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from langgraph.checkpoint.postgres import PostgresSaver
+
+with PostgresSaver.from_conn_string(&quot;postgresql://...&quot;) as checkpointer:
+    checkpointer.setup()
+    app = graph.compile(checkpointer=checkpointer)</code></pre>
+      </div>
+    <p>SQLite, Redis, and Postgres are shipped. <code>MemorySaver</code> is for tests. Anything that persists across restarts wants a real store.</p>
+<h2 id="the-skill"><a class="anchor" href="#the-skill">#</a> The Skill</h2>
+<blockquote>
+<p>You build agents as graphs, not as <code>while True</code> loops.</p>
+</blockquote>
+<p>Before you reach for LangGraph, do a 60-second design:</p>
+<ol>
+<li><strong>Name the nodes.</strong> Every discrete decision or side-effecting action is a node. &quot;Agent thinks,&quot; &quot;tool runs,&quot; &quot;reviewer approves,&quot; &quot;response streams.&quot; If you can&#39;t list them, the task is not agent-shaped yet.</li>
+<li><strong>Declare the state.</strong> Minimal TypedDict with a reducer for every list field. Do not stuff everything into <code>messages</code>; hoist task-specific fields (a working <code>plan</code>, a <code>budget</code> counter, a <code>retrieved_docs</code> list) to the top level.</li>
+<li><strong>Draw the edges.</strong> Static unless the next step depends on model output. Every conditional edge needs a router function with named branches.</li>
+<li><strong>Choose a checkpointer up front.</strong> <code>MemorySaver</code> for tests, Postgres/Redis/SQLite for anything else. Do not ship without one — no checkpointer means no resume, no interrupt, no time-travel.</li>
+<li><strong>Decide interrupts before tools run, not after.</strong> Approvals go on the edge into a side-effecting node so you can cancel before harm; validation goes on the edge out of the model so you can reject bad calls cheaply.</li>
+<li><strong>Stream by default.</strong> <code>mode=&quot;updates&quot;</code> for the UI, <code>mode=&quot;messages&quot;</code> for token-level streaming inside model nodes, <code>mode=&quot;values&quot;</code> for full snapshots during eval.</li>
+</ol>
+<p>Refuse to ship a LangGraph agent that has no checkpointer. Refuse to ship one that interrupts <em>after</em> the side effect. Refuse to ship a <code>messages</code> field without <code>add_messages</code> as its reducer.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Implement the four-node ReAct graph above with a calculator tool and a web-search tool. Verify that <code>list(app.get_state_history(config))</code> returns at least four checkpoints for a two-turn conversation.</li>
+<li><strong>Medium.</strong> Add a <code>planner</code> node that runs before <code>agent</code> and writes a structured <code>plan: list[str]</code> into state. Have <code>agent</code> mark plan steps as done. Fail the test if <code>plan</code> is lost across a checkpoint resume (wrong reducer).</li>
+<li><strong>Hard.</strong> Build a supervisor graph that routes between three subgraphs (<code>researcher</code>, <code>writer</code>, <code>reviewer</code>) using <code>Send</code>. Each subgraph has its own state and checkpointer. Add an <code>interrupt_before=[&quot;writer&quot;]</code> on the outer graph so a human can approve the research brief. Confirm that time-travel from a prior checkpoint re-runs only the forked branch.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>StateGraph</td>
+<td>&quot;The LangGraph graph&quot;</td>
+<td>The builder object you add nodes and edges to before compile.</td>
+</tr>
+<tr>
+<td>Reducer</td>
+<td>&quot;How the field merges&quot;</td>
+<td>A function <code>(old, new) -&gt; merged</code> applied when a node returns an update for that field; default is overwrite, <code>add_messages</code> appends.</td>
+</tr>
+<tr>
+<td>Thread</td>
+<td>&quot;A conversation ID&quot;</td>
+<td>A <code>thread_id</code> string that scopes all checkpoints for one session.</td>
+</tr>
+<tr>
+<td>Checkpoint</td>
+<td>&quot;A paused state&quot;</td>
+<td>A persisted snapshot of the full graph state after a node transition, keyed on <code>(thread_id, checkpoint_id)</code>.</td>
+</tr>
+<tr>
+<td>Interrupt</td>
+<td>&quot;Pause for a human&quot;</td>
+<td><code>interrupt_before</code> / <code>interrupt_after</code> stop execution at a node boundary; resume with <code>Command(resume=...)</code>.</td>
+</tr>
+<tr>
+<td>Time-travel</td>
+<td>&quot;Fork from a prior step&quot;</td>
+<td><code>graph.invoke(None, config_with_old_checkpoint_id)</code> replays from that checkpoint forward.</td>
+</tr>
+<tr>
+<td>Send</td>
+<td>&quot;Parallel subgraph dispatch&quot;</td>
+<td>A constructor a node can return to spawn N parallel executions of a target node.</td>
+</tr>
+<tr>
+<td>Subgraph</td>
+<td>&quot;A compiled graph as a node&quot;</td>
+<td>A compiled StateGraph used as a node in another graph; preserves its own state scope.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://langchain-ai.github.io/langgraph/">LangGraph documentation</a> — canonical reference for StateGraph, reducers, checkpointers, and interrupts.</li>
+<li><a href="https://langchain-ai.github.io/langgraph/concepts/low_level/">LangGraph concepts: state, reducers, checkpointers</a> — the mental model this lesson uses, straight from the source.</li>
+<li><a href="https://langchain-ai.github.io/langgraph/concepts/persistence/">LangGraph Persistence and Checkpoints</a> — the detail on Postgres/SQLite/Redis stores, checkpoint namespaces, and thread IDs.</li>
+<li><a href="https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/">LangGraph Human-in-the-loop</a> — <code>interrupt_before</code>, <code>interrupt_after</code>, <code>Command(resume=...)</code>, and the edit-state pattern.</li>
+<li><a href="https://arxiv.org/abs/2210.03629">Yao et al., &quot;ReAct: Synergizing Reasoning and Acting in Language Models&quot; (ICLR 2023)</a> — the pattern every LangGraph agent implements; read it for the reasoning trace rationale.</li>
+<li><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic — Building effective agents (Dec 2024)</a> — which graph shapes (chain, router, orchestrator-workers, evaluator-optimizer) to prefer and when.</li>
+<li>Phase 11 · 09 (Function Calling) — the tool-call primitive every LangGraph agent node reuses.</li>
+<li>Phase 11 · 14 (Model Context Protocol) — external tool discovery that plugs into a LangGraph <code>ToolNode</code> via the MCP adapter.</li>
+<li>Phase 11 · 17 (Agent framework tradeoffs) — when to pick LangGraph over CrewAI, AutoGen, or Agno.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-prompt-caching.html"><span>← Previous</span><b>prompt caching</b></a>
+      <a class="next" href="./17-agent-framework-tradeoffs.html"><span>Next →</span><b>agent framework tradeoffs</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

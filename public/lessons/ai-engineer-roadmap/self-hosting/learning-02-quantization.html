@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>02 — Quantization — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/Self-hosting/learning/02-quantization.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Self-hosting</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Self-hosting</div>
+    <h1 class="lesson-title">02 — Quantization</h1>
+    <p class="lesson-sub">**Module goal:** Understand why the same 8B model takes 16 GB, 8 GB, or 4 GB depending on your choices — and what you lose (or don&#39;t lose) at each step down. Master the four dominant quantization schemes (bnb-int8, GPTQ, AWQ, GGUF Q4_K_M) and know which to pick for which deployment.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Self-hosting le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="98.8" cy="96.5" r="8.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M85.5,96.3 L93.3,84.5 L101.2,96.3 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M80.7,91.0 L87.9,80.2 L95.1,91.0 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.9,85.7 L82.5,75.8 L89.1,85.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M71.1,80.3 L77.1,71.4 L83.0,80.3 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="96" lengthAdjust="spacingAndGlyphs">SELF-HOSTING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">02 — Quantization</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p><strong>Quantization</strong> = representing model weights (and sometimes activations) in fewer bits than their trained precision (fp16/bf16). Instead of each weight being 16 bits (~2 bytes), quantized weights take 8, 4, 3, or even 2 bits.</p>
+<p>Why quantize:</p>
+<ol>
+<li><strong>Fit larger models on smaller hardware.</strong> A 70B model in bf16 is ~140 GB; in 4-bit AWQ it&#39;s ~35 GB — fits on a single 48 GB card.</li>
+<li><strong>Faster inference.</strong> Fewer bytes to move through memory → higher throughput on memory-bandwidth-bound workloads (which most LLM inference is).</li>
+<li><strong>Lower serving cost.</strong> Smaller VRAM → cheaper GPU tier.</li>
+</ol>
+<p>Quality cost: modest, if done right. A well-quantized 4-bit model retains 95-99% of the bf16 baseline&#39;s quality on most benchmarks. Below 4-bit, quality drops noticeably.</p>
+<p><strong>The taxonomy that matters in 2026:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Bits</th>
+<th>Tool</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>bf16 / fp16</strong></td>
+<td>16</td>
+<td>native</td>
+<td>Reference; training; when VRAM allows</td>
+</tr>
+<tr>
+<td><strong>bnb-int8</strong></td>
+<td>8</td>
+<td>bitsandbytes</td>
+<td>Quick 2× VRAM reduction; slow inference</td>
+</tr>
+<tr>
+<td><strong>GPTQ</strong></td>
+<td>4 (or 3, 2)</td>
+<td>AutoGPTQ / vLLM</td>
+<td>Server inference (good throughput)</td>
+</tr>
+<tr>
+<td><strong>AWQ</strong></td>
+<td>4</td>
+<td>vLLM / AutoAWQ</td>
+<td>Server inference (~fastest 4-bit)</td>
+</tr>
+<tr>
+<td><strong>GGUF Q4_K_M</strong></td>
+<td>~4 (mixed)</td>
+<td>llama.cpp / Ollama</td>
+<td>Desktop / edge; CPU + GPU offload</td>
+</tr>
+<tr>
+<td><strong>NF4</strong></td>
+<td>4</td>
+<td>bitsandbytes</td>
+<td>Training (QLoRA — Module 02 of fine-tuning); not primarily a serving format</td>
+</tr>
+</tbody></table>
+<p><strong>The rule of thumb:</strong></p>
+<ul>
+<li>On production GPU serving with vLLM: <strong>AWQ</strong> (fastest) or <strong>GPTQ</strong> (widely available)</li>
+<li>On consumer hardware / Mac / CPU serving: <strong>GGUF Q4_K_M</strong></li>
+<li>For quick experiments where speed doesn&#39;t matter: <strong>bnb-int8</strong></li>
+<li>For training-time quantization: <strong>NF4 via QLoRA</strong></li>
+</ul>
+<p><strong>Below 4-bit</strong> (Q3, Q2, INT2) exists but quality drops meaningfully; consider only for extreme resource constraints and always benchmark.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-the-basics-what-quantization-actually-is"><a class="anchor" href="#21-the-basics-what-quantization-actually-is">#</a> 2.1 The Basics — What &quot;Quantization&quot; Actually Is</h3>
+<p>A weight tensor is a bunch of floating-point numbers. Quantization maps them to a discrete grid of integers, storing:</p>
+<ul>
+<li>The quantized integer per weight (say, 4 bits)</li>
+<li>A <strong>scale</strong> factor (fp16/fp32) per group of weights (say, per row or per 128-weight block) so we can approximately recover the original: $w \approx s \cdot q$</li>
+</ul>
+<p>At load / inference time:</p>
+<ul>
+<li>Dequantize back to bf16 in tiles (<strong>dequant-on-the-fly</strong>), then run the matmul</li>
+<li>Or use a specialized kernel that does INT × BF16 → BF16 without full dequant (faster)</li>
+</ul>
+<p>Symmetric vs asymmetric:</p>
+<ul>
+<li><strong>Symmetric</strong>: range is $[-a, +a]$; quantization is <code>w / s → q</code>. Simple, fast.</li>
+<li><strong>Asymmetric</strong>: range is $[a_{\min}, a_{\max}]$; extra <code>zero_point</code> parameter per group. Slightly better fit for skewed distributions; slower.</li>
+</ul>
+<p>Per-tensor vs per-row vs per-block-of-N:</p>
+<ul>
+<li><strong>Per-tensor</strong>: one scale for the whole weight matrix. Fastest, worst fit.</li>
+<li><strong>Per-row/column</strong>: one scale per output channel. Better.</li>
+<li><strong>Per-block (group_size)</strong>: one scale per group of ~64-128 weights. Best fit, more overhead.</li>
+</ul>
+<p>Modern schemes (GPTQ, AWQ) use per-block with group sizes of 64 or 128.</p>
+<h3 id="22-gptq"><a class="anchor" href="#22-gptq">#</a> 2.2 GPTQ</h3>
+<p><strong>GPTQ (Frantar et al., 2022)</strong> was the first widely-adopted 4-bit LLM quantization scheme. Key insight: don&#39;t just round each weight independently; use <strong>calibration data</strong> (a small dataset of representative inputs) and adjust remaining weights to compensate for each rounding error, minimizing overall reconstruction loss.</p>
+<p>Algorithm sketch:</p>
+<ol>
+<li>Take a small calibration set (~128-1000 samples of typical prompts)</li>
+<li>For each weight matrix, process columns left-to-right:<ul>
+<li>Quantize the current column</li>
+<li>Compute the resulting error</li>
+<li>Adjust unquantized columns to compensate (Hessian-based update)</li>
+</ul>
+</li>
+<li>Store quantized weights + scales</li>
+</ol>
+<p>Result: 4-bit models very close to bf16 quality (usually within 1% on MMLU / HellaSwag).</p>
+<p>Practical use:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># Load a pre-quantized GPTQ model in vLLM
+python -m vllm.entrypoints.openai.api_server \
+    --model TheBloke/Llama-2-70B-Chat-GPTQ \
+    --quantization gptq</code></pre>
+      </div>
+    <p>Pros: mature, wide model coverage on Hugging Face (TheBloke, hugging-quants, LoneStriker, and modern QuantFactory repos), well-supported.</p>
+<p>Cons: needs calibration data to produce good quality; the calibration step is offline (produces the quantized checkpoint, not a runtime option).</p>
+<h3 id="23-awq-activation-aware-weight-quantization"><a class="anchor" href="#23-awq-activation-aware-weight-quantization">#</a> 2.3 AWQ (Activation-aware Weight Quantization)</h3>
+<p><strong>AWQ (Lin et al., 2023)</strong> observes that not all weights matter equally — some are much more important because they correspond to <em>large activations</em>. Quantizing critical weights more carefully protects quality.</p>
+<p>Algorithm sketch:</p>
+<ol>
+<li>Take calibration data; run inference; measure activation magnitudes</li>
+<li>Identify the top ~1% &quot;salient&quot; weight channels (those with big activations)</li>
+<li>Scale down those channels&#39; inputs (equivalent to protecting those weights)</li>
+<li>Then quantize all weights to 4-bit uniformly</li>
+</ol>
+<p>Result: comparable quality to GPTQ, often <em>slightly faster</em> inference kernels, and simpler to implement per-model.</p>
+<p>Practical use:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python -m vllm.entrypoints.openai.api_server \
+    --model TheBloke/Llama-3.1-70B-Instruct-AWQ \
+    --quantization awq</code></pre>
+      </div>
+    <p>Or <code>--quantization awq_marlin</code> on newer vLLM for the fastest AWQ kernel path (requires Ampere+).</p>
+<p><strong>GPTQ vs AWQ:</strong> in benchmarks they&#39;re comparable in quality. AWQ tends to have slightly faster inference kernels in vLLM. Use whichever pre-quantized checkpoint exists for your model; if both, prefer AWQ for serving throughput.</p>
+<h3 id="24-gguf-and-llamacpp"><a class="anchor" href="#24-gguf-and-llamacpp">#</a> 2.4 GGUF and llama.cpp</h3>
+<p><strong>GGUF</strong> (GGML Universal Format) is the model format used by <strong>llama.cpp</strong>, the C++ inference engine optimized for CPU and consumer GPU inference. Ollama (the popular desktop LLM tool) wraps llama.cpp.</p>
+<p>GGUF supports many quantization levels:</p>
+<table>
+<thead>
+<tr>
+<th>GGUF quant</th>
+<th>Effective bits</th>
+<th>Quality</th>
+<th>Speed</th>
+<th>Size (7B model)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>F16 / BF16</td>
+<td>16</td>
+<td>Reference</td>
+<td>Slowest</td>
+<td>~13 GB</td>
+</tr>
+<tr>
+<td>Q8_0</td>
+<td>8</td>
+<td>Excellent</td>
+<td>Fast</td>
+<td>~7 GB</td>
+</tr>
+<tr>
+<td>Q6_K</td>
+<td>~6.5</td>
+<td>Very good</td>
+<td>Fast</td>
+<td>~5.5 GB</td>
+</tr>
+<tr>
+<td>Q5_K_M</td>
+<td>~5.5</td>
+<td>Very good</td>
+<td>Fast</td>
+<td>~5 GB</td>
+</tr>
+<tr>
+<td><strong>Q4_K_M</strong></td>
+<td>~4.5</td>
+<td>Good (sweet spot)</td>
+<td>Very fast</td>
+<td>~4.4 GB</td>
+</tr>
+<tr>
+<td>Q4_K_S</td>
+<td>~4.3</td>
+<td>Slightly worse than Q4_K_M</td>
+<td>Faster</td>
+<td>~4 GB</td>
+</tr>
+<tr>
+<td>Q3_K_M</td>
+<td>~3.3</td>
+<td>Noticeable drop</td>
+<td>Fastest</td>
+<td>~3.5 GB</td>
+</tr>
+<tr>
+<td>Q2_K</td>
+<td>~2.6</td>
+<td>Quality drops significantly</td>
+<td>Fastest</td>
+<td>~2.7 GB</td>
+</tr>
+</tbody></table>
+<p><strong>Q4_K_M is the widely-agreed-on sweet spot</strong> for consumer / edge deployment. Ollama&#39;s default is often Q4_K_M or Q5_K_M for popular models.</p>
+<p>Convert Hugging Face → GGUF:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># From llama.cpp repo
+python convert_hf_to_gguf.py ./merged/my-model --outtype bf16
+./llama-quantize ./merged/my-model/ggml-model-bf16.gguf ./my-model-Q4_K_M.gguf Q4_K_M</code></pre>
+      </div>
+    <p>Serve via Ollama:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs"># Create a Modelfile pointing at the GGUF
+echo &#39;FROM ./my-model-Q4_K_M.gguf&#39; &gt; Modelfile
+ollama create my-model -f Modelfile
+ollama run my-model</code></pre>
+      </div>
+    <p>Or via llama.cpp&#39;s server directly:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">./llama-server -m my-model-Q4_K_M.gguf --host 0.0.0.0 --port 8080</code></pre>
+      </div>
+    <p>GGUF&#39;s kill features:</p>
+<ul>
+<li><strong>Memory-mapped loading</strong> — model doesn&#39;t fully load into RAM; pages in on demand</li>
+<li><strong>CPU + GPU offload</strong> — offload N layers to GPU, rest run on CPU. Enables serving models larger than your VRAM.</li>
+<li><strong>Mac Metal support</strong> — best-in-class performance on Apple Silicon (M1/M2/M3/M4)</li>
+<li><strong>Rock-solid single-user desktop UX</strong> — Ollama is what most developers &quot;just try&quot; LLMs on</li>
+</ul>
+<p>Downside: <strong>not competitive with vLLM for high-throughput multi-user server workloads.</strong> Use GGUF for local/edge; use AWQ/GPTQ in vLLM for server.</p>
+<h3 id="25-bnb-int8-bitsandbytes"><a class="anchor" href="#25-bnb-int8-bitsandbytes">#</a> 2.5 bnb-int8 (bitsandbytes)</h3>
+<p>The oldest and simplest option: <code>load_in_8bit=True</code> via bitsandbytes. Converts weights to int8 at load time (no calibration required).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+model = AutoModelForCausalLM.from_pretrained(
+    &quot;meta-llama/Llama-3.1-8B-Instruct&quot;,
+    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+    device_map=&quot;auto&quot;,
+)</code></pre>
+      </div>
+    <p>Pros: zero prep work, one config flag.</p>
+<p>Cons: <strong>slow inference</strong>. bitsandbytes&#39; int8 kernels are unoptimized compared to GPTQ/AWQ/GGUF specialized kernels. Fine for VRAM reduction in experiments; <strong>do not use for production serving.</strong></p>
+<h3 id="26-choosing-quantization-a-decision-tree"><a class="anchor" href="#26-choosing-quantization-a-decision-tree">#</a> 2.6 Choosing Quantization: A Decision Tree</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Are you serving on a server GPU with vLLM/TGI?
+├── Yes → AWQ (preferred) or GPTQ (if only that exists). NEVER bnb-int8 for prod serving.
+│         What VRAM do you have?
+│         ├── &gt;= 2× model_size_bf16 → serve bf16 (no quantization needed)
+│         ├── ~= 1× model_size_bf16 → 8-bit if you must; but consider 4-bit for headroom
+│         └── &lt;&lt; 1× model_size_bf16 → 4-bit (AWQ / GPTQ); 3-bit only if forced
+│
+├── Local / desktop / Mac?
+│   └── GGUF Q4_K_M (Ollama or llama.cpp)
+│
+├── Training (fine-tuning)?
+│   └── NF4 via QLoRA (see fine-tuning/learning/02-peft-lora.md)
+│
+└── Just experimenting for size reduction, don&#39;t care about latency?
+    └── bnb-int8 for quick iteration</code></pre>
+      </div>
+    <h3 id="27-measuring-quality-loss"><a class="anchor" href="#27-measuring-quality-loss">#</a> 2.7 Measuring Quality Loss</h3>
+<p>You <em>must</em> eval every quantized model against its bf16 baseline before shipping. Standard checks:</p>
+<ol>
+<li><strong>Perplexity on a text corpus</strong> (WikiText-2 is the traditional benchmark). Perplexity ratio quantized/base should be within 1-3%.</li>
+<li><strong>MMLU / HellaSwag / GSM8k sample</strong>. Aggregate score drop &lt; 2 percentage points is typically acceptable.</li>
+<li><strong>Your task-specific golden set</strong> (Month 6 Module 08). This is the one that matters — some tasks are more sensitive to quantization than others (math and structured output particularly so).</li>
+<li><strong>Long-context behavior</strong>. Some quantization schemes degrade at long context; test if your workload has long prompts.</li>
+</ol>
+<p>Rule: <strong>never ship a quantized model without measuring against the bf16 reference on your task.</strong> &quot;AWQ is usually within 1%&quot; is not a shipping justification.</p>
+<p><code>[IMG-SH02-01]</code> — <em>Prompt: A four-panel comparison chart of quantization formats. Panel 1: bar chart of VRAM requirement for Llama 3.1 70B at fp16 (140 GB, red), int8 (70 GB, orange), int4 AWQ (35 GB, green), Q4_K_M GGUF (~38 GB, green-yellow). Panel 2: bar chart of MMLU score preservation (all clustered around baseline ~85%, with tiny drops shown at ~-0.5% to ~-1.5%). Panel 3: bar chart of throughput (tokens/sec) at concurrency 32, with int4 AWQ topping, bf16 next, int8 significantly behind. Panel 4: decision tree flowchart from &quot;Are you serving on GPU?&quot; leading to AWQ/GPTQ vs GGUF vs bnb-int8. Clean data-vis style, muted palette, clearly labeled.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-jpeg-for-model-weights"><a class="anchor" href="#model-1-jpeg-for-model-weights">#</a> Model 1: JPEG for Model Weights</h3>
+<p>Everyone knows JPEG compression: it drops the highest-frequency detail in an image, saving 90%+ of the bytes with imperceptible quality loss on most images (and terrible artifacts on some — text, sharp edges, gradients).</p>
+<p>Quantization is JPEG for LLM weights. Same trade: much smaller, mostly imperceptible loss, catastrophic on some inputs. And like JPEG, the choice of quality setting matters: Q4_K_M is the &quot;JPEG quality 90&quot; — great default. Q2_K is &quot;JPEG quality 30&quot; — visibly bad on many images. GPTQ vs AWQ is roughly &quot;JPEG vs WebP&quot; — different encoders with slightly different quality/speed trade-offs but similar core idea.</p>
+<p>Corollary that saves lives: never assume compression is free. <strong>Test it on your workload.</strong> JPEG artifacts destroy text-heavy images; quantization artifacts destroy math and structured-output tasks disproportionately.</p>
+<h3 id="model-2-selective-note-taking"><a class="anchor" href="#model-2-selective-note-taking">#</a> Model 2: Selective Note-Taking</h3>
+<p>Imagine you&#39;re a student summarizing a 500-page textbook.</p>
+<ul>
+<li><strong>bf16 = photocopying every page.</strong> Lossless, big, slow.</li>
+<li><strong>int8 = writing detailed notes on every chapter.</strong> Half the size, mostly the same information.</li>
+<li><strong>int4 AWQ = highlighting the important passages and paraphrasing the rest.</strong> Quarter the size; you know which parts you focused on protecting.</li>
+<li><strong>int2 = one-sentence chapter summaries.</strong> Barely useful for anything specific.</li>
+</ul>
+<p>AWQ&#39;s &quot;activation-aware&quot; is the highlighter: it decides which weights <em>matter most</em> (based on activation magnitudes on real data) and protects them more carefully. GPTQ&#39;s approach is more like taking notes column-by-column and correcting mistakes as you go. Both work. Both are compression by prioritization.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — &quot;8-bit will halve my VRAM and cost me nothing.&quot;</strong>
+Partly true (halves VRAM), partly wrong (costs you a lot in serving throughput if you use bitsandbytes). The bitsandbytes int8 path in inference is much slower than either bf16 native or AWQ int4. If you need 8-bit for VRAM reasons, prefer GGUF Q8_0 (llama.cpp path) or find an AWQ int4 (which is smaller, faster, and comparable quality) instead. <strong>Never deploy <code>load_in_8bit=True</code> to production; it&#39;s a debugging tool.</strong></p>
+<p><strong>Pitfall #2 — Skipping the quality evaluation.</strong>
+&quot;AWQ is usually within 1%&quot; is a paper-average statement. Your task may be one of the sensitivity outliers. Common cases where int4 quantization visibly hurts:</p>
+<ul>
+<li>Math (GSM8k, MATH benchmarks)</li>
+<li>Structured JSON output at long lengths</li>
+<li>Long-context QA (128k+)</li>
+<li>Multi-step tool calling</li>
+</ul>
+<p>Always run: your golden set + a general-capability check + a long-context stress test before shipping. If quality drops &gt; 3 percentage points on a critical metric, back off to 8-bit or bf16.</p>
+<p><strong>Pitfall #3 — Confusing training-time and inference-time quantization.</strong>
+QLoRA&#39;s NF4 (fine-tuning Module 02) is used during <strong>training</strong> — the base model is quantized while frozen; adapters train in bf16. That&#39;s a very different setting from serving a pre-quantized checkpoint at inference time. Common bug: someone hears &quot;QLoRA uses 4-bit&quot; and tries to load a QLoRA-trained model directly for inference in 4-bit NF4 — which mostly works but isn&#39;t the same as an AWQ/GPTQ-quantized model designed for serving. For production serving of a fine-tune: merge the adapter into fp16/bf16 base, then quantize that with AWQ or GPTQ for the deployment.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> For high-throughput server-side serving of Llama 3.1 70B, which quantization is most appropriate?
+A) bnb-int8
+B) AWQ (int4)
+C) GGUF Q4_K_M
+D) fp32</p>
+<p><strong>Q2 (short):</strong> Explain the core idea of AWQ (Activation-aware Weight Quantization) in two sentences.</p>
+<p><strong>Q3 (MC):</strong> GGUF is most appropriate for:
+A) High-throughput multi-tenant server serving
+B) Consumer / desktop / edge inference, especially on Mac
+C) Model training
+D) Never — it&#39;s deprecated</p>
+<p><strong>Q4 (short):</strong> Your Llama 3.1 70B in bf16 is ~140 GB. You have a single 48 GB GPU. What are your options for fitting this?</p>
+<p><strong>Q5 (MC):</strong> Which of these should you NOT do in production?
+A) Load an AWQ int4 model in vLLM
+B) Use <code>load_in_8bit=True</code> (bitsandbytes) for high-throughput serving
+C) Serve GGUF Q4_K_M via llama.cpp for a desktop app
+D) Merge a LoRA and quantize to AWQ int4 for serving</p>
+<p><strong>Q6 (short):</strong> You quantize your production model to AWQ int4 and MMLU drops from 68% to 64%. What do you do?</p>
+<p><strong>Q7 (MC):</strong> The &quot;K_M&quot; in GGUF&#39;s <code>Q4_K_M</code> refers to:
+A) A specific compression algorithm
+B) A quantization scheme using K-quants at Medium mixed precision
+C) A model size (K = thousand, M = million)
+D) A benchmark name</p>
+<p><strong>Q8 (short):</strong> Compare GPTQ and AWQ: what&#39;s the same, what&#39;s different, and which would you pick for a new vLLM deployment today?</p>
+<p><strong>Q9 (MC):</strong> Below what bit-precision does quality typically start dropping meaningfully?
+A) 8 bits
+B) 6 bits
+C) 4 bits (sweet spot)
+D) 3 bits or lower</p>
+<p><strong>Q10 (short):</strong> A colleague argues &quot;let&#39;s use int2 to save more VRAM.&quot; How do you respond?</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> AWQ int4 is the production sweet spot for GPU serving: near-bf16 quality, dramatic VRAM savings, fast inference kernels (especially with <code>awq_marlin</code> on Ampere+ GPUs). bnb-int8 is slow. GGUF is for consumer/edge. fp32 wastes VRAM without quality gains (models were trained in bf16/fp16 — fp32 doesn&#39;t add information).</p>
+<p><strong>A2:</strong> AWQ observes that not all weights are equally important: the ~1% associated with large activations disproportionately affect quality. AWQ uses calibration data to identify these &quot;salient&quot; channels and applies scaling that protects them during otherwise-uniform 4-bit quantization, yielding better quality than naive uniform quantization at the same bit budget.</p>
+<p><strong>A3: B.</strong> GGUF&#39;s strengths — memory-mapped loading, CPU + GPU offload, Mac Metal support, mature single-user UX (Ollama) — target consumer / desktop / edge inference. For server high-throughput workloads, vLLM with AWQ or GPTQ is faster and more memory-efficient. GGUF is very much alive and actively developed; it just isn&#39;t the right tool for server serving.</p>
+<p><strong>A4:</strong> Options:</p>
+<ol>
+<li><strong>Quantize to AWQ int4</strong> — model shrinks to ~35 GB, fits on the 48 GB GPU with KV cache room</li>
+<li><strong>Quantize to GPTQ int4</strong> — similar result</li>
+<li><strong>GGUF Q4_K_M via llama.cpp</strong> — fits, but throughput will be much lower than AWQ in vLLM</li>
+<li><strong>Tensor parallelism across two smaller GPUs</strong> — instead of one 48 GB, use 2× 40 GB (A100) or 2× 24 GB (RTX 4090) with <code>--tensor-parallel-size 2</code></li>
+<li><strong>Rent bigger hardware</strong> — one H100 80GB or A100 80GB fits bf16 with headroom</li>
+<li><strong>CPU + GPU offload via llama.cpp</strong> — technically fits but throughput plummets; not a serving solution</li>
+</ol>
+<p>For a production deployment on that 48 GB card: option 1 (AWQ int4) is the standard choice.</p>
+<p><strong>A5: B.</strong> <code>load_in_8bit=True</code> via bitsandbytes has painfully slow inference kernels; it&#39;s an experimentation tool, not a production serving option. Use AWQ, GPTQ, or GGUF for production quantization. All the other options are legitimate production deployments.</p>
+<p><strong>A6:</strong> 4-percentage-point drop is substantial. Options:</p>
+<ol>
+<li><strong>Try GPTQ instead</strong> — sometimes marginally different quality profile</li>
+<li><strong>Try 8-bit</strong> — AWQ int8 or GPTQ int8; less VRAM saving but usually near-lossless</li>
+<li><strong>Try a different calibration dataset for the AWQ conversion</strong> — if calibration data was mismatched to your target distribution, results improve when you use in-domain calibration</li>
+<li><strong>Investigate WHICH questions are failing.</strong> Often quantization degrades certain question types (math, long-context) more than others. If your production workload avoids those types, the aggregate MMLU drop overstates real-world impact.</li>
+<li><strong>If none of the above helps: don&#39;t quantize.</strong> Serve bf16 on a bigger GPU. Cost-vs-quality is a business decision, not a quantization requirement.</li>
+</ol>
+<p><strong>A7: B.</strong> In GGUF nomenclature, &quot;K&quot; refers to the &quot;K-quants&quot; quantization family (Kawrakow&#39;s methods), and &quot;M&quot; is the mixed-precision variant (some weights kept at higher precision than others). K_S is small, K_M is medium (recommended), K_L is large. The mixed-precision approach spends more bits on important layers.</p>
+<p><strong>A8:</strong> <strong>Same:</strong> both target int4, both use per-block scaling, both rely on calibration data, both are widely available on HuggingFace, both produce near-bf16 quality on most tasks.</p>
+<p><strong>Different:</strong> GPTQ processes columns sequentially with error compensation using a Hessian; AWQ uses activation magnitudes to identify salient channels and scale-protects them. GPTQ came first (2022) and has broader model coverage. AWQ (2023) has slightly faster inference kernels in vLLM (especially <code>awq_marlin</code> on Ampere+).</p>
+<p><strong>Pick for a new deployment today:</strong> AWQ if available (best throughput), GPTQ as a fallback if only that pre-quantized checkpoint exists for your model. Very close in quality; the tie-breaker is kernel speed.</p>
+<p><strong>A9: D.</strong> Down to 4 bits quality is preserved well by modern methods (GPTQ, AWQ, K-quants). At 3 bits quality starts dropping visibly; at 2 bits it drops significantly. Some newer schemes (SmoothQuant, EETQ, 1-bit LLMs) push the boundary lower but with quality trade-offs that make them niche.</p>
+<p><strong>A10:</strong> &quot;Two bits saves ~2× the VRAM vs 4-bit but comes with substantial quality loss on most tasks — often 5-15 percentage points on reasoning benchmarks. Before we do it we&#39;d need to (a) benchmark on our task-specific golden set and confirm the drop is acceptable, (b) test long-context and structured-output cases which quantize particularly poorly, (c) rule out that the same VRAM savings could come from serving a smaller <em>higher-quality</em> model instead (Llama 3.1 8B at bf16 vs 70B at int2 — often the smaller model in higher precision wins). Two-bit is legitimate for research and extreme edge deployments, but as a default it&#39;s rarely the right call. Let&#39;s see the workload numbers first.&quot;</p>
+<p>That&#39;s the shape of a good pushback: acknowledge the intent, name the specific risks, propose the check, offer alternatives.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/01-vllm-serving.md</code> — where quantized checkpoints get served</li>
+<li><code>learning/03-openai-compatible-api.md</code> — API layer sits on top</li>
+<li><code>builds/01-self-host-llama-api.md</code> — hands-on including quantization</li>
+<li><code>../fine-tuning/learning/02-peft-lora.md</code> — QLoRA&#39;s training-time quantization (NF4)</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Download an AWQ-quantized 8B model from HuggingFace (search &quot;Llama-3.1-8B-Instruct-AWQ&quot;). Launch in vLLM. Benchmark tokens/sec vs bf16 baseline.</li>
+<li>Convert a small fine-tuned model to GGUF Q4_K_M. Serve via Ollama. Note the disk size and load time compared to the fp16 original.</li>
+<li>Run MMLU (a subset — 200 questions) on the same model at bf16, AWQ int4, and GPTQ int4. Report the deltas.</li>
+<li>Read the AWQ paper (Lin et al., 2023). Explain in one paragraph what &quot;salient&quot; means and how it&#39;s identified.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Frantar et al., &quot;GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers&quot; (2022)</li>
+<li>Lin et al., &quot;AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration&quot; (2023)</li>
+<li>Dettmers et al., &quot;LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale&quot; (2022)</li>
+<li>llama.cpp README and quantization docs — <a href="https://github.com/ggerganov/llama.cpp">https://github.com/ggerganov/llama.cpp</a></li>
+<li>Neural Magic&#39;s SparseML / deepsparse write-ups</li>
+<li>TheBloke / QuantFactory / hugging-quants — canonical repositories of pre-quantized model checkpoints</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-01-vllm-serving.html"><span>← Previous</span><b>learning 01 vllm serving</b></a>
+      <a class="next" href="./learning-03-openai-compatible-api.html"><span>Next →</span><b>learning 03 openai compatible api</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

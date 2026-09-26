@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bias-Variance Tradeoff — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/02-ml-fundamentals/10-bias-variance/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">ML Fundamentals</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · ML Fundamentals</div>
+    <h1 class="lesson-title">Bias-Variance Tradeoff</h1>
+    <p class="lesson-sub">Every model error comes from one of three sources: bias, variance, or noise. You can only control the first two.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Language</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 2, Lessons 01-09 (ML basics, regression, classification, evaluation)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — ML Fundamentals 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="18.2" y="122.0" width="27.1" height="27.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(148 31.8 135.6)"/>
+        <rect x="13.4" y="117.7" width="25.9" height="25.9" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(130 26.3 130.7)"/>
+        <circle cx="20.9" cy="125.7" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">ML FUNDAMENTALS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Bias-Variance</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Tradeoff</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Derive the bias-variance decomposition of expected prediction error and explain the role of irreducible noise</li>
+<li>Diagnose whether a model suffers from high bias or high variance using training and test error patterns</li>
+<li>Explain how regularization techniques (L1, L2, dropout, early stopping) trade bias for variance</li>
+<li>Implement experiments that visualize the bias-variance tradeoff across models of increasing complexity</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You trained a model. It has some error on test data. Where does that error come from?</p>
+<p>If your model is too simple (linear regression on a curved dataset), it will consistently miss the true pattern. That is bias. If your model is too complex (degree-20 polynomial on 15 data points), it will fit the training data perfectly but give wildly different predictions on new data. That is variance.</p>
+<p>You cannot minimize both at the same time for a fixed model capacity. Push bias down and variance goes up. Push variance down and bias goes up. Understanding this tradeoff is the single most useful diagnostic skill in machine learning. It tells you whether to make your model more complex or less complex, whether to get more data or engineer better features, whether to regularize more or less.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="bias-systematic-error"><a class="anchor" href="#bias-systematic-error">#</a> Bias: Systematic Error</h3>
+<p>Bias measures how far off your model&#39;s average prediction is from the true value. If you trained the same model on many different training sets drawn from the same distribution and averaged the predictions, bias is the gap between that average and the truth.</p>
+<p>High bias means the model is too rigid to capture the real pattern. A straight line fit to a parabola will always miss the curve, no matter how much data you give it. This is underfitting.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">High bias (underfitting):
+  Model always predicts roughly the same wrong thing.
+  Training error: HIGH
+  Test error: HIGH
+  Gap between them: SMALL</code></pre>
+      </div>
+    <h3 id="variance-sensitivity-to-training-data"><a class="anchor" href="#variance-sensitivity-to-training-data">#</a> Variance: Sensitivity to Training Data</h3>
+<p>Variance measures how much your predictions change when you train on different subsets of data. If small changes in the training set cause large changes in the model, variance is high.</p>
+<p>High variance means the model is fitting noise in the training data, not the underlying signal. A degree-20 polynomial will thread through every training point but oscillate wildly between them. This is overfitting.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">High variance (overfitting):
+  Model fits training data perfectly but fails on new data.
+  Training error: LOW
+  Test error: HIGH
+  Gap between them: LARGE</code></pre>
+      </div>
+    <h3 id="the-decomposition"><a class="anchor" href="#the-decomposition">#</a> The Decomposition</h3>
+<p>For any point x, the expected prediction error under squared loss decomposes exactly:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Expected Error = Bias^2 + Variance + Irreducible Noise
+
+where:
+  Bias^2   = (E[f_hat(x)] - f(x))^2
+  Variance = E[(f_hat(x) - E[f_hat(x)])^2]
+  Noise    = E[(y - f(x))^2]             (sigma^2)</code></pre>
+      </div>
+    <ul>
+<li><code>f(x)</code> is the true function</li>
+<li><code>f_hat(x)</code> is your model&#39;s prediction</li>
+<li><code>E[...]</code> is the expectation over different training sets</li>
+<li><code>y</code> is the observed label (true function plus noise)</li>
+</ul>
+<p>The noise term is irreducible. No model can do better than sigma^2 on noisy data. Your job is to find the right balance between bias^2 and variance.</p>
+<h3 id="model-complexity-vs-error"><a class="anchor" href="#model-complexity-vs-error">#</a> Model Complexity vs Error</h3>
+<div class="fig"><pre class="mermaid">graph LR
+    A[Simple Model] --&gt;|increase complexity| B[Sweet Spot]
+    B --&gt;|increase complexity| C[Complex Model]
+
+    style A fill:#f9f,stroke:#333
+    style B fill:#9f9,stroke:#333
+    style C fill:#f99,stroke:#333</pre></div><p>The classic U-shaped curve:</p>
+<table>
+<thead>
+<tr>
+<th>Complexity</th>
+<th>Bias</th>
+<th>Variance</th>
+<th>Total Error</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Too low</td>
+<td>HIGH</td>
+<td>LOW</td>
+<td>HIGH (underfitting)</td>
+</tr>
+<tr>
+<td>Just right</td>
+<td>MODERATE</td>
+<td>MODERATE</td>
+<td>LOWEST</td>
+</tr>
+<tr>
+<td>Too high</td>
+<td>LOW</td>
+<td>HIGH</td>
+<td>HIGH (overfitting)</td>
+</tr>
+</tbody></table>
+<h3 id="regularization-as-bias-variance-control"><a class="anchor" href="#regularization-as-bias-variance-control">#</a> Regularization as Bias-Variance Control</h3>
+<p>Regularization deliberately increases bias to reduce variance. It constrains the model so it cannot chase noise.</p>
+<ul>
+<li><strong>L2 (Ridge):</strong> Shrinks all weights toward zero. Keeps all features but reduces their influence.</li>
+<li><strong>L1 (Lasso):</strong> Pushes some weights exactly to zero. Performs feature selection.</li>
+<li><strong>Dropout:</strong> Randomly disables neurons during training. Forces redundant representations.</li>
+<li><strong>Early stopping:</strong> Stops training before the model fully fits the training data.</li>
+</ul>
+<p>The regularization strength (lambda, dropout rate, number of epochs) directly controls where you sit on the bias-variance curve. More regularization means more bias, less variance.</p>
+<h3 id="double-descent-the-modern-perspective"><a class="anchor" href="#double-descent-the-modern-perspective">#</a> Double Descent: The Modern Perspective</h3>
+<p>Classical theory says: after the sweet spot, more complexity always hurts. But research since 2019 has shown something unexpected. If you keep increasing model capacity far past the interpolation threshold (where the model has enough parameters to perfectly fit training data), test error can decrease again.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    A[Underfit Zone] --&gt; B[Classical Sweet Spot]
+    B --&gt; C[Interpolation Threshold]
+    C --&gt; D[Double Descent - Error Drops Again]
+
+    style A fill:#fdd,stroke:#333
+    style B fill:#dfd,stroke:#333
+    style C fill:#fdd,stroke:#333
+    style D fill:#dfd,stroke:#333</pre></div><p>This &quot;double descent&quot; phenomenon explains why massively overparameterized neural networks (with far more parameters than training examples) still generalize well. The classical bias-variance tradeoff is not wrong, but it is incomplete for the modern regime.</p>
+<p>Key observations about double descent:</p>
+<ul>
+<li>It happens in linear models, decision trees, and neural networks</li>
+<li>More data can actually hurt in the interpolation region (sample-wise double descent)</li>
+<li>More training epochs can cause it too (epoch-wise double descent)</li>
+<li>Regularization smooths out the peak but does not eliminate it</li>
+</ul>
+<p>Why does this happen? At the interpolation threshold, the model has just enough capacity to fit all training points. It is forced into a very specific solution that threads through every point, and small perturbations in the data cause large changes in the fit. This is where variance peaks. Past the threshold, the model has many possible solutions that fit the data perfectly. The learning algorithm (e.g., gradient descent with implicit regularization) tends to pick the simplest one among them. This implicit bias toward simple solutions is why overparameterized models generalize.</p>
+<table>
+<thead>
+<tr>
+<th>Regime</th>
+<th>Parameters vs Samples</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Underparameterized</td>
+<td>p &lt;&lt; n</td>
+<td>Classical tradeoff applies</td>
+</tr>
+<tr>
+<td>Interpolation threshold</td>
+<td>p ~ n</td>
+<td>Variance peaks, test error spikes</td>
+</tr>
+<tr>
+<td>Overparameterized</td>
+<td>p &gt;&gt; n</td>
+<td>Implicit regularization kicks in, test error drops</td>
+</tr>
+</tbody></table>
+<p>For practical purposes: if you are using neural networks or large tree ensembles, do not stop at the interpolation threshold. Either stay well below it (with explicit regularization) or go well past it. The worst place to be is right at the threshold.</p>
+<h3 id="diagnosing-your-model"><a class="anchor" href="#diagnosing-your-model">#</a> Diagnosing Your Model</h3>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[Compare train error vs test error] --&gt; B{Large gap?}
+    B --&gt;|Yes| C[High variance - overfitting]
+    B --&gt;|No| D{Both errors high?}
+    D --&gt;|Yes| E[High bias - underfitting]
+    D --&gt;|No| F[Good fit]
+
+    C --&gt; G[More data / Regularize / Simpler model]
+    E --&gt; H[More features / Complex model / Less regularization]
+    F --&gt; I[Deploy]</pre></div><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Diagnosis</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>High train error, high test error</td>
+<td>Bias</td>
+<td>More features, complex model, less regularization</td>
+</tr>
+<tr>
+<td>Low train error, high test error</td>
+<td>Variance</td>
+<td>More data, regularization, simpler model, dropout</td>
+</tr>
+<tr>
+<td>Low train error, low test error</td>
+<td>Good fit</td>
+<td>Ship it</td>
+</tr>
+<tr>
+<td>Train error decreasing, test error increasing</td>
+<td>Overfitting in progress</td>
+<td>Early stopping</td>
+</tr>
+</tbody></table>
+<h3 id="practical-strategies"><a class="anchor" href="#practical-strategies">#</a> Practical Strategies</h3>
+<p><strong>When bias is the problem:</strong></p>
+<ul>
+<li>Add polynomial or interaction features</li>
+<li>Use a more flexible model (tree ensemble instead of linear)</li>
+<li>Reduce regularization strength</li>
+<li>Train longer (if not yet converged)</li>
+</ul>
+<p><strong>When variance is the problem:</strong></p>
+<ul>
+<li>Get more training data</li>
+<li>Use bagging (random forests)</li>
+<li>Increase regularization (higher lambda, more dropout)</li>
+<li>Feature selection (remove noisy features)</li>
+<li>Use cross-validation to detect it early</li>
+</ul>
+<h3 id="ensemble-methods-and-variance-reduction"><a class="anchor" href="#ensemble-methods-and-variance-reduction">#</a> Ensemble Methods and Variance Reduction</h3>
+<p>Ensemble methods are the most practical tool for fighting variance.</p>
+<p><strong>Bagging (Bootstrap Aggregating)</strong> trains multiple models on different bootstrap samples of the training data, then averages their predictions. Each individual model has high variance, but the average has much lower variance. Random forests are bagging applied to decision trees.</p>
+<p>Why it works mathematically: if you average N independent predictions, each with variance sigma^2, the variance of the average is sigma^2 / N. The models are not truly independent (they all see similar data), so the reduction is less than 1/N, but it is still substantial.</p>
+<p><strong>Boosting</strong> reduces bias by building models sequentially, where each new model focuses on the errors of the ensemble so far. Gradient boosting and AdaBoost are the main examples. Boosting can overfit if you add too many models, so you need early stopping or regularization.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Primary Effect</th>
+<th>Bias Change</th>
+<th>Variance Change</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bagging</td>
+<td>Reduces variance</td>
+<td>No change</td>
+<td>Decreases</td>
+</tr>
+<tr>
+<td>Boosting</td>
+<td>Reduces bias</td>
+<td>Decreases</td>
+<td>Can increase</td>
+</tr>
+<tr>
+<td>Stacking</td>
+<td>Reduces both</td>
+<td>Depends on meta-learner</td>
+<td>Depends on base models</td>
+</tr>
+<tr>
+<td>Dropout</td>
+<td>Implicit bagging</td>
+<td>Slight increase</td>
+<td>Decreases</td>
+</tr>
+</tbody></table>
+<p><strong>Practical rule:</strong> if your base model has high variance (deep trees, high-degree polynomials), use bagging. If your base model has high bias (shallow stumps, simple linear models), use boosting.</p>
+<h3 id="learning-curves"><a class="anchor" href="#learning-curves">#</a> Learning Curves</h3>
+<p>Learning curves plot training and validation error as a function of training set size. They are the most practical diagnostic tool you have. Unlike a single train/test comparison, learning curves show you the trajectory of your model and tell you whether more data will help.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    subgraph HB[&quot;High Bias Learning Curve&quot;]
+        direction LR
+        HB1[&quot;Small N: both errors high&quot;]
+        HB2[&quot;Large N: both errors converge to HIGH error&quot;]
+        HB1 --&gt; HB2
+    end
+
+    subgraph HV[&quot;High Variance Learning Curve&quot;]
+        direction LR
+        HV1[&quot;Small N: train low, test high (big gap)&quot;]
+        HV2[&quot;Large N: gap shrinks but slowly&quot;]
+        HV1 --&gt; HV2
+    end
+
+    subgraph GF[&quot;Good Fit Learning Curve&quot;]
+        direction LR
+        GF1[&quot;Small N: some gap&quot;]
+        GF2[&quot;Large N: both converge to LOW error&quot;]
+        GF1 --&gt; GF2
+    end</pre></div><p>How to read them:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Training Error</th>
+<th>Validation Error</th>
+<th>Gap</th>
+<th>What It Means</th>
+<th>What to Do</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>High bias</td>
+<td>High</td>
+<td>High</td>
+<td>Small</td>
+<td>Model cannot capture the pattern</td>
+<td>More features, complex model, less regularization</td>
+</tr>
+<tr>
+<td>High variance</td>
+<td>Low</td>
+<td>High</td>
+<td>Large</td>
+<td>Model memorizes training data</td>
+<td>More data, regularization, simpler model</td>
+</tr>
+<tr>
+<td>Good fit</td>
+<td>Moderate</td>
+<td>Moderate</td>
+<td>Small</td>
+<td>Model generalizes well</td>
+<td>Ship it</td>
+</tr>
+<tr>
+<td>High variance, improving</td>
+<td>Low</td>
+<td>Decreasing with more data</td>
+<td>Shrinking</td>
+<td>Variance problem that data can fix</td>
+<td>Collect more data</td>
+</tr>
+<tr>
+<td>High bias, flat</td>
+<td>High</td>
+<td>High and flat</td>
+<td>Small and flat</td>
+<td>More data will NOT help</td>
+<td>Change model architecture</td>
+</tr>
+</tbody></table>
+<p>The critical insight: if both curves have plateaued and the gap is small but both errors are high, more data is useless. You need a better model. If the gap is large and still shrinking, more data will help.</p>
+<h3 id="how-to-generate-learning-curves"><a class="anchor" href="#how-to-generate-learning-curves">#</a> How to Generate Learning Curves</h3>
+<p>There are two approaches:</p>
+<p><strong>Approach 1: Vary training set size, fixed model.</strong> Hold the model and hyperparameters constant. Train on increasingly large subsets of the training data. Measure training error and validation error at each size. This is the standard learning curve.</p>
+<p><strong>Approach 2: Vary model complexity, fixed data.</strong> Hold the data constant. Sweep a complexity parameter (polynomial degree, tree depth, number of layers). Measure training error and validation error at each complexity. This is a validation curve and shows the bias-variance tradeoff directly.</p>
+<p>Both approaches complement each other. The first tells you if more data will help. The second tells you if a different model will help. Run both before making decisions about your next step.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[Model underperforming] --&gt; B[Generate learning curve]
+    B --&gt; C{Gap between train and val?}
+    C --&gt;|Large gap, val still decreasing| D[More data will help]
+    C --&gt;|Small gap, both high| E[More data will NOT help]
+    C --&gt;|Large gap, val flat| F[Regularize or simplify]
+    E --&gt; G[Generate validation curve]
+    G --&gt; H[Try more complex model]</pre></div>
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">bias-variance</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The code in <code>code/bias_variance.py</code> runs the full bias-variance decomposition experiment. Here is the approach, step by step.</p>
+<h3 id="step-1-generate-synthetic-data-from-a-known-function"><a class="anchor" href="#step-1-generate-synthetic-data-from-a-known-function">#</a> Step 1: Generate Synthetic Data from a Known Function</h3>
+<p>We use <code>f(x) = sin(1.5x) + 0.5x</code> with Gaussian noise. Knowing the true function lets us compute exact bias and variance.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def true_function(x):
+    return np.sin(1.5 * x) + 0.5 * x
+
+def generate_data(n_samples=30, noise_std=0.5, x_range=(-3, 3), seed=None):
+    rng = np.random.RandomState(seed)
+    x = rng.uniform(x_range[0], x_range[1], n_samples)
+    y = true_function(x) + rng.normal(0, noise_std, n_samples)
+    return x, y</code></pre>
+      </div>
+    <h3 id="step-2-bootstrap-sampling-and-polynomial-fitting"><a class="anchor" href="#step-2-bootstrap-sampling-and-polynomial-fitting">#</a> Step 2: Bootstrap Sampling and Polynomial Fitting</h3>
+<p>For each polynomial degree, we draw many bootstrap training sets, fit the polynomial, and record predictions on a fixed test grid. This gives us a distribution of predictions at each test point.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def fit_polynomial(x_train, y_train, degree, lam=0.0):
+    X = np.column_stack([x_train ** d for d in range(degree + 1)])
+    if lam &gt; 0:
+        penalty = lam * np.eye(X.shape[1])
+        penalty[0, 0] = 0
+        w = np.linalg.solve(X.T @ X + penalty, X.T @ y_train)
+    else:
+        w = np.linalg.lstsq(X, y_train, rcond=None)[0]
+    return w</code></pre>
+      </div>
+    <p>We fit on 200 different bootstrap samples. Each bootstrap sample is drawn from the same underlying distribution but contains different points.</p>
+<h3 id="step-3-computing-bias2-variance-decomposition"><a class="anchor" href="#step-3-computing-bias2-variance-decomposition">#</a> Step 3: Computing Bias^2, Variance Decomposition</h3>
+<p>With 200 sets of predictions at each test point, we can compute the decomposition directly from the definition:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">mean_pred = predictions.mean(axis=0)
+bias_sq = np.mean((mean_pred - y_true) ** 2)
+variance = np.mean(predictions.var(axis=0))
+total_error = np.mean(np.mean((predictions - y_true) ** 2, axis=1))</code></pre>
+      </div>
+    <ul>
+<li><code>mean_pred</code> is E[f_hat(x)] estimated from bootstrap samples</li>
+<li><code>bias_sq</code> is the squared gap between average prediction and truth</li>
+<li><code>variance</code> is the average spread of predictions across bootstrap samples</li>
+<li><code>total_error</code> should approximately equal bias^2 + variance + noise</li>
+</ul>
+<h3 id="step-4-learning-curves"><a class="anchor" href="#step-4-learning-curves">#</a> Step 4: Learning Curves</h3>
+<p>Learning curves sweep training set size while holding model complexity fixed. They show whether your model is data-limited or capacity-limited.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def demo_learning_curves():
+    sizes = [10, 15, 20, 30, 50, 75, 100, 150, 200, 300]
+    degree = 5
+
+    for n in sizes:
+        train_errors = []
+        test_errors = []
+        for seed in range(50):
+            x_train, y_train = generate_data(n_samples=n, seed=seed * 100)
+            w = fit_polynomial(x_train, y_train, degree)
+            train_pred = predict_polynomial(x_train, w)
+            train_mse = np.mean((train_pred - y_train) ** 2)
+            test_pred = predict_polynomial(x_test, w)
+            test_mse = np.mean((test_pred - y_test) ** 2)
+            train_errors.append(train_mse)
+            test_errors.append(test_mse)
+        # Average over runs gives the learning curve point</code></pre>
+      </div>
+    <p>For a high-variance model (degree 5 with small data), you see:</p>
+<ul>
+<li>Training error starts low and increases as more data makes memorization harder</li>
+<li>Test error starts high and decreases as the model gets more signal</li>
+<li>The gap shrinks with more data</li>
+</ul>
+<p>For a high-bias model (degree 1), both errors converge quickly to the same high value and more data does not help.</p>
+<h3 id="step-5-regularization-sweep"><a class="anchor" href="#step-5-regularization-sweep">#</a> Step 5: Regularization Sweep</h3>
+<p>The code also includes <code>demo_regularization_sweep()</code>, which fixes a high-degree polynomial (degree 15) and sweeps Ridge regularization strength from 0.001 to 100. This shows the bias-variance tradeoff from a different angle: instead of varying model complexity, we vary the constraint strength.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def demo_regularization_sweep():
+    alphas = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0]
+    for alpha in alphas:
+        results = bias_variance_decomposition([15], lam=alpha)
+        r = results[15]
+        print(f&quot;alpha={alpha:.3f}  bias={r[&#39;bias_sq&#39;]:.4f}  var={r[&#39;variance&#39;]:.4f}&quot;)</code></pre>
+      </div>
+    <p>At low alpha, the degree-15 polynomial is nearly unconstrained. Variance dominates because the model chases noise in each bootstrap sample. At high alpha, the penalty is so strong that the model effectively becomes a near-constant function. Bias dominates. The optimal alpha sits between these extremes.</p>
+<p>This is the same U-curve from varying polynomial degree, but controlled by a continuous knob instead of a discrete one. In practice, regularization is the preferred way to control the tradeoff because it allows fine-grained control without changing the feature set.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>sklearn provides <code>learning_curve</code> and <code>validation_curve</code> to automate these diagnostics without writing bootstrap loops.</p>
+<h3 id="validation-curve-sweep-model-complexity"><a class="anchor" href="#validation-curve-sweep-model-complexity">#</a> Validation Curve: Sweep Model Complexity</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import validation_curve
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
+
+degrees = list(range(1, 16))
+train_scores_all = []
+val_scores_all = []
+
+for d in degrees:
+    pipe = make_pipeline(PolynomialFeatures(d), Ridge(alpha=0.01))
+    train_scores, val_scores = validation_curve(
+        pipe, X, y, param_name=&quot;polynomialfeatures__degree&quot;,
+        param_range=[d], cv=5, scoring=&quot;neg_mean_squared_error&quot;
+    )
+    train_scores_all.append(-train_scores.mean())
+    val_scores_all.append(-val_scores.mean())</code></pre>
+      </div>
+    <p>This gives you the bias-variance tradeoff curve directly. Where the validation score is worst relative to train score, variance dominates. Where both are bad, bias dominates.</p>
+<h3 id="learning-curve-sweep-training-set-size"><a class="anchor" href="#learning-curve-sweep-training-set-size">#</a> Learning Curve: Sweep Training Set Size</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import learning_curve
+
+pipe = make_pipeline(PolynomialFeatures(5), Ridge(alpha=0.01))
+train_sizes, train_scores, val_scores = learning_curve(
+    pipe, X, y, train_sizes=np.linspace(0.1, 1.0, 10),
+    cv=5, scoring=&quot;neg_mean_squared_error&quot;
+)
+train_mse = -train_scores.mean(axis=1)
+val_mse = -val_scores.mean(axis=1)</code></pre>
+      </div>
+    <p>Plot <code>train_mse</code> and <code>val_mse</code> against <code>train_sizes</code>. The shape tells you everything about your model.</p>
+<h3 id="cross-validation-with-regularization-sweep"><a class="anchor" href="#cross-validation-with-regularization-sweep">#</a> Cross-Validation with Regularization Sweep</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from sklearn.model_selection import cross_val_score
+
+alphas = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+for alpha in alphas:
+    pipe = make_pipeline(PolynomialFeatures(10), Ridge(alpha=alpha))
+    scores = cross_val_score(pipe, X, y, cv=5, scoring=&quot;neg_mean_squared_error&quot;)
+    print(f&quot;alpha={alpha:&gt;7.3f}  MSE={-scores.mean():.4f} +/- {scores.std():.4f}&quot;)</code></pre>
+      </div>
+    <p>This sweeps regularization strength for a fixed model complexity. You will see the same bias-variance tradeoff: low alpha means high variance, high alpha means high bias.</p>
+<h3 id="putting-it-all-together-a-complete-diagnostic-workflow"><a class="anchor" href="#putting-it-all-together-a-complete-diagnostic-workflow">#</a> Putting It All Together: A Complete Diagnostic Workflow</h3>
+<p>In practice, you run these diagnostics in sequence:</p>
+<ol>
+<li>Train your model. Compute train and test error.</li>
+<li>If both are high: you have a bias problem. Skip to step 4.</li>
+<li>If train is low but test is high: you have a variance problem. Generate a learning curve to see if more data will help. If not, regularize.</li>
+<li>Generate a validation curve sweeping your main complexity parameter. Find the sweet spot.</li>
+<li>At the sweet spot, generate a learning curve. If the gap is still large, you need more data or regularization.</li>
+<li>Try Ridge/Lasso with different alpha values using <code>cross_val_score</code>. Pick the alpha where cross-validated error is lowest.</li>
+</ol>
+<p>This takes 10-15 minutes of compute for most tabular datasets and saves hours of guessing.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces: <code>outputs/prompt-model-diagnostics.md</code></p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run the decomposition with <code>noise_std=0</code> (no noise). What happens to the irreducible error term? Does the optimal complexity change?</p>
+</li>
+<li><p>Increase the training set size from 30 to 300. How does this affect the variance component? Does the optimal polynomial degree shift?</p>
+</li>
+<li><p>Add L2 regularization (Ridge regression) to the experiment. For a fixed high-degree polynomial (degree 15), sweep lambda from 0 to 100. Plot bias^2 and variance as functions of lambda.</p>
+</li>
+<li><p>Modify the true function from a polynomial to <code>sin(x)</code>. How does the bias-variance decomposition change? Is there still a clear optimal degree?</p>
+</li>
+<li><p>Implement a simple bootstrap aggregating (bagging) wrapper: train 10 models on bootstrap samples and average predictions. Show that this reduces variance without increasing bias much.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bias</td>
+<td>&quot;The model is too simple&quot;</td>
+<td>Systematic error from wrong assumptions. The gap between the average model prediction and truth.</td>
+</tr>
+<tr>
+<td>Variance</td>
+<td>&quot;The model is overfitting&quot;</td>
+<td>Error from sensitivity to training data. How much predictions change across different training sets.</td>
+</tr>
+<tr>
+<td>Irreducible error</td>
+<td>&quot;Noise in the data&quot;</td>
+<td>Error from randomness in the true data-generating process. No model can eliminate it.</td>
+</tr>
+<tr>
+<td>Underfitting</td>
+<td>&quot;Not learning enough&quot;</td>
+<td>Model has high bias. It misses the real pattern even on training data.</td>
+</tr>
+<tr>
+<td>Overfitting</td>
+<td>&quot;Memorizing the data&quot;</td>
+<td>Model has high variance. It fits noise in training data that does not generalize.</td>
+</tr>
+<tr>
+<td>Regularization</td>
+<td>&quot;Constraining the model&quot;</td>
+<td>Adding a penalty to reduce model complexity, trading bias for lower variance.</td>
+</tr>
+<tr>
+<td>Double descent</td>
+<td>&quot;More parameters can help&quot;</td>
+<td>Test error decreases again when model capacity far exceeds the interpolation threshold.</td>
+</tr>
+<tr>
+<td>Model complexity</td>
+<td>&quot;How flexible the model is&quot;</td>
+<td>The capacity of a model to fit arbitrary patterns. Controlled by architecture, features, or regularization.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://hastie.su.domains/ElemStatLearn/">Hastie, Tibshirani, Friedman: Elements of Statistical Learning, Ch. 7</a> -- the definitive treatment of bias-variance decomposition</li>
+<li><a href="https://arxiv.org/abs/1812.11118">Belkin et al., Reconciling modern machine learning practice and the bias-variance trade-off (2019)</a> -- the double descent paper</li>
+<li><a href="https://arxiv.org/abs/1912.02292">Nakkiran et al., Deep Double Descent (2019)</a> -- epoch-wise and sample-wise double descent</li>
+<li><a href="http://scott.fortmann-roe.com/docs/BiasVariance.html">Scott Fortmann-Roe: Understanding the Bias-Variance Tradeoff</a> -- clear visual explanation</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-model-evaluation.html"><span>← Previous</span><b>model evaluation</b></a>
+      <a class="next" href="./11-ensemble-methods.html"><span>Next →</span><b>ensemble methods</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

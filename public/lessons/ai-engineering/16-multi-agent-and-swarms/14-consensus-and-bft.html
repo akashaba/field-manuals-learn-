@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Consensus and Byzantine Fault Tolerance for Agents — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/16-multi-agent-and-swarms/14-consensus-and-bft/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multi-Agent &amp; Swarms</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multi-Agent &amp; Swarms</div>
+    <h1 class="lesson-title">Consensus and Byzantine Fault Tolerance for Agents</h1>
+    <p class="lesson-sub">Classical distributed-systems BFT meets stochastic LLMs. In 2025-2026 three research directions emerged: **CP-WBFT** (arXiv:2511.10400) weighs each vote by a confidence probe; **DecentLLMs** (arXiv:2507.14928) goes leaderless with parallel worker proposals and geometric-median aggregation; **WBFT** (arXiv:2505.05103) combines weighted voting with Hierarchical Structure Clustering to split Core and Edge nodes. The honest empirical result from &quot;Can AI Agents Agree?&quot; (arXiv:2603.01213) is that even scalar agreement is fragile today — a single deceptive agent can compromise a Mixture-of-Agents. BFT is necessary but not sufficient. This lesson builds a minimal BFT protocol, injects three agent-specific attacks (byzantine lie, sycophantic conformity, correlated-error monoculture), and measures how each consensus variant copes.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 16 · 07 (Society of Mind and Debate), Phase 16 · 13 (Shared Memory)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multi-Agent &amp; Swarms 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M69.1,78.1 L74.8,69.6 L80.4,78.1 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M64.3,72.8 L69.4,65.3 L74.4,72.8 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.6,75.3 L63.9,49.2 L81.3,75.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.8" y="43.2" width="33.5" height="33.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(236 58.5 59.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MULTI-AGENT &amp; SWARMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Consensus and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Byzantine Fault…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>You have N LLM agents each producing an answer. They disagree. Majority vote picks the wrong one because two agents are correlated (same base model, same training data, same failure modes). A third agent happens to be wrong in a novel way — so the majority is a false majority.</p>
+<p>Now add a deceptive agent: it lies on purpose. Or a sycophantic agent: it agrees with whoever spoke last. In classical BFT, the assumption is that Byzantine nodes are a fraction <code>f &lt; n/3</code> and behave arbitrarily. The 2026 reality is that LLM nodes are stochastic even when honest, correlated across models, and influenced by each other&#39;s outputs. You cannot treat them as independent Bernoulli voters.</p>
+<p>Classical BFT (PBFT, 1999) is not wrong — it is incomplete. It handles arbitrary bit-flipping. It does not handle &quot;three honest agents share a hallucination because they share training data.&quot; This lesson builds from PBFT&#39;s foundation and layers on three 2025-2026 adaptations.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<h3 id="what-classical-bft-gives-you"><a class="anchor" href="#what-classical-bft-gives-you">#</a> What classical BFT gives you</h3>
+<p>Practical Byzantine Fault Tolerance (Castro &amp; Liskov, OSDI 1999) tolerates <code>f &lt; n/3</code> Byzantine nodes. The protocol has three phases (pre-prepare, prepare, commit) and two primitives (signed messages, quorum certificates). Agreement on a single value among <code>n &gt;= 3f + 1</code> honest-or-malicious nodes.</p>
+<p>The guarantees are strong but assume:</p>
+<ol>
+<li><strong>Independent faults.</strong> Byzantines do not coordinate.</li>
+<li><strong>Honest nodes are truly honest.</strong> Correctness of honest outputs is a non-issue; the protocol only aligns disagreement.</li>
+<li><strong>The question has a ground-truth answer.</strong> Consensus on a wrong fact is still consensus.</li>
+</ol>
+<p>LLM agents violate all three. Two agents running the same base model share faults. An &quot;honest&quot; LLM still hallucinates. And on ambiguous questions, the &quot;truth&quot; is what the agents decide — there is no external oracle.</p>
+<h3 id="the-three-llm-specific-attacks"><a class="anchor" href="#the-three-llm-specific-attacks">#</a> The three LLM-specific attacks</h3>
+<p><strong>Byzantine lie.</strong> One agent outputs a deliberately wrong answer. Classical BFT handles this if <code>f &lt; n/3</code>.</p>
+<p><strong>Sycophantic conformity.</strong> One agent reads others&#39; answers before voting and aligns with whoever spoke last. Not malicious, but correlates with the loudest voice. Classical BFT does not prevent this because the agent passes every signature check.</p>
+<p><strong>Correlated-error monoculture.</strong> Three agents share a base model. They hallucinate the same wrong answer. The majority is wrong. Classical BFT does not help because all three &quot;honestly&quot; agree.</p>
+<h3 id="the-2025-2026-responses"><a class="anchor" href="#the-2025-2026-responses">#</a> The 2025-2026 responses</h3>
+<p><strong>CP-WBFT</strong> (arXiv:2511.10400) — Confidence-Probed Weighted BFT. Each voter attaches a confidence probe to its answer (a self-reported probability, or a separate calibration model&#39;s prediction). Vote weights scale with confidence. Reported +85.71% BFT improvement on complete graphs. Mitigation for: sycophantic conformity (conforming agents tend to have low confidence on their volunteered position).</p>
+<p><strong>DecentLLMs</strong> (arXiv:2507.14928) — Leaderless. Worker agents propose in parallel, evaluator agents score proposals, final answer is the geometric median of scored positions. Robust when <code>f &lt; n/2</code>. Mitigation for: Byzantine lie and correlated errors (geometric median is robust to outliers and pulls toward the dense cluster, not the model-biased average).</p>
+<p><strong>WBFT</strong> (arXiv:2505.05103) — Weighted BFT with Hierarchical Structure Clustering. Vote weights are assigned by response quality plus a trust score learned from history. Cluster agents into Core and Edge; Core agents must achieve consensus first, Edge agents follow. Mitigation for: scalability (Core consensus is small and fast) and partially for monoculture (Core can be chosen for diversity).</p>
+<h3 id="empirical-can-ai-agents-agree-arxiv260301213"><a class="anchor" href="#empirical-can-ai-agents-agree-arxiv260301213">#</a> Empirical: &quot;Can AI Agents Agree?&quot; (arXiv:2603.01213)</h3>
+<p>The paper measures scalar agreement (LLM agents agreeing on a single numeric value) across multiple frontier models. The finding is uncomfortable:</p>
+<ul>
+<li>Even with no adversaries, LLM agents disagree on scalar questions at rates above 30% on many benchmarks.</li>
+<li>A single agent that adopts a deceptive persona can pull the Mixture-of-Agents consensus 40+ percentage points off the honest baseline.</li>
+<li>Disagreement rates correlate with model diversity — heterogeneous ensembles disagree more than homogeneous ones (good: uncorrelated errors) but also drift more slowly (bad: longer time-to-agreement).</li>
+</ul>
+<p>The takeaway: BFT gives you machinery to align outputs, but it does not tell you whether the aligned output is right. Combine with verification (Phase 16 · 08 role specialization), diversity (Phase 16 · 15 debate variants), and evaluator agents (Phase 16 · 24 benchmarks).</p>
+<h3 id="the-core-protocol-stripped-down"><a class="anchor" href="#the-core-protocol-stripped-down">#</a> The core protocol, stripped down</h3>
+<p>A minimal BFT round for LLM agents:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. task arrives; each agent i produces answer a_i
+2. each agent attaches confidence probe c_i in [0, 1]
+3. aggregator collects (a_i, c_i) from all n agents
+4. aggregator groups by semantic cluster (equivalent answers)
+5. aggregator computes weight for each cluster C:
+     w(C) = sum_{i in C} c_i
+6. winner = cluster with max weight, if max &gt; threshold * sum(c_i)
+   else: retry or escalate
+7. minority clusters logged with provenance for post-hoc audit</code></pre>
+      </div>
+    <p>The semantic clustering step is the LLM-specific twist. Two answers &quot;the study reports 4.2%&quot; and &quot;4.2% improvement&quot; are the same cluster. A naive string-equality check would miss this. In production, use a cheap embedding model or explicit canonicalization.</p>
+<h3 id="threshold-tuning"><a class="anchor" href="#threshold-tuning">#</a> Threshold tuning</h3>
+<p>The <code>threshold</code> parameter decides when to accept and when to retry. Too low: you accept weak majorities. Too high: you never accept anything. Empirical range: 0.5-0.67 for <code>n=5-7</code> agents, higher for smaller <code>n</code>. Below a threshold, escalate to a human or to a different agent ensemble.</p>
+<h3 id="where-consensus-does-not-help"><a class="anchor" href="#where-consensus-does-not-help">#</a> Where consensus does not help</h3>
+<ul>
+<li><strong>Ambiguous questions.</strong> If the question has no ground truth, consensus is an opinion. Call it that.</li>
+<li><strong>Compound questions.</strong> &quot;Write code and explain it&quot; — two answers. Vote on each independently.</li>
+<li><strong>Adversarial multi-round.</strong> If agents can observe prior rounds and mimic (Du 2023 debate), they start agreeing with each other regardless of truth. Bound the rounds (2-3 typically).</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">swarm-consensus-wave</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>AgentVoter</code> — a scripted policy with (answer, confidence).</li>
+<li><code>MajorityVote</code> — classical plurality.</li>
+<li><code>CPWBFT</code> — confidence-weighted voting with semantic clustering.</li>
+<li><code>DecentLLMs</code> — geometric-median aggregation on scored proposals.</li>
+<li><code>Scenario</code> — runs each aggregator under three attack patterns.</li>
+</ul>
+<p>Attack patterns implemented:</p>
+<ol>
+<li><code>byzantine</code>: one agent lies with high confidence.</li>
+<li><code>sycophancy</code>: one agent copies the first answer it sees, with matching confidence.</li>
+<li><code>monoculture</code>: three agents share a wrong answer (correlated error) with moderate confidence.</li>
+</ol>
+<p>Run:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Expected output: a table of (attack, aggregator) -&gt; final answer, with the correct answer highlighted. Plurality fails the monoculture case. CPWBFT&#39;s confidence weighting mitigates sycophancy. DecentLLMs&#39; geometric-median pulls toward the honest cluster when monoculture is less than half the population.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>outputs/skill-consensus-designer.md</code> designs a consensus protocol for a multi-agent ensemble: clustering method, weighting, threshold, and the escalation policy for sub-threshold rounds.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Before shipping any consensus mechanism:</p>
+<ul>
+<li><strong>Attack-test with at least the three patterns</strong> above. Your protocol should fail predictably, not silently.</li>
+<li><strong>Log every minority cluster</strong> with provenance. Minority clusters are your early-warning system for correlated errors.</li>
+<li><strong>Enforce bounded rounds.</strong> No &quot;keep debating until agreement&quot; — that rewards sycophancy.</li>
+<li><strong>Separate agreement from correctness.</strong> Consensus output goes to a verifier; verifier is independent of the ensemble.</li>
+<li><strong>Monitor the agreement rate.</strong> A sharp rise means conformity bias; a sharp fall means model drift.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Confirm plurality fails the monoculture attack but CPWBFT partially mitigates it when the monoculture confidence is below 0.7.</li>
+<li>Add a fourth attack pattern: <strong>silent abstention</strong> — one agent refuses to answer (&quot;I don&#39;t know&quot;). How should each aggregator treat abstentions? Implement your choice.</li>
+<li>Swap the semantic clustering from string canonicalization to embedding-similarity (use any open-source embedding model). What happens to the sycophancy attack?</li>
+<li>Read CP-WBFT (arXiv:2511.10400). Implement the confidence-probe calibration step (a separate calibration model checks each agent&#39;s self-reported confidence). Measure the accuracy gain on the monoculture scenario.</li>
+<li>Read &quot;Can AI Agents Agree?&quot; (arXiv:2603.01213). Reproduce a simplified scalar-agreement experiment: three agents, one scalar question, the deceptive-persona prompt. Does CPWBFT or DecentLLMs catch it?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BFT</td>
+<td>&quot;Byzantine fault tolerance&quot;</td>
+<td>Castro-Liskov 1999 protocol for consensus with <code>f &lt; n/3</code> arbitrary faults.</td>
+</tr>
+<tr>
+<td>Byzantine</td>
+<td>&quot;Any bad behavior&quot;</td>
+<td>A node that can lie, drop messages, fail silently — anything but crash safely.</td>
+</tr>
+<tr>
+<td>Confidence probe</td>
+<td>&quot;How sure are you?&quot;</td>
+<td>Self-reported or calibrator-predicted probability attached to a vote.</td>
+</tr>
+<tr>
+<td>Semantic clustering</td>
+<td>&quot;Same answer, different words&quot;</td>
+<td>Grouping equivalent answers before counting votes.</td>
+</tr>
+<tr>
+<td>Geometric median</td>
+<td>&quot;Robust center&quot;</td>
+<td>The point minimizing sum of distances to sample points. Robust to outliers, unlike the mean.</td>
+</tr>
+<tr>
+<td>Monoculture</td>
+<td>&quot;Same model, same failures&quot;</td>
+<td>Correlated errors when agents share training data or base model.</td>
+</tr>
+<tr>
+<td>Sycophantic conformity</td>
+<td>&quot;Agreeing with the loud voice&quot;</td>
+<td>An agent&#39;s vote biases toward whoever spoke first/loudest.</td>
+</tr>
+<tr>
+<td>Core/Edge</td>
+<td>&quot;Hierarchical BFT&quot;</td>
+<td>WBFT split: small Core consensus first, Edge nodes follow. Bounds latency.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://pmg.csail.mit.edu/papers/osdi99.pdf">Castro &amp; Liskov — Practical Byzantine Fault Tolerance (OSDI 1999)</a> — the foundation</li>
+<li><a href="https://arxiv.org/abs/2511.10400">CP-WBFT — Confidence-Probe Weighted BFT</a> — vote weighting by confidence</li>
+<li><a href="https://arxiv.org/abs/2507.14928">DecentLLMs — leaderless multi-agent consensus</a> — geometric-median aggregation</li>
+<li><a href="https://arxiv.org/abs/2505.05103">WBFT — Weighted BFT with Hierarchical Structure Clustering</a> — Core/Edge split for bounded latency</li>
+<li><a href="https://arxiv.org/abs/2603.01213">Can AI Agents Agree?</a> — scalar-agreement fragility and deceptive-persona attack</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-shared-memory-blackboard.html"><span>← Previous</span><b>shared memory blackboard</b></a>
+      <a class="next" href="./15-voting-debate-topology.html"><span>Next →</span><b>voting debate topology</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

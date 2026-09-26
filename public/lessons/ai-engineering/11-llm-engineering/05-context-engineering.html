@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Context Engineering: Windows, Budgets, Memory, and Retrieval — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/05-context-engineering/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Context Engineering: Windows, Budgets, Memory, and Retrieval</h1>
+    <p class="lesson-sub">Prompt engineering is a subset. Context engineering is the whole game. A prompt is a string you type. Context is everything that goes into the model&#39;s window: system instructions, retrieved documents, tool definitions, conversation history, few-shot examples, and the prompt itself. The best AI engineers in 2026 are context engineers. They decide what goes in, what stays out, and in what order.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 10 (LLMs from Scratch), Phase 11 Lesson 01-02</b></div><div><span>Time</span><b>~90 minutes</b></div><div><span>Related</span><b>Phase 11 · 15 (Prompt Caching) — the cache-friendly layout is an extension of context engineering. Phase 5 · 28 (Long-Context Evaluation) for how to measure lost-in-the-middle with NIAH/RULER.</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.6" y="41.2" width="32.9" height="32.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.0 57.6)"/>
+        <rect x="34.8" y="36.9" width="31.6" height="31.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(210 50.6 52.7)"/>
+        <rect x="30.0" y="32.6" width="30.3" height="30.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.2 47.8)"/>
+        <rect x="25.2" y="128.3" width="29.0" height="29.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.8 142.9)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Context Engineering:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Windows, Budgets…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Calculate token budgets across all context window components (system prompt, tools, history, retrieved docs, generation headroom)</li>
+<li>Implement context window management strategies: truncation, summarization, and sliding window for conversation history</li>
+<li>Prioritize and order context components to maximize the model&#39;s attention on the most relevant information</li>
+<li>Build a context assembler that dynamically allocates tokens based on query type and available window space</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Claude Opus 4.7 has a 200K token window (1M in beta). GPT-5 has 400K. Gemini 3 Pro has 2M. Llama 4 claims 10M. These numbers sound enormous until you fill them.</p>
+<p>Here is a real breakdown for a coding assistant. System prompt: 500 tokens. Tool definitions for 50 tools: 8,000 tokens. Retrieved documentation: 4,000 tokens. Conversation history (10 turns): 6,000 tokens. Current user query: 200 tokens. Generation budget (max output): 4,000 tokens. Total: 22,700 tokens. That is only 18% of a 128K window.</p>
+<p>But attention does not scale linearly with context length. A model with 128K tokens of context pays quadratic attention cost (O(n^2) in vanilla transformers, though most production models use efficient attention variants). More importantly, retrieval accuracy degrades. The &quot;Needle in a Haystack&quot; test shows that models struggle to find information placed in the middle of long contexts. Research by Liu et al. (2023) showed that LLMs retrieve information at the start and end of long contexts with near-perfect accuracy, but accuracy drops 10-20% for information placed in the middle (positions 40-70% of the context). This &quot;lost-in-the-middle&quot; effect varies by model but affects all current architectures.</p>
+<p>The practical lesson: having 200K tokens available does not mean using 200K tokens is effective. A carefully curated 10K token context often outperforms a dumped 100K token context. Context engineering is the discipline of maximizing signal-to-noise ratio within the context window.</p>
+<p>Every token you put in the window displaces a token that could carry more relevant information. Every irrelevant tool definition, every stale conversation turn, every chunk of retrieved text that does not answer the question -- each one makes the model slightly worse at the task.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-context-window-is-a-scarce-resource"><a class="anchor" href="#the-context-window-is-a-scarce-resource">#</a> The Context Window is a Scarce Resource</h3>
+<p>Think of the context window as RAM, not disk. It is fast and directly accessible, but limited. You cannot fit everything. You must choose.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph Window[&quot;Context Window (128K tokens)&quot;]
+        direction TB
+        S[&quot;System Prompt\n~500 tokens&quot;] --&gt; T[&quot;Tool Definitions\n~2K-8K tokens&quot;]
+        T --&gt; R[&quot;Retrieved Context\n~2K-10K tokens&quot;]
+        R --&gt; H[&quot;Conversation History\n~2K-20K tokens&quot;]
+        H --&gt; F[&quot;Few-shot Examples\n~1K-3K tokens&quot;]
+        F --&gt; Q[&quot;User Query\n~100-500 tokens&quot;]
+        Q --&gt; G[&quot;Generation Budget\n~2K-8K tokens&quot;]
+    end
+
+    style S fill:#1a1a2e,stroke:#e94560,color:#fff
+    style T fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style R fill:#1a1a2e,stroke:#ffa500,color:#fff
+    style H fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style F fill:#1a1a2e,stroke:#9b59b6,color:#fff
+    style Q fill:#1a1a2e,stroke:#e94560,color:#fff
+    style G fill:#1a1a2e,stroke:#0f3460,color:#fff</pre></div><p>Each component competes for space. Adding more tool definitions means less room for conversation history. Adding more retrieved context means less room for few-shot examples. Context engineering is the art of allocating this budget to maximize task performance.</p>
+<h3 id="lost-in-the-middle"><a class="anchor" href="#lost-in-the-middle">#</a> Lost-in-the-Middle</h3>
+<p>The most important empirical finding in context engineering. Models attend better to information at the beginning and end of the context. Information in the middle gets lower attention scores and is more likely to be ignored.</p>
+<p>Liu et al. (2023) tested this systematically. They placed a relevant document among 20 irrelevant documents at various positions and measured answer accuracy. When the relevant document was first or last, accuracy was 85-90%. When it was in the middle (position 10 of 20), accuracy dropped to 60-70%.</p>
+<p>This has direct engineering implications:</p>
+<ul>
+<li>Put the most important information first (system prompt, critical instructions)</li>
+<li>Put the current query and most relevant context last (recency bias helps)</li>
+<li>Treat the middle of the context as the lowest-priority zone</li>
+<li>If you must include information in the middle, duplicate the key point at the end</li>
+</ul>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph Attention[&quot;Attention Distribution Across Context&quot;]
+        direction LR
+        P1[&quot;Position 0-20%\nHIGH attention\n(system prompt)&quot;]
+        P2[&quot;Position 20-40%\nMODERATE&quot;]
+        P3[&quot;Position 40-70%\nLOW attention\n(lost in middle)&quot;]
+        P4[&quot;Position 70-90%\nMODERATE&quot;]
+        P5[&quot;Position 90-100%\nHIGH attention\n(current query)&quot;]
+    end
+
+    style P1 fill:#51cf66,color:#000
+    style P2 fill:#ffa500,color:#000
+    style P3 fill:#ff6b6b,color:#fff
+    style P4 fill:#ffa500,color:#000
+    style P5 fill:#51cf66,color:#000</pre></div><h3 id="context-components"><a class="anchor" href="#context-components">#</a> Context Components</h3>
+<p><strong>System prompt</strong>: sets the persona, constraints, and behavioral rules. This goes first and stays constant across turns. Claude Code uses roughly 6,000 tokens for its system prompt including tool definitions and behavioral instructions. Keep it tight. Every word in the system prompt is repeated on every API call.</p>
+<p><strong>Tool definitions</strong>: each tool adds 50-200 tokens (name, description, parameter schema). 50 tools at 150 tokens each is 7,500 tokens before any conversation happens. Dynamic tool selection -- only including tools relevant to the current query -- can reduce this by 60-80%.</p>
+<p><strong>Retrieved context</strong>: documents from a vector database, search results, file contents. The quality of retrieval directly determines the quality of the response. Bad retrieval is worse than no retrieval -- it fills the window with noise and actively misleads the model.</p>
+<p><strong>Conversation history</strong>: every previous user message and assistant response. Grows linearly with conversation length. A 50-turn conversation at 200 tokens per turn is 10,000 tokens of history. Most of it is irrelevant to the current query.</p>
+<p><strong>Few-shot examples</strong>: input/output pairs that demonstrate the desired behavior. Two to three well-chosen examples often improve output quality more than thousands of tokens of instructions. But they cost space.</p>
+<p><strong>Generation budget</strong>: the tokens reserved for the model&#39;s response. If you fill the window to capacity, the model has no room to answer. Reserve at least 2,000-4,000 tokens for generation.</p>
+<h3 id="context-compression-strategies"><a class="anchor" href="#context-compression-strategies">#</a> Context Compression Strategies</h3>
+<p><strong>History summarization</strong>: instead of keeping all previous turns verbatim, periodically summarize the conversation. &quot;We discussed X, decided Y, and the user wants Z&quot; in 100 tokens replaces 10 turns that took 2,000 tokens. Run summarization when history exceeds a threshold (e.g., 5,000 tokens).</p>
+<p><strong>Relevance filtering</strong>: score each retrieved document against the current query and drop documents below a threshold. If you retrieved 10 chunks but only 3 are relevant, discard the other 7. Better to have 3 highly relevant chunks than 10 mediocre ones.</p>
+<p><strong>Tool pruning</strong>: classify the user&#39;s query intent and only include tools relevant to that intent. A code question does not need calendar tools. A scheduling question does not need file system tools. This can reduce tool definitions from 8,000 tokens to 1,000.</p>
+<p><strong>Recursive summarization</strong>: for very long documents, summarize in stages. First summarize each section, then summarize the summaries. A 50-page document becomes a 500-token digest that captures the key points.</p>
+<h3 id="memory-systems"><a class="anchor" href="#memory-systems">#</a> Memory Systems</h3>
+<p>Context engineering spans three time horizons.</p>
+<p><strong>Short-term memory</strong>: the current conversation. Stored in the context window directly. Grows with each turn. Managed by summarization and truncation.</p>
+<p><strong>Long-term memory</strong>: facts and preferences that persist across conversations. &quot;The user prefers TypeScript.&quot; &quot;The project uses PostgreSQL.&quot; Stored in a database, retrieved on session start. Claude Code stores this in CLAUDE.md files. ChatGPT stores it in its memory feature.</p>
+<p><strong>Episodic memory</strong>: specific past interactions that might be relevant. &quot;Last Tuesday, we debugged a similar issue in the auth module.&quot; Stored as embeddings, retrieved when the current conversation matches a past episode.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph Memory[&quot;Memory Architecture&quot;]
+        direction TB
+        STM[&quot;Short-term Memory\n(current conversation)\nDirect in context window&quot;]
+        LTM[&quot;Long-term Memory\n(facts, preferences)\nDB -&gt; retrieved on session start&quot;]
+        EM[&quot;Episodic Memory\n(past interactions)\nEmbeddings -&gt; retrieved on similarity&quot;]
+    end
+
+    Q[&quot;Current Query&quot;] --&gt; STM
+    Q --&gt; LTM
+    Q --&gt; EM
+
+    STM --&gt; CW[&quot;Context Window&quot;]
+    LTM --&gt; CW
+    EM --&gt; CW
+
+    style STM fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style LTM fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style EM fill:#1a1a2e,stroke:#e94560,color:#fff
+    style CW fill:#1a1a2e,stroke:#ffa500,color:#fff</pre></div><h3 id="dynamic-context-assembly"><a class="anchor" href="#dynamic-context-assembly">#</a> Dynamic Context Assembly</h3>
+<p>The key insight: different queries need different context. A static system prompt + static tools + static history is wasteful. The best systems dynamically assemble context per query.</p>
+<ol>
+<li>Classify the query intent</li>
+<li>Select relevant tools (not all tools)</li>
+<li>Retrieve relevant documents (not a fixed set)</li>
+<li>Include relevant history turns (not all history)</li>
+<li>Add few-shot examples that match the task type</li>
+<li>Order everything by importance: critical first, important last, optional in the middle</li>
+</ol>
+<p>This is what separates a good AI application from a great one. The model is the same. The context is the differentiator.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">lost-in-the-middle</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-token-counter"><a class="anchor" href="#step-1-token-counter">#</a> Step 1: Token Counter</h3>
+<p>You cannot budget what you cannot measure. Build a simple token counter (approximation using whitespace splitting, since the exact count depends on the tokenizer).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import json
+import numpy as np
+from collections import OrderedDict
+
+def count_tokens(text):
+    if not text:
+        return 0
+    return int(len(text.split()) * 1.3)
+
+def count_tokens_json(obj):
+    return count_tokens(json.dumps(obj))</code></pre>
+      </div>
+    <h3 id="step-2-context-budget-manager"><a class="anchor" href="#step-2-context-budget-manager">#</a> Step 2: Context Budget Manager</h3>
+<p>The core abstraction. A budget manager tracks how many tokens each component uses and enforces limits.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ContextBudget:
+    def __init__(self, max_tokens=128000, generation_reserve=4000):
+        self.max_tokens = max_tokens
+        self.generation_reserve = generation_reserve
+        self.available = max_tokens - generation_reserve
+        self.allocations = OrderedDict()
+
+    def allocate(self, component, content, max_tokens=None):
+        tokens = count_tokens(content)
+        if max_tokens and tokens &gt; max_tokens:
+            words = content.split()
+            target_words = int(max_tokens / 1.3)
+            content = &quot; &quot;.join(words[:target_words])
+            tokens = count_tokens(content)
+
+        used = sum(self.allocations.values())
+        if used + tokens &gt; self.available:
+            allowed = self.available - used
+            if allowed &lt;= 0:
+                return None, 0
+            words = content.split()
+            target_words = int(allowed / 1.3)
+            content = &quot; &quot;.join(words[:target_words])
+            tokens = count_tokens(content)
+
+        self.allocations[component] = tokens
+        return content, tokens
+
+    def remaining(self):
+        used = sum(self.allocations.values())
+        return self.available - used
+
+    def utilization(self):
+        used = sum(self.allocations.values())
+        return used / self.max_tokens
+
+    def report(self):
+        total_used = sum(self.allocations.values())
+        lines = []
+        lines.append(f&quot;Context Budget Report ({self.max_tokens:,} token window)&quot;)
+        lines.append(&quot;-&quot; * 50)
+        for component, tokens in self.allocations.items():
+            pct = tokens / self.max_tokens * 100
+            bar = &quot;#&quot; * int(pct / 2)
+            lines.append(f&quot;  {component:&lt;25} {tokens:&gt;6} tokens ({pct:&gt;5.1f}%) {bar}&quot;)
+        lines.append(&quot;-&quot; * 50)
+        lines.append(f&quot;  {&#39;Used&#39;:&lt;25} {total_used:&gt;6} tokens ({total_used/self.max_tokens*100:.1f}%)&quot;)
+        lines.append(f&quot;  {&#39;Generation reserve&#39;:&lt;25} {self.generation_reserve:&gt;6} tokens&quot;)
+        lines.append(f&quot;  {&#39;Remaining&#39;:&lt;25} {self.remaining():&gt;6} tokens&quot;)
+        return &quot;\n&quot;.join(lines)</code></pre>
+      </div>
+    <h3 id="step-3-lost-in-the-middle-reordering"><a class="anchor" href="#step-3-lost-in-the-middle-reordering">#</a> Step 3: Lost-in-the-Middle Reordering</h3>
+<p>Implement the reordering strategy: most important items go first and last, least important go in the middle.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def reorder_lost_in_middle(items, scores):
+    paired = sorted(zip(scores, items), reverse=True)
+    sorted_items = [item for _, item in paired]
+
+    if len(sorted_items) &lt;= 2:
+        return sorted_items
+
+    first_half = sorted_items[::2]
+    second_half = sorted_items[1::2]
+    second_half.reverse()
+
+    return first_half + second_half
+
+def score_relevance(query, documents):
+    query_words = set(query.lower().split())
+    scores = []
+    for doc in documents:
+        doc_words = set(doc.lower().split())
+        if not query_words:
+            scores.append(0.0)
+            continue
+        overlap = len(query_words &amp; doc_words) / len(query_words)
+        scores.append(round(overlap, 3))
+    return scores</code></pre>
+      </div>
+    <h3 id="step-4-conversation-history-compressor"><a class="anchor" href="#step-4-conversation-history-compressor">#</a> Step 4: Conversation History Compressor</h3>
+<p>Summarize old conversation turns to reclaim token budget.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ConversationManager:
+    def __init__(self, max_history_tokens=5000):
+        self.turns = []
+        self.summaries = []
+        self.max_history_tokens = max_history_tokens
+
+    def add_turn(self, role, content):
+        self.turns.append({&quot;role&quot;: role, &quot;content&quot;: content})
+        self._compress_if_needed()
+
+    def _compress_if_needed(self):
+        total = sum(count_tokens(t[&quot;content&quot;]) for t in self.turns)
+        if total &lt;= self.max_history_tokens:
+            return
+
+        while total &gt; self.max_history_tokens and len(self.turns) &gt; 4:
+            old_turns = self.turns[:2]
+            summary = self._summarize_turns(old_turns)
+            self.summaries.append(summary)
+            self.turns = self.turns[2:]
+            total = sum(count_tokens(t[&quot;content&quot;]) for t in self.turns)
+
+    def _summarize_turns(self, turns):
+        parts = []
+        for t in turns:
+            content = t[&quot;content&quot;]
+            if len(content) &gt; 100:
+                content = content[:100] + &quot;...&quot;
+            parts.append(f&quot;{t[&#39;role&#39;]}: {content}&quot;)
+        return &quot;Previous: &quot; + &quot; | &quot;.join(parts)
+
+    def get_context(self):
+        parts = []
+        if self.summaries:
+            parts.append(&quot;[Conversation Summary]&quot;)
+            for s in self.summaries:
+                parts.append(s)
+        parts.append(&quot;[Recent Conversation]&quot;)
+        for t in self.turns:
+            parts.append(f&quot;{t[&#39;role&#39;]}: {t[&#39;content&#39;]}&quot;)
+        return &quot;\n&quot;.join(parts)
+
+    def token_count(self):
+        return count_tokens(self.get_context())</code></pre>
+      </div>
+    <h3 id="step-5-dynamic-tool-selector"><a class="anchor" href="#step-5-dynamic-tool-selector">#</a> Step 5: Dynamic Tool Selector</h3>
+<p>Only include tools relevant to the current query. Classify intent, then filter.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">TOOL_REGISTRY = {
+    &quot;read_file&quot;: {
+        &quot;description&quot;: &quot;Read contents of a file&quot;,
+        &quot;tokens&quot;: 120,
+        &quot;categories&quot;: [&quot;code&quot;, &quot;files&quot;],
+    },
+    &quot;write_file&quot;: {
+        &quot;description&quot;: &quot;Write content to a file&quot;,
+        &quot;tokens&quot;: 150,
+        &quot;categories&quot;: [&quot;code&quot;, &quot;files&quot;],
+    },
+    &quot;search_code&quot;: {
+        &quot;description&quot;: &quot;Search for patterns in codebase&quot;,
+        &quot;tokens&quot;: 130,
+        &quot;categories&quot;: [&quot;code&quot;],
+    },
+    &quot;run_command&quot;: {
+        &quot;description&quot;: &quot;Execute a shell command&quot;,
+        &quot;tokens&quot;: 140,
+        &quot;categories&quot;: [&quot;code&quot;, &quot;system&quot;],
+    },
+    &quot;create_calendar_event&quot;: {
+        &quot;description&quot;: &quot;Create a new calendar event&quot;,
+        &quot;tokens&quot;: 180,
+        &quot;categories&quot;: [&quot;calendar&quot;],
+    },
+    &quot;list_emails&quot;: {
+        &quot;description&quot;: &quot;List recent emails&quot;,
+        &quot;tokens&quot;: 160,
+        &quot;categories&quot;: [&quot;email&quot;],
+    },
+    &quot;send_email&quot;: {
+        &quot;description&quot;: &quot;Send an email message&quot;,
+        &quot;tokens&quot;: 200,
+        &quot;categories&quot;: [&quot;email&quot;],
+    },
+    &quot;web_search&quot;: {
+        &quot;description&quot;: &quot;Search the web for information&quot;,
+        &quot;tokens&quot;: 140,
+        &quot;categories&quot;: [&quot;research&quot;],
+    },
+    &quot;query_database&quot;: {
+        &quot;description&quot;: &quot;Run a SQL query on the database&quot;,
+        &quot;tokens&quot;: 170,
+        &quot;categories&quot;: [&quot;code&quot;, &quot;data&quot;],
+    },
+    &quot;generate_chart&quot;: {
+        &quot;description&quot;: &quot;Generate a chart from data&quot;,
+        &quot;tokens&quot;: 190,
+        &quot;categories&quot;: [&quot;data&quot;, &quot;visualization&quot;],
+    },
+}
+
+def classify_intent(query):
+    query_lower = query.lower()
+
+    intent_keywords = {
+        &quot;code&quot;: [&quot;code&quot;, &quot;function&quot;, &quot;bug&quot;, &quot;error&quot;, &quot;file&quot;, &quot;implement&quot;, &quot;refactor&quot;, &quot;debug&quot;, &quot;test&quot;],
+        &quot;calendar&quot;: [&quot;meeting&quot;, &quot;schedule&quot;, &quot;calendar&quot;, &quot;appointment&quot;, &quot;event&quot;],
+        &quot;email&quot;: [&quot;email&quot;, &quot;mail&quot;, &quot;send&quot;, &quot;inbox&quot;, &quot;message&quot;],
+        &quot;research&quot;: [&quot;search&quot;, &quot;find&quot;, &quot;what is&quot;, &quot;how does&quot;, &quot;explain&quot;, &quot;look up&quot;],
+        &quot;data&quot;: [&quot;data&quot;, &quot;query&quot;, &quot;database&quot;, &quot;chart&quot;, &quot;graph&quot;, &quot;analytics&quot;, &quot;sql&quot;],
+    }
+
+    scores = {}
+    for intent, keywords in intent_keywords.items():
+        score = sum(1 for kw in keywords if kw in query_lower)
+        if score &gt; 0:
+            scores[intent] = score
+
+    if not scores:
+        return [&quot;code&quot;]
+
+    max_score = max(scores.values())
+    return [intent for intent, score in scores.items() if score &gt;= max_score * 0.5]
+
+def select_tools(query, token_budget=2000):
+    intents = classify_intent(query)
+    relevant = {}
+    total_tokens = 0
+
+    for name, tool in TOOL_REGISTRY.items():
+        if any(cat in intents for cat in tool[&quot;categories&quot;]):
+            if total_tokens + tool[&quot;tokens&quot;] &lt;= token_budget:
+                relevant[name] = tool
+                total_tokens += tool[&quot;tokens&quot;]
+
+    return relevant, total_tokens</code></pre>
+      </div>
+    <h3 id="step-6-full-context-assembly-pipeline"><a class="anchor" href="#step-6-full-context-assembly-pipeline">#</a> Step 6: Full Context Assembly Pipeline</h3>
+<p>Wire everything together. Given a query, dynamically assemble the optimal context.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ContextEngine:
+    def __init__(self, max_tokens=128000, generation_reserve=4000):
+        self.budget = ContextBudget(max_tokens, generation_reserve)
+        self.conversation = ConversationManager(max_history_tokens=5000)
+        self.system_prompt = (
+            &quot;You are a helpful AI assistant. You have access to tools for &quot;
+            &quot;code editing, file management, web search, and data analysis. &quot;
+            &quot;Use the appropriate tools for each task. Be concise and accurate.&quot;
+        )
+        self.knowledge_base = [
+            &quot;Python 3.12 introduced type parameter syntax for generic classes using bracket notation.&quot;,
+            &quot;The project uses PostgreSQL 16 with pgvector for embedding storage.&quot;,
+            &quot;Authentication is handled by Supabase Auth with JWT tokens.&quot;,
+            &quot;The frontend is built with Next.js 15 using the App Router.&quot;,
+            &quot;API rate limits are set to 100 requests per minute per user.&quot;,
+            &quot;The deployment pipeline uses GitHub Actions with Docker multi-stage builds.&quot;,
+            &quot;Test coverage must be above 80% for all new modules.&quot;,
+            &quot;The codebase follows the repository pattern for data access.&quot;,
+        ]
+
+    def assemble(self, query):
+        self.budget = ContextBudget(self.budget.max_tokens, self.budget.generation_reserve)
+
+        system_content, _ = self.budget.allocate(&quot;system_prompt&quot;, self.system_prompt, max_tokens=1000)
+
+        tools, tool_tokens = select_tools(query, token_budget=2000)
+        tool_text = json.dumps(list(tools.keys()))
+        tool_content, _ = self.budget.allocate(&quot;tools&quot;, tool_text, max_tokens=2000)
+
+        relevance = score_relevance(query, self.knowledge_base)
+        threshold = 0.1
+        relevant_docs = [
+            doc for doc, score in zip(self.knowledge_base, relevance)
+            if score &gt;= threshold
+        ]
+
+        if relevant_docs:
+            doc_scores = [s for s in relevance if s &gt;= threshold]
+            reordered = reorder_lost_in_middle(relevant_docs, doc_scores)
+            doc_text = &quot;\n&quot;.join(reordered)
+            doc_content, _ = self.budget.allocate(&quot;retrieved_context&quot;, doc_text, max_tokens=3000)
+
+        history_text = self.conversation.get_context()
+        if history_text.strip():
+            history_content, _ = self.budget.allocate(&quot;conversation_history&quot;, history_text, max_tokens=5000)
+
+        query_content, _ = self.budget.allocate(&quot;user_query&quot;, query, max_tokens=500)
+
+        return self.budget
+
+    def chat(self, query):
+        self.conversation.add_turn(&quot;user&quot;, query)
+        budget = self.assemble(query)
+        response = f&quot;[Response to: {query[:50]}...]&quot;
+        self.conversation.add_turn(&quot;assistant&quot;, response)
+        return budget
+
+
+def run_demo():
+    print(&quot;=&quot; * 60)
+    print(&quot;  Context Engineering Pipeline Demo&quot;)
+    print(&quot;=&quot; * 60)
+
+    engine = ContextEngine(max_tokens=128000, generation_reserve=4000)
+
+    print(&quot;\n--- Query 1: Code task ---&quot;)
+    budget = engine.chat(&quot;Fix the bug in the authentication module where JWT tokens expire too early&quot;)
+    print(budget.report())
+
+    print(&quot;\n--- Query 2: Research task ---&quot;)
+    budget = engine.chat(&quot;What is the best approach for implementing vector search in PostgreSQL?&quot;)
+    print(budget.report())
+
+    print(&quot;\n--- Query 3: After conversation history builds up ---&quot;)
+    for i in range(8):
+        engine.conversation.add_turn(&quot;user&quot;, f&quot;Follow-up question number {i+1} about the implementation details of the system&quot;)
+        engine.conversation.add_turn(&quot;assistant&quot;, f&quot;Here is the response to follow-up {i+1} with technical details about the architecture&quot;)
+
+    budget = engine.chat(&quot;Now implement the changes we discussed&quot;)
+    print(budget.report())
+
+    print(&quot;\n--- Tool Selection Examples ---&quot;)
+    test_queries = [
+        &quot;Fix the bug in auth.py&quot;,
+        &quot;Schedule a meeting with the team for Tuesday&quot;,
+        &quot;Show me the database query performance stats&quot;,
+        &quot;Search for best practices on error handling&quot;,
+    ]
+
+    for q in test_queries:
+        tools, tokens = select_tools(q)
+        intents = classify_intent(q)
+        print(f&quot;\n  Query: {q}&quot;)
+        print(f&quot;  Intents: {intents}&quot;)
+        print(f&quot;  Tools: {list(tools.keys())} ({tokens} tokens)&quot;)
+
+    print(&quot;\n--- Lost-in-the-Middle Reordering ---&quot;)
+    docs = [&quot;Doc A (most relevant)&quot;, &quot;Doc B (somewhat relevant)&quot;, &quot;Doc C (least relevant)&quot;,
+            &quot;Doc D (relevant)&quot;, &quot;Doc E (moderately relevant)&quot;]
+    scores = [0.95, 0.60, 0.20, 0.80, 0.50]
+    reordered = reorder_lost_in_middle(docs, scores)
+    print(f&quot;  Original order: {docs}&quot;)
+    print(f&quot;  Scores:         {scores}&quot;)
+    print(f&quot;  Reordered:      {reordered}&quot;)
+    print(f&quot;  (Most relevant at start and end, least relevant in middle)&quot;)</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="harness-managed-context"><a class="anchor" href="#harness-managed-context">#</a> Harness-Managed Context</h3>
+<p>Claude Code manages context with a layered approach. The system prompt includes behavioral rules and tool definitions (~6K tokens). When you open a file, its contents are injected as context. When you search, results are added. Old conversation turns are summarized. CLAUDE.md provides long-term memory that persists across sessions.</p>
+<p>The key engineering decision: Claude Code does not dump your entire codebase into the context. It retrieves relevant files on demand. This is context engineering in practice.</p>
+<h3 id="dynamic-context-loading"><a class="anchor" href="#dynamic-context-loading">#</a> Dynamic Context Loading</h3>
+<p>Cursor indexes your entire codebase into embeddings. When you type a query, it retrieves the most relevant files and code blocks using vector similarity. Only those pieces go into the context window. A 500K-line codebase is compressed into the 5-10 most relevant code blocks.</p>
+<p>This is the pattern: embed everything, retrieve on demand, include only what matters.</p>
+<h3 id="assistant-long-term-memory"><a class="anchor" href="#assistant-long-term-memory">#</a> Assistant Long-Term Memory</h3>
+<p>ChatGPT stores user preferences and facts as long-term memory. On each conversation start, relevant memories are retrieved and included in the system prompt. &quot;The user prefers Python&quot; costs 5 tokens but saves hundreds of tokens of repeated instructions across conversations.</p>
+<h3 id="rag-as-context-engineering"><a class="anchor" href="#rag-as-context-engineering">#</a> RAG as Context Engineering</h3>
+<p>Retrieval-Augmented Generation is context engineering formalized. Instead of stuffing knowledge into the model&#39;s weights (training) or the system prompt (static context), you retrieve relevant documents at query time and inject them into the context window. The entire RAG pipeline -- chunking, embedding, retrieval, reranking -- exists to solve one problem: putting the right information in the context window.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/prompt-context-optimizer.md</code> -- a reusable prompt that audits a context assembly strategy and recommends optimizations. Feed it your system prompt, tool count, average history length, and retrieval strategy, and it identifies token waste and suggests improvements.</p>
+<p>It also produces <code>outputs/skill-context-engineering.md</code> -- a decision framework for designing context assembly pipelines based on task type, context window size, and latency budget.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add a &quot;token waste detector&quot; to the ContextBudget class. It should flag components using more than 30% of the budget and suggest compression strategies specific to each component type (summarize history, prune tools, re-rank documents).</p>
+</li>
+<li><p>Implement semantic deduplication for retrieved context. If two retrieved documents are more than 80% similar (by word overlap or cosine similarity of their embeddings), keep only the higher-scored one. Measure how much token budget this recovers.</p>
+</li>
+<li><p>Build a &quot;context replay&quot; tool. Given a conversation transcript, replay it through the ContextEngine and visualize how the budget allocation changes turn by turn. Plot token usage per component over time. Identify the turn where context starts getting compressed.</p>
+</li>
+<li><p>Implement a priority-based tool selector. Instead of binary include/exclude, assign each tool a relevance score to the current query. Include tools in descending relevance order until the tool budget is exhausted. Compare task performance with 5, 10, 20, and 50 tools included.</p>
+</li>
+<li><p>Build a multi-strategy context compressor. Implement three compression strategies (truncation, summarization, extraction of key sentences) and benchmark them on a set of 20 documents. Measure the tradeoff between compression ratio and information retention (does the compressed version still contain the answer to the query?).</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Context window</td>
+<td>&quot;How much the model can read&quot;</td>
+<td>The maximum number of tokens (input + output) the model processes in a single forward pass -- 400K for GPT-5, 200K (1M beta) for Claude Opus 4.7, 2M for Gemini 3 Pro</td>
+</tr>
+<tr>
+<td>Context engineering</td>
+<td>&quot;Advanced prompt engineering&quot;</td>
+<td>The discipline of deciding what goes into the context window, in what order, and at what priority -- encompasses retrieval, compression, tool selection, and memory management</td>
+</tr>
+<tr>
+<td>Lost-in-the-middle</td>
+<td>&quot;Models forget stuff in the middle&quot;</td>
+<td>Empirical finding that LLMs attend better to the beginning and end of context, with 10-20% accuracy drop for information placed in the middle</td>
+</tr>
+<tr>
+<td>Token budget</td>
+<td>&quot;How many tokens you have left&quot;</td>
+<td>An explicit allocation of context window capacity across components (system prompt, tools, history, retrieval, generation) with per-component limits</td>
+</tr>
+<tr>
+<td>Dynamic context</td>
+<td>&quot;Loading stuff on the fly&quot;</td>
+<td>Assembling the context window differently for each query based on intent classification, relevant tool selection, and retrieval results</td>
+</tr>
+<tr>
+<td>History summarization</td>
+<td>&quot;Compressing the conversation&quot;</td>
+<td>Replacing verbatim old conversation turns with a concise summary, reducing token cost while preserving key information</td>
+</tr>
+<tr>
+<td>Tool pruning</td>
+<td>&quot;Only including relevant tools&quot;</td>
+<td>Classifying query intent and only including tool definitions that match, reducing tool token cost by 60-80%</td>
+</tr>
+<tr>
+<td>Long-term memory</td>
+<td>&quot;Remembering across sessions&quot;</td>
+<td>Facts and preferences stored in a database and retrieved at session start -- CLAUDE.md, ChatGPT Memory, and similar systems</td>
+</tr>
+<tr>
+<td>Episodic memory</td>
+<td>&quot;Remembering specific past events&quot;</td>
+<td>Past interactions stored as embeddings and retrieved when the current query is similar to a past conversation</td>
+</tr>
+<tr>
+<td>Generation budget</td>
+<td>&quot;Room for the answer&quot;</td>
+<td>Tokens reserved for the model&#39;s output -- if the context fills the window completely, the model has no room to respond</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2307.03172">Liu et al., 2023 -- &quot;Lost in the Middle: How Language Models Use Long Contexts&quot;</a> -- the definitive study on position-dependent attention, showing that models struggle with information in the middle of long contexts</li>
+<li><a href="https://www.anthropic.com/news/contextual-retrieval">Anthropic&#39;s Contextual Retrieval blog post</a> -- how Anthropic approaches context-aware chunk retrieval, reducing retrieval failure by 49%</li>
+<li><a href="https://simonwillison.net/2025/Jun/27/context-engineering/">Simon Willison&#39;s &quot;Context Engineering&quot;</a> -- the blog post that named the discipline and distinguished it from prompt engineering</li>
+<li><a href="https://python.langchain.com/docs/tutorials/rag/">LangChain documentation on RAG</a> -- practical implementation of retrieval-augmented generation as a context engineering pattern</li>
+<li><a href="https://github.com/gkamradt/LLMTest_NeedleInAHaystack">Greg Kamradt&#39;s Needle in a Haystack test</a> -- the benchmark that revealed position-dependent retrieval failures across all major models</li>
+<li><a href="https://arxiv.org/abs/2211.05102">Pope et al., &quot;Efficiently Scaling Transformer Inference&quot; (2022)</a> -- why context length drives memory and latency, and how KV cache, MQA, and GQA change the budget calculation.</li>
+<li><a href="https://arxiv.org/abs/2308.16369">Agrawal et al., &quot;SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills&quot; (2023)</a> -- the two phases of inference that make long prompts expensive in TTFT but cheap in TPOT; the ground truth behind context-packing tradeoffs.</li>
+<li><a href="https://arxiv.org/abs/2305.13245">Ainslie et al., &quot;GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints&quot; (EMNLP 2023)</a> -- the grouped-query attention paper that cut KV memory 8× in production decoders without quality loss.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-embeddings.html"><span>← Previous</span><b>embeddings</b></a>
+      <a class="next" href="./06-rag.html"><span>Next →</span><b>rag</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

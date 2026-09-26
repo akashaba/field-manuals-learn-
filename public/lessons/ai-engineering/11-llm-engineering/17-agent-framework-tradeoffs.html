@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Framework Tradeoffs — Graph, Role, and Actor Orchestration — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/17-agent-framework-tradeoffs/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#the-skill">The Skill</a></li><li><a href="#the-decision-matrix">The Decision Matrix</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Agent Framework Tradeoffs — Graph, Role, and Actor Orchestration</h1>
+    <p class="lesson-sub">Every framework sells the same demo (research agent builds a report) and hides the same bug (state schema fights with the orchestration layer). Pick the framework whose abstractions match the shape of your problem; everything else is glue you write twice.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 · 09 (Function Calling), Phase 11 · 16 (LangGraph)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 17">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="121.2" cy="116.9" r="11.1" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="115.7" cy="111.9" r="10.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="110.3" cy="107.0" r="9.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.9" cy="102.1" r="9.2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="99.5" cy="97.2" r="8.6" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.1,97.0 L94.1,85.1 L102.0,97.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">17</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Agent Framework</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Tradeoffs — Graph…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have a task that needs more than one LLM call. Maybe it is a research workflow (plan, search, summarize, cite). Maybe it is a code-review pipeline (parse diff, critique, patch, validate). Maybe it is a multi-turn assistant that books flights, writes emails, and files expense reports. You pick a framework.</p>
+<p>Three days later, you discover the framework&#39;s abstractions leak. CrewAI gives you roles but fights you when the &quot;researcher&quot; needs to hand a structured plan to the &quot;writer.&quot; AutoGen gives you chat between agents but has no first-class state so your checkpoint is a pickle of a conversation log. LangGraph gives you a state graph but forces you to name every transition before you know what the agent will do. Agno gives you a single-agent abstraction that screams when you try to fan out to three concurrent workers.</p>
+<p>The fix is not &quot;pick the best framework.&quot; It is to match the framework&#39;s core abstraction to the shape of your problem. This lesson draws that map.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/11-llm-engineering/17-agent-framework-tradeoffs/assets/framework-matrix.svg" alt="Agent framework matrix: core abstraction vs problem shape" loading="lazy" /></figure></p>
+<p>Four frameworks dominate the 2026 landscape. Their core abstractions are not the same.</p>
+<table>
+<thead>
+<tr>
+<th>Framework</th>
+<th>Core abstraction</th>
+<th>Best fit</th>
+<th>Worst fit</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>LangGraph</strong></td>
+<td><code>StateGraph</code> — typed state, nodes, conditional edges, checkpointer.</td>
+<td>Workflows with explicit state and human-in-the-loop interrupts; production agents needing time-travel debugging.</td>
+<td>Loose, role-driven brainstorming where the topology is unknown.</td>
+</tr>
+<tr>
+<td><strong>CrewAI</strong></td>
+<td><code>Crew</code> — roles (goal, backstory), tasks, process (sequential or hierarchical).</td>
+<td>Role-playing or persona-driven workflows with a short linear/hierarchical plan.</td>
+<td>Anything stateful beyond the crew&#39;s turn history; complex branching.</td>
+</tr>
+<tr>
+<td><strong>AutoGen</strong></td>
+<td><code>ConversableAgent</code> pair — two or more agents that speak in turns until an exit condition.</td>
+<td>Multi-agent <em>dialogue</em> (teacher-student, proposer-critic, actor-reviewer) where the thinking emerges from the chat.</td>
+<td>Deterministic workflows with a known DAG; anything needing durable state across restarts.</td>
+</tr>
+<tr>
+<td><strong>Agno</strong></td>
+<td><code>Agent</code> — a single LLM + tools + memory, composable into teams.</td>
+<td>Fast-to-build single agents and lightweight teams; strong multi-modality and built-in storage drivers.</td>
+<td>Deep, explicitly-branched graphs with custom reducers.</td>
+</tr>
+</tbody></table>
+<h3 id="what-abstraction-actually-means"><a class="anchor" href="#what-abstraction-actually-means">#</a> What &quot;abstraction&quot; actually means</h3>
+<p>A framework&#39;s core abstraction is the thing you draw on the whiteboard when you pitch the architecture.</p>
+<ul>
+<li><strong>LangGraph</strong> → you draw a graph. Nodes are steps, edges are transitions, and the state object at every point is typed. The mental model is a state machine.</li>
+<li><strong>CrewAI</strong> → you draw an org chart. Each role has a job description and a manager routes tasks. The mental model is a small team of specialists.</li>
+<li><strong>AutoGen</strong> → you draw a Slack DM. Two agents message each other; a third joins if you need a moderator. The mental model is chat.</li>
+<li><strong>Agno</strong> → you draw a single box with tools hanging off it. Put boxes next to each other for a team. The mental model is &quot;agent with batteries included.&quot;</li>
+</ul>
+<h3 id="the-state-question"><a class="anchor" href="#the-state-question">#</a> The state question</h3>
+<p>State is where most framework choices break down in production.</p>
+<ul>
+<li><strong>LangGraph.</strong> Typed state (<code>TypedDict</code> or Pydantic model), per-field reducers, first-class checkpointer (SQLite/Postgres/Redis). Resume, interrupt, and time-travel are free. <em>(See Phase 11 · 16.)</em></li>
+<li><strong>CrewAI.</strong> State flows as strings between tasks via the <code>context</code> field, or structured through <code>output_pydantic</code>. No durable per-crew store out of the box; you bolt on your own if the crew must survive a restart.</li>
+<li><strong>AutoGen.</strong> State is the chat history and any user-defined <code>context</code>. Conversation transcripts persist; arbitrary workflow state does not unless you write adapters.</li>
+<li><strong>Agno.</strong> Built-in storage drivers (SQLite, Postgres, Mongo, Redis, DynamoDB) attached to an <code>Agent</code> via <code>storage=</code> — conversation sessions and user memories persist automatically. Not a full graph checkpointer; a session store.</li>
+</ul>
+<h3 id="the-branching-question"><a class="anchor" href="#the-branching-question">#</a> The branching question</h3>
+<p>Every non-trivial agent branches. Who decides the branch matters.</p>
+<ul>
+<li><strong>LangGraph</strong> — you decide, via conditional edges. Routing is a Python function with named branches. Branches are first-class in the compiled graph; the checkpointer records which branch was taken.</li>
+<li><strong>CrewAI</strong> — the manager decides in hierarchical mode; in sequential mode you decide at build time. Routing is implicit in the task list; there is no first-class &quot;if&quot; outside the manager&#39;s prompt.</li>
+<li><strong>AutoGen</strong> — the agents decide via chat. Branching is emergent from who speaks next. <code>GroupChatManager</code> selects the next speaker; you can hand-write a <code>speaker_selection_method</code> but the default is LLM-driven.</li>
+<li><strong>Agno</strong> — the agent decides by which tool to call next. Teams have a coordinator/router/collaborator mode; branching beyond that is the developer&#39;s responsibility.</li>
+</ul>
+<h3 id="the-observability-question"><a class="anchor" href="#the-observability-question">#</a> The observability question</h3>
+<ul>
+<li><strong>LangGraph</strong> — OpenTelemetry via LangSmith or any OTel exporter. Every node transition is a trace span; checkpoints double as replayable traces. LangSmith is the first-party option; Langfuse/Phoenix also have adapters.</li>
+<li><strong>CrewAI</strong> — first-class OpenTelemetry since late-2025; integrations with Langfuse, Phoenix, Opik, AgentOps.</li>
+<li><strong>AutoGen</strong> — OpenTelemetry integration via <code>autogen-core</code>; AgentOps and Opik have connectors. Tracing granularity is per-agent-message, not per-node.</li>
+<li><strong>Agno</strong> — built-in <code>monitoring=True</code> flag plus OpenTelemetry exporters; tight integration with Langfuse for session traces.</li>
+</ul>
+<h3 id="cost-and-latency"><a class="anchor" href="#cost-and-latency">#</a> Cost and latency</h3>
+<p>All four frameworks add per-call overhead (framework logic, validation, serialization). Rough order of increasing overhead: Agno ≈ LangGraph &lt; CrewAI ≈ AutoGen. The difference is dominated by how much extra LLM routing the framework does. CrewAI&#39;s hierarchical manager spends tokens deciding who goes next; AutoGen&#39;s <code>GroupChatManager</code> likewise. LangGraph only spends tokens where you write <code>llm.invoke</code>. Agno&#39;s single-agent path is thin.</p>
+<p>When cost per run matters, prefer explicit routing (LangGraph edges, AutoGen <code>speaker_selection_method</code>) over LLM-selected routing.</p>
+<h3 id="interoperability"><a class="anchor" href="#interoperability">#</a> Interoperability</h3>
+<ul>
+<li><strong>LangGraph</strong> ↔ <strong>LangChain</strong> tools, retrievers, LLMs. First-class MCP adapter (tools imported as MCP servers).</li>
+<li><strong>CrewAI</strong> ↔ tools inherit from <code>BaseTool</code>; LangChain tools, LlamaIndex tools, and MCP tools all adapt in. Crew-to-crew delegation via <code>allow_delegation=True</code>.</li>
+<li><strong>AutoGen</strong> → <code>FunctionTool</code> wraps any Python callable; MCP adapter available. Tight coupling to AG2 ecosystem for agent-to-agent patterns.</li>
+<li><strong>Agno</strong> → <code>@tool</code> decorator or BaseTool subclass; MCP adapter; tools can be shared across agents and teams.</li>
+</ul>
+<h2 id="the-skill"><a class="anchor" href="#the-skill">#</a> The Skill</h2>
+<blockquote>
+<p>You can explain, in one sentence, why a given framework is right for a given agent problem.</p>
+</blockquote>
+<p>Pre-build checklist:</p>
+<ol>
+<li><strong>Draw the shape.</strong> Is this a graph (typed state, named transitions)? A role play (specialists hand off work)? A chat (agents talk until done)? A single agent with tools?</li>
+<li><strong>Decide who branches.</strong> Developer-decided branching → LangGraph. Manager-agent-decided → CrewAI hierarchical. Chat-emergent → AutoGen. Tool-call-decided → Agno.</li>
+<li><strong>Check the state budget.</strong> Do you need resume-from-checkpoint? Time-travel? Human interrupts mid-run? If yes, LangGraph is the default; Agno sessions cover conversation-scoped state.</li>
+<li><strong>Check the cost budget.</strong> LLM-selected routing costs extra tokens per turn. If the agent runs thousands of times a day, prefer explicit routing.</li>
+<li><strong>Budget the framework overhead.</strong> Every framework is another dependency. If the task is two LLM calls and a tool, write 30 lines of plain Python; no framework is cheaper than no framework.</li>
+</ol>
+<p>Refuse to reach for a framework before you can draw the graph, the org chart, the chat, or the agent box. Refuse to pick one that forces you to fight its state model for the thing you actually need.</p>
+<h2 id="the-decision-matrix"><a class="anchor" href="#the-decision-matrix">#</a> The Decision Matrix</h2>
+<table>
+<thead>
+<tr>
+<th>Problem shape</th>
+<th>Preferred framework</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Workflow DAG with typed state, human approvals, long-running</td>
+<td>LangGraph</td>
+<td>First-class state, checkpointer, interrupts, time-travel.</td>
+</tr>
+<tr>
+<td>Research / writing pipeline with distinct roles</td>
+<td>CrewAI (sequential) or LangGraph subgraphs</td>
+<td>Role-per-task is cheap to express in CrewAI; scale up with LangGraph when branching gets complex.</td>
+</tr>
+<tr>
+<td>Proposer-critic or teacher-student dialogue</td>
+<td>AutoGen</td>
+<td>Two-agent chat is its native shape.</td>
+</tr>
+<tr>
+<td>Single agent with tools, sessions, memory</td>
+<td>Agno</td>
+<td>Thinnest setup, built-in storage and memory.</td>
+</tr>
+<tr>
+<td>Thousands of parallel fanouts with reducers</td>
+<td>LangGraph + <code>Send</code></td>
+<td>The only one with a first-class parallel-dispatch API.</td>
+</tr>
+<tr>
+<td>Quick prototype, no framework commitment</td>
+<td>Plain Python + provider SDK</td>
+<td>No framework is the fastest framework.</td>
+</tr>
+</tbody></table>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-framework-fit</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Take the same task — &quot;research Anthropic&#39;s headquarters, write a 200-word brief, cite sources&quot; — and implement it in LangGraph (four nodes: plan, search, write, cite) and in CrewAI (three roles: researcher, writer, editor). Report token cost per run and lines of code.</li>
+<li><strong>Medium.</strong> Build the same task in AutoGen (researcher ↔ writer chat, editor joins via <code>GroupChat</code>) and Agno (a single agent with <code>search_tools</code> and <code>write_tools</code>, plus a session store). Rank the four implementations on (a) cost per run, (b) ability to resume after a crash, (c) ability to inject a human approval before the write step.</li>
+<li><strong>Hard.</strong> Build a decision-tree script <code>pick_framework.py</code> that takes a short problem description (JSON: <code>{has_typed_state, has_roles, has_dialogue, has_parallel_fanout, needs_resume}</code>) and returns a recommendation with one-sentence justification. Verify it on six cases you design yourself.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Orchestration</td>
+<td>&quot;How the agents coordinate&quot;</td>
+<td>The layer that decides which node/role/agent runs next.</td>
+</tr>
+<tr>
+<td>Durable state</td>
+<td>&quot;Resume after a restart&quot;</td>
+<td>State that survives process death, attached to a checkpoint or session store.</td>
+</tr>
+<tr>
+<td>LLM-selected routing</td>
+<td>&quot;Let the model decide&quot;</td>
+<td>A planner LLM picks the next step each turn; flexible but pays tokens on every decision.</td>
+</tr>
+<tr>
+<td>Explicit routing</td>
+<td>&quot;Developer decides&quot;</td>
+<td>A Python function or static edge picks the next step; cheap and auditable.</td>
+</tr>
+<tr>
+<td>Crew</td>
+<td>&quot;A CrewAI team&quot;</td>
+<td>Roles + tasks + process (sequential or hierarchical) bound into a single runnable.</td>
+</tr>
+<tr>
+<td>GroupChat</td>
+<td>&quot;AutoGen&#39;s multi-agent chat&quot;</td>
+<td>A managed conversation between N agents with a speaker selector.</td>
+</tr>
+<tr>
+<td>Team (Agno)</td>
+<td>&quot;Multi-agent Agno&quot;</td>
+<td>Route / coordinate / collaborate mode over a set of agents.</td>
+</tr>
+<tr>
+<td>StateGraph</td>
+<td>&quot;LangGraph&#39;s graph&quot;</td>
+<td>Typed-state, node, conditional-edge, checkpointer abstraction.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://langchain-ai.github.io/langgraph/">LangGraph documentation</a> — StateGraph, checkpointers, interrupts, time-travel.</li>
+<li><a href="https://docs.crewai.com/">CrewAI documentation</a> — Crews, Flows, Agents, Tasks, Processes.</li>
+<li><a href="https://microsoft.github.io/autogen/">AutoGen documentation</a> — ConversableAgent, GroupChat, teams, tools.</li>
+<li><a href="https://docs.agno.com/">Agno documentation</a> — Agent, Team, Workflow, storage, memory.</li>
+<li><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic — Building effective agents (Dec 2024)</a> — pattern library (prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer) framework-agnostic.</li>
+<li><a href="https://arxiv.org/abs/2210.03629">Yao et al., &quot;ReAct: Synergizing Reasoning and Acting&quot; (ICLR 2023)</a> — the loop every framework dresses up.</li>
+<li><a href="https://arxiv.org/abs/2308.08155">Wu et al., &quot;AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation&quot; (2023)</a> — AutoGen&#39;s design paper.</li>
+<li><a href="https://arxiv.org/abs/2304.03442">Park et al., &quot;Generative Agents: Interactive Simulacra of Human Behavior&quot; (UIST 2023)</a> — role-play foundation that CrewAI-style persona stacks build on.</li>
+<li>Phase 11 · 16 (LangGraph) — the framework this lesson benchmarks against.</li>
+<li>Phase 11 · 19 (Reflexion) — a pattern that maps cleanly to LangGraph but awkwardly to CrewAI.</li>
+<li>Phase 11 · 22 (Production observability) — how to instrument whichever framework you pick.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./16-langgraph-state-machines.html"><span>← Previous</span><b>langgraph state machines</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inpainting, Outpainting &amp; Image Editing — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/08-generative-ai/09-inpainting-outpainting-editing/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Generative AI</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#production-note-edit-pipelines-are-latency-sensitive">Production note: edit pipelines are latency-sensitive</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Generative AI</div>
+    <h1 class="lesson-title">Inpainting, Outpainting &amp; Image Editing</h1>
+    <p class="lesson-sub">Text-to-image makes new things. Inpainting fixes old ones. In production, 70% of billable image work is editing — swap a background, remove a logo, extend the canvas, regenerate a hand. Inpainting is where diffusion earns its keep.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 8 · 07 (Latent Diffusion), Phase 8 · 08 (ControlNet &amp; LoRA)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Generative AI 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M89.4,100.6 L97.8,88.1 L106.1,100.6 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.6,95.3 L92.3,83.7 L100.1,95.3 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.8,90.0 L86.9,79.4 L94.0,90.0 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.0,84.7 L81.5,75.0 L87.9,84.7 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.3,79.4 L76.1,70.6 L81.9,79.4 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">GENERATIVE AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Inpainting,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Outpainting &amp; Image…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A client sends a perfect product photo with a distracting sign in the background. You want to erase the sign and leave everything else pixel-identical. You cannot run text-to-image from scratch — the result will have a different color, different lighting, different product angle. You want to regenerate <em>only</em> the masked region, and you want the regeneration to respect the surrounding context.</p>
+<p>That is inpainting. Variants:</p>
+<ul>
+<li><strong>Inpainting.</strong> Regenerate inside a mask, keep outside pixels.</li>
+<li><strong>Outpainting.</strong> Regenerate outside a mask (or beyond the canvas), keep inside.</li>
+<li><strong>Image editing.</strong> Regenerate the whole image but keep semantic or structural fidelity to the original (SDEdit, InstructPix2Pix).</li>
+</ul>
+<p>Every diffusion pipeline in 2026 ships an inpainting mode. Flux.1-Fill, Stable Diffusion Inpaint, SDXL-Inpaint, DALL-E 3 Edit. They work on the same principle.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/08-generative-ai/09-inpainting-outpainting-editing/assets/inpainting.svg" alt="Inpainting: mask-aware denoising with context-preserving reinjection" loading="lazy" /></figure></p>
+<h3 id="the-naive-approach-and-why-its-wrong"><a class="anchor" href="#the-naive-approach-and-why-its-wrong">#</a> The naive approach (and why it&#39;s wrong)</h3>
+<p>Run standard text-to-image with a mask. At each sampling step, replace the unmasked region of the noisy latent with the forward-diffused clean image. It works... badly. Boundary artifacts bleed through because the model has no information about what is in the masked region.</p>
+<h3 id="the-proper-inpainting-model"><a class="anchor" href="#the-proper-inpainting-model">#</a> The proper inpainting model</h3>
+<p>Train a modified U-Net that takes 9 input channels instead of 4:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">input = concat([ noisy_latent (4ch), encoded_image (4ch), mask (1ch) ], dim=channel)</code></pre>
+      </div>
+    <p>The extra channels are a copy of the VAE-encoded source image plus a single-channel mask. At training time, you randomly mask regions of the image and train the model to denoise only the masked region while the unmasked region is given as a clean conditioning signal. At inference, the model can &quot;see&quot; what surrounds the masked region and produces coherent completions.</p>
+<p>SD-Inpaint, SDXL-Inpaint, Flux-Fill all use this 9-channel (or analog) input. Diffusers <code>StableDiffusionInpaintPipeline</code>, <code>FluxFillPipeline</code>.</p>
+<h3 id="sdedit-meng-et-al-2022-free-editing"><a class="anchor" href="#sdedit-meng-et-al-2022-free-editing">#</a> SDEdit (Meng et al., 2022) — free editing</h3>
+<p>Add noise to the source image up to some intermediate <code>t</code>, then run the reverse chain from <code>t</code> down to 0 with a new prompt. No retraining. The choice of starting <code>t</code> trades fidelity for creative freedom:</p>
+<ul>
+<li><code>t/T = 0.3</code> → nearly identical to source, small stylistic changes</li>
+<li><code>t/T = 0.6</code> → moderate edits, preserves coarse structure</li>
+<li><code>t/T = 0.9</code> → generated from near-noise, minimal source preservation</li>
+</ul>
+<h3 id="instructpix2pix-brooks-et-al-2023"><a class="anchor" href="#instructpix2pix-brooks-et-al-2023">#</a> InstructPix2Pix (Brooks et al., 2023)</h3>
+<p>Fine-tune a diffusion model on <code>(input_image, instruction, output_image)</code> triples. At inference, condition on both the input image and a text instruction (&quot;make it sunset&quot;, &quot;add a dragon&quot;). Two CFG scales: image scale and text scale.</p>
+<h3 id="repaint-lugmayr-et-al-2022"><a class="anchor" href="#repaint-lugmayr-et-al-2022">#</a> RePaint (Lugmayr et al., 2022)</h3>
+<p>Keep a standard unconditional diffusion model. At each reverse step, resample — jump back to a noisier state occasionally and regenerate. Avoids boundary artifacts. Used when you don&#39;t have a trained inpainting model.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">inpaint-mask-reinject</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements a toy 1-D inpainting scheme on 5-dimensional data. We train a DDPM on 5-D mixture data where each sample is 5 floats from one of two clusters. At inference, we &quot;mask&quot; 2 of the 5 dimensions, inject the noisy-forward version of the unmasked three at each step, and regenerate only the masked dimensions.</p>
+<h3 id="step-1-5-d-ddpm-data"><a class="anchor" href="#step-1-5-d-ddpm-data">#</a> Step 1: 5-D DDPM data</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def sample_data(rng):
+    cluster = rng.choice([0, 1])
+    center = [-1.0] * 5 if cluster == 0 else [1.0] * 5
+    return [c + rng.gauss(0, 0.2) for c in center], cluster</code></pre>
+      </div>
+    <h3 id="step-2-train-denoiser-over-all-5-dims"><a class="anchor" href="#step-2-train-denoiser-over-all-5-dims">#</a> Step 2: train denoiser over all 5 dims</h3>
+<p>Standard DDPM. Net outputs 5-D noise prediction for 5-D noisy input.</p>
+<h3 id="step-3-at-inference-mask-aware-reverse"><a class="anchor" href="#step-3-at-inference-mask-aware-reverse">#</a> Step 3: at inference, mask-aware reverse</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def inpaint_step(x_t, mask, clean_image, alpha_bars, t, rng):
+    # replace unmasked dims with a freshly noised version of the clean source
+    a_bar = alpha_bars[t]
+    for i in range(len(x_t)):
+        if not mask[i]:
+            x_t[i] = math.sqrt(a_bar) * clean_image[i] + math.sqrt(1 - a_bar) * rng.gauss(0, 1)
+    # ...then run the normal reverse step on x_t</code></pre>
+      </div>
+    <p>This is the naive approach and it works on toy 1-D data. Real image inpainting uses the 9-channel input because texture coherence matters more.</p>
+<h3 id="step-4-outpainting"><a class="anchor" href="#step-4-outpainting">#</a> Step 4: outpainting</h3>
+<p>Outpainting is inpainting with the mask inverted: mask the new (previously non-existent) canvas, fill the rest with the original. Identical training objective.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Seams.</strong> The naive approach leaves visible boundaries because gradient info doesn&#39;t flow across the mask. Fix: dilate the mask by 8-16 pixels, or use a proper inpainting model.</li>
+<li><strong>Mask leakage.</strong> If the conditioning image&#39;s unmasked region is low-quality or noisy, it pollutes the generation inside the mask. Denoise or blur slightly.</li>
+<li><strong>CFG interacts with mask size.</strong> High CFG on a small mask = saturated patch. Reduce CFG for small edits.</li>
+<li><strong>SDEdit fidelity cliff.</strong> Going from <code>t/T = 0.5</code> to <code>t/T = 0.6</code> can lose the subject&#39;s identity. Sweep and checkpoint.</li>
+<li><strong>Prompt mismatch.</strong> The prompt should describe the <em>whole</em> image, not just the new content. &quot;A cat sitting on a chair&quot; not &quot;a cat&quot;.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Pipeline</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Remove object, small mask</td>
+<td>SD-Inpaint or Flux-Fill, standard prompt</td>
+</tr>
+<tr>
+<td>Replace sky</td>
+<td>SD-Inpaint + &quot;blue sky at sunset&quot;</td>
+</tr>
+<tr>
+<td>Extend canvas</td>
+<td>SDXL outpaint mode (8px feather) or Flux-Fill with outpaint mask</td>
+</tr>
+<tr>
+<td>Regenerate hand / face</td>
+<td>SD-Inpaint with prompt re-describing the subject + ControlNet-Openpose</td>
+</tr>
+<tr>
+<td>Change style of one region</td>
+<td>SDEdit at <code>t/T=0.5</code> on masked region</td>
+</tr>
+<tr>
+<td>&quot;Make it sunset&quot;</td>
+<td>InstructPix2Pix or Flux-Kontext</td>
+</tr>
+<tr>
+<td>Background replacement</td>
+<td>SAM mask → SD-Inpaint</td>
+</tr>
+<tr>
+<td>Ultra-high-fidelity</td>
+<td>Flux-Fill or GPT-Image (hosted) for hardest cases</td>
+</tr>
+</tbody></table>
+<p>SAM (Meta&#39;s Segment Anything, 2023) + diffusion inpaint is the 2026 background-removal pipeline. SAM 2 (2024) works on video.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-editing-pipeline.md</code>. Skill takes an original image + edit description + optional mask (or SAM prompt) and outputs: mask-generation approach, base model, CFG scales (image + text), SDEdit-t or inpainting mode, and QA checklist.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> In <code>code/main.py</code>, vary the fraction of dimensions masked from 0.2 to 0.8. At what fraction does the inpaint quality (residual in masked dims) equal unconditional generation?</li>
+<li><strong>Medium.</strong> Implement RePaint: at every 10th reverse step, jump back 5 steps (add noise) and re-denoise. Measure whether it reduces boundary residual at the mask edge.</li>
+<li><strong>Hard.</strong> Use Hugging Face diffusers to compare: SD 1.5 Inpaint + ControlNet-Openpose vs Flux.1-Fill on 20 face-regeneration tasks. Score pose adherence and identity preservation separately.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Inpainting</td>
+<td>&quot;Fill the hole&quot;</td>
+<td>Regenerate inside a mask; keep outside pixels.</td>
+</tr>
+<tr>
+<td>Outpainting</td>
+<td>&quot;Extend the canvas&quot;</td>
+<td>Regenerate outside the canvas; keep inside.</td>
+</tr>
+<tr>
+<td>9-channel U-Net</td>
+<td>&quot;Proper inpainting model&quot;</td>
+<td>U-Net with <code>noisy | encoded-source | mask</code> as input.</td>
+</tr>
+<tr>
+<td>SDEdit</td>
+<td>&quot;Img2img with noise level&quot;</td>
+<td>Noise to time <code>t</code>, denoise with new prompt.</td>
+</tr>
+<tr>
+<td>InstructPix2Pix</td>
+<td>&quot;Text-only edits&quot;</td>
+<td>Fine-tuned diffusion on (image, instruction, output) triples.</td>
+</tr>
+<tr>
+<td>RePaint</td>
+<td>&quot;No retraining&quot;</td>
+<td>Re-noise periodically during reverse to reduce seams.</td>
+</tr>
+<tr>
+<td>SAM</td>
+<td>&quot;Segment Anything&quot;</td>
+<td>Mask generator by clicks or boxes; pairs with inpaint.</td>
+</tr>
+<tr>
+<td>Flux-Kontext</td>
+<td>&quot;Edit with context&quot;</td>
+<td>Flux variant that accepts a reference image + instruction for edits.</td>
+</tr>
+</tbody></table>
+<h2 id="production-note-edit-pipelines-are-latency-sensitive"><a class="anchor" href="#production-note-edit-pipelines-are-latency-sensitive">#</a> Production note: edit pipelines are latency-sensitive</h2>
+<p>Users editing an image expect sub-5-second round trips. A 30-step SDXL-Inpaint at 1024² is 3-4 s on an L4, plus SAM mask generation (<del>200 ms) and VAE encode/decode (</del>500 ms combined). In production framing, this is TTFT-bound rather than throughput-bound — batch 1, low concurrency, minimize every stage:</p>
+<ul>
+<li><strong>SAM-H is the slow one.</strong> SAM-H at 1024² is ~200 ms; SAM-ViT-B is ~40 ms with minor quality loss. SAM 2 (video) adds temporal overhead; do not use it for single-image edits.</li>
+<li><strong>Skip the encode when possible.</strong> <code>pipe.image_processor.preprocess(img)</code> encodes to latents. If you have the latents from the previous generation (typical in iterative-edit UIs), pass them directly via <code>latents=...</code> to skip one VAE encode.</li>
+<li><strong>Mask dilation matters for throughput too.</strong> A small mask means most of the U-Net forward pass is wasted (the unmasked pixels are clamped anyway). <code>diffusers</code>&#39; <code>StableDiffusionInpaintPipeline</code> runs the full U-Net regardless; only the 9-channel proper-inpaint variants exploit masked compute.</li>
+<li><strong>Flux-Kontext is the 2025 answer.</strong> Single forward pass over <code>(source_image, instruction)</code> — no separate mask, no SDEdit noise sweep. On an H100 it ships an edit in ~1.5 s. The architectural lesson: collapse the stages.</li>
+</ul>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2201.09865">Lugmayr et al. (2022). RePaint: Inpainting using Denoising Diffusion Probabilistic Models</a> — training-free inpainting.</li>
+<li><a href="https://arxiv.org/abs/2108.01073">Meng et al. (2022). SDEdit: Guided Image Synthesis and Editing with Stochastic Differential Equations</a> — SDEdit.</li>
+<li><a href="https://arxiv.org/abs/2211.09800">Brooks, Holynski, Efros (2023). InstructPix2Pix</a> — text-instruction editing.</li>
+<li><a href="https://arxiv.org/abs/2304.02643">Kirillov et al. (2023). Segment Anything</a> — SAM, the mask source.</li>
+<li><a href="https://arxiv.org/abs/2408.00714">Ravi et al. (2024). SAM 2: Segment Anything in Images and Videos</a> — video SAM.</li>
+<li><a href="https://arxiv.org/abs/2208.01626">Hertz et al. (2022). Prompt-to-Prompt Image Editing with Cross-Attention Control</a> — attention-level editing.</li>
+<li><a href="https://blackforestlabs.ai/flux-1-tools/">Black Forest Labs (2024). Flux.1-Fill and Flux.1-Kontext</a> — 2024 tooling.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-controlnet-lora-conditioning.html"><span>← Previous</span><b>controlnet lora conditioning</b></a>
+      <a class="next" href="./10-video-generation.html"><span>Next →</span><b>video generation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

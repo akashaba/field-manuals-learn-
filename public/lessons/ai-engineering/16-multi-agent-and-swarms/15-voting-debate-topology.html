@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voting, Self-Consistency, and Debate Topology — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/16-multi-agent-and-swarms/15-voting-debate-topology/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multi-Agent &amp; Swarms</div>
+    <ol class="toc"><li><a href="#problem">Problem</a></li><li><a href="#concept">Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multi-Agent &amp; Swarms</div>
+    <h1 class="lesson-title">Voting, Self-Consistency, and Debate Topology</h1>
+    <p class="lesson-sub">The cheapest aggregation: sample N independent agents, majority-vote. Wang et al. 2022 self-consistency did this with one model sampled N times. Multi-agent extends it with **heterogeneous** agents to escape monoculture — different models, different prompts, different temperatures, different contexts. Beyond majority vote, debate topology matters: MultiAgentBench (arXiv:2503.01935, ACL 2025) evaluated star / chain / tree / graph coordination and found **graph best for research**, with a &quot;coordination tax&quot; past ~4 agents. AgentVerse (ICLR 2024) documents two emergent patterns — volunteer behaviors and conformity behaviors — and conformity is both a feature (finding consensus) and a risk (groupthink, Lesson 24). This lesson maps the topology space, builds each variant, and measures the coordination tax.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 16 · 07 (Society of Mind and Debate), Phase 16 · 14 (Consensus and BFT)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multi-Agent &amp; Swarms 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="12.1" y="116.6" width="25.5" height="25.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(126 24.9 129.4)"/>
+        <circle cx="19.5" cy="124.4" r="12.1" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.1" cy="119.5" r="11.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">MULTI-AGENT &amp; SWARMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Voting,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Self-Consistency…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="problem"><a class="anchor" href="#problem">#</a> Problem</h2>
+<p>Debate can improve accuracy (Du et al., arXiv:2305.14325). It can also degrade it. Whether debate helps depends on four structural choices:</p>
+<ol>
+<li>Who talks to whom (topology).</li>
+<li>How many rounds (Du 2023: both rounds and agents matter independently).</li>
+<li>Whether agents are heterogeneous (different base models break monoculture).</li>
+<li>Whether an adversarial voice is present (steel-manning vs. straw-manning).</li>
+</ol>
+<p>Teams that bolt &quot;run 5 agents and vote&quot; onto a task often regress vs. a single agent. The failures are not random. They track topology and heterogeneity. This lesson is the topology map.</p>
+<h2 id="concept"><a class="anchor" href="#concept">#</a> Concept</h2>
+<h3 id="self-consistency-the-single-model-baseline"><a class="anchor" href="#self-consistency-the-single-model-baseline">#</a> Self-consistency, the single-model baseline</h3>
+<p>Wang et al. 2022 (&quot;Self-Consistency Improves Chain of Thought Reasoning&quot;) sampled the same model N times at temperature &gt; 0 and majority-voted on reasoning-path answers. The result on GSM8K: substantial gains with N=40 samples over a single greedy decode. Self-consistency is the single-agent precursor to multi-agent voting.</p>
+<p>Limit: self-consistency uses one base model. Errors are correlated by construction. If the model has a systematic bias, all N samples share it.</p>
+<h3 id="multi-agent-vote-the-heterogeneous-extension"><a class="anchor" href="#multi-agent-vote-the-heterogeneous-extension">#</a> Multi-agent vote, the heterogeneous extension</h3>
+<p>Replace N samples with N <em>different</em> agents. Different base models (Claude, GPT, Llama), different prompts, different tool access. The benefit: uncorrelated errors. The cost: different agents cost different amounts; coordinating them adds overhead.</p>
+<p>The canonical 2026 name for heterogeneous debate is <strong>A-HMAD</strong> — Adversarial Heterogeneous Multi-Agent Debate. Not universally adopted, but papers use the term for &quot;different models debate, which reduces correlated errors from monoculture collapse.&quot;</p>
+<h3 id="the-four-topologies"><a class="anchor" href="#the-four-topologies">#</a> The four topologies</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">star                chain               tree                graph
+
+    ┌─A─┐           A─B─C─D         ┌──A──┐              A───B
+    │   │                           │     │              │ × │
+    B   C                           B     C              D───C
+    │   │                          / \   / \
+    D   E                         D   E F   G           (fully connected)</code></pre>
+      </div>
+    <p>Star: one hub, all others talk only to hub. Equivalent to supervisor-worker without back-channel.
+Chain: linear, each agent sees the prior one&#39;s output. Pipeline-like.
+Tree: hierarchical, used by hierarchical agent systems (Lesson 06).
+Graph: any-to-any. Includes fully-connected clique and arbitrary DAGs.</p>
+<h3 id="the-coordination-tax-multiagentbench"><a class="anchor" href="#the-coordination-tax-multiagentbench">#</a> The coordination tax (MultiAgentBench)</h3>
+<p>MultiAgentBench (MARBLE, ACL 2025, arXiv:2503.01935) benchmarked star, chain, tree, graph on a task suite including research, coding, and planning. Key measured results:</p>
+<ul>
+<li><strong>Graph</strong> topology wins on research tasks. Information flows any-to-any; agents can critique each other.</li>
+<li><strong>Star</strong> wins on fast-answer factual tasks. Hub filters and consolidates.</li>
+<li><strong>Chain</strong> wins on stepwise pipelines (staged refinement).</li>
+<li><strong>Coordination tax</strong> appears past ~4 agents in graph topology. Wall-clock and token cost grow faster than quality.</li>
+</ul>
+<p>The 4-agent ceiling is empirical, not fundamental. It reflects 2026 LLM context capacity: each agent&#39;s context fills with peers&#39; outputs, and marginal value of adding agent N+1 drops once everyone can see everyone.</p>
+<h3 id="multi-agent-debate-strategies-should-we-be-going-mad"><a class="anchor" href="#multi-agent-debate-strategies-should-we-be-going-mad">#</a> Multi-Agent Debate Strategies (&quot;Should we be going MAD?&quot;)</h3>
+<p>arXiv:2311.17371 is the 2023 survey of MAD strategies. Key finding replicated by others: MAD variants that are <em>structurally similar</em> to self-consistency (independent sampling + aggregation) often underperform self-consistency when using the same budget. MAD helps most when agents are genuinely heterogeneous and the debate has adversarial structure (one agent argues against).</p>
+<h3 id="agentverse-emergent-patterns"><a class="anchor" href="#agentverse-emergent-patterns">#</a> AgentVerse emergent patterns</h3>
+<p>AgentVerse (ICLR 2024, <a href="https://proceedings.iclr.cc/paper_files/paper/2024/file/578e65cdee35d00c708d4c64bce32971-Paper-Conference.pdf">https://proceedings.iclr.cc/paper_files/paper/2024/file/578e65cdee35d00c708d4c64bce32971-Paper-Conference.pdf</a>) documents two behaviors that emerge from multi-agent debate even without explicit design:</p>
+<ul>
+<li><strong>Volunteer.</strong> An agent offers help (&quot;I can take the next step&quot;) unprompted. Useful: it allocates work to the most-capable agent for a subtask.</li>
+<li><strong>Conformity.</strong> An agent adjusts its stance to match a critic, even when the critic is wrong. This is the debate-equivalent of sycophancy (Lesson 14).</li>
+</ul>
+<p>Conformity is why debate-until-agreement rewards bullies. Bounded rounds with a separate judge mitigate.</p>
+<h3 id="heterogeneity-the-actual-knob-that-moves-accuracy"><a class="anchor" href="#heterogeneity-the-actual-knob-that-moves-accuracy">#</a> Heterogeneity: the actual knob that moves accuracy</h3>
+<p>A 2024-2026 pattern in the practical literature: swapping one of your N agents for a different base model gives a bigger accuracy bump than increasing N by 1. The intuition is monoculture — each new independent-error source is worth more than an additional correlated sample.</p>
+<p>In the limit, heterogeneity beats numerosity. Three different models beat five copies of one model on most tasks that have clean ground truth.</p>
+<h3 id="jury-methods"><a class="anchor" href="#jury-methods">#</a> Jury methods</h3>
+<p>The Sibyl framework (cited in Minsky-LLM literature) formalizes a &quot;jury&quot; — a small set of specialized agents that refine answers by voting at each stage. Unlike plain majority vote, a jury has roles: one agent cross-examines, one supplies context, one scores plausibility. Jury methods are a midpoint between plain vote (cheap, monoculture-prone) and full MAD (expensive, conformity-prone).</p>
+<h3 id="when-vote-with-debate-dominates"><a class="anchor" href="#when-vote-with-debate-dominates">#</a> When vote-with-debate dominates</h3>
+<ul>
+<li>The question has ground truth (fact, math, code behavior). Vote convergence is meaningful.</li>
+<li>Agents can access different sources or tools (heterogeneity is available).</li>
+<li>Rounds are bounded (2-3 typical) and there is a separate judge or verifier.</li>
+<li>Budget allows 3-5 agents. Beyond 5-7 on graph topology, coordination tax dominates.</li>
+</ul>
+<h3 id="when-vote-with-debate-hurts"><a class="anchor" href="#when-vote-with-debate-hurts">#</a> When vote-with-debate hurts</h3>
+<ul>
+<li>The question is opinion-shaped. Agents converge to whichever answer looks most confident, not most correct.</li>
+<li>All agents share a base model. Monoculture makes consensus meaningless.</li>
+<li>Rounds are unbounded. Conformity wins every time.</li>
+<li>The task is simple. A single agent with self-consistency at N=5 is cheaper and as accurate.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">sw-debate-topology</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>run_star(agents, hub, question)</code> — hub polls each worker, aggregates.</li>
+<li><code>run_chain(agents, question)</code> — sequential refinement.</li>
+<li><code>run_tree(root, children, question)</code> — hierarchical with depth-2 aggregation.</li>
+<li><code>run_graph(agents, question, rounds)</code> — all-to-all debate, bounded rounds.</li>
+<li>A scripted heterogeneity dial: each agent has an <code>error_bias</code> indicating its systematic wrongness.</li>
+<li>A measurement harness that runs each topology at N=3, 5, 7 and reports (accuracy, total_tokens, wallclock_simulated).</li>
+</ul>
+<p>Run:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Expected output: a table of topology × N → (accuracy, tokens, latency). Graph wins at N=3-5 on the research-style tasks; star wins on the fast-factual tasks; graph at N=7 shows the coordination tax (latency inflates faster than accuracy).</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>outputs/skill-topology-picker.md</code> is a skill that reads a task description and recommends a topology (star / chain / tree / graph), an N (number of agents), a heterogeneity profile (base models to use), and a round bound.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>For any ensemble:</p>
+<ul>
+<li>Start with <strong>self-consistency at N=5</strong> using one strong base model. It is the cheap baseline.</li>
+<li>Upgrade to <strong>heterogeneous voting at N=3</strong> if accuracy matters. Measure the delta.</li>
+<li>Only upgrade to <strong>debate topology</strong> if the task has structure (research, multi-step) and bounded rounds are feasible.</li>
+<li>Always log the minority cluster. When a minority is persistently right, you have a diversity signal.</li>
+<li>Benchmark wall-clock and tokens alongside accuracy. &quot;Better accuracy at 10x cost&quot; is a business decision.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. Plot the coordination-tax curve for graph topology: accuracy vs N, tokens vs N. At what N does the curve inflect?</li>
+<li>Implement A-HMAD: three agents with deliberately different biases. How does the all-same-bias baseline compare to A-HMAD on the monoculture attack from Lesson 14?</li>
+<li>Add a &quot;judge&quot; role to the graph topology that does not vote, only scores the final consensus. Does this change the emergent conformity behavior?</li>
+<li>Read the AgentVerse paper (ICLR 2024). Identify which emergent behavior your implementation exhibits most strongly. Can you elicit the opposite behavior by a prompt change?</li>
+<li>Read MultiAgentBench (arXiv:2503.01935) Section 4 (topology experiments). Reproduce the &quot;graph-wins-research&quot; result on one task from the paper using your harness.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Self-consistency</td>
+<td>&quot;Sample N times, vote&quot;</td>
+<td>Wang 2022. Single model, N temperature&gt;0 samples, majority vote on reasoning paths.</td>
+</tr>
+<tr>
+<td>Heterogeneity</td>
+<td>&quot;Different models&quot;</td>
+<td>Ensemble of different base models or prompt families. Breaks monoculture.</td>
+</tr>
+<tr>
+<td>MAD</td>
+<td>&quot;Multi-agent debate&quot;</td>
+<td>Generic term for agents exchanging critiques over rounds. See Du 2023.</td>
+</tr>
+<tr>
+<td>A-HMAD</td>
+<td>&quot;Adversarial Heterogeneous MAD&quot;</td>
+<td>MAD variant emphasizing different models + adversarial structure.</td>
+</tr>
+<tr>
+<td>Topology</td>
+<td>&quot;Who talks to whom&quot;</td>
+<td>Star, chain, tree, graph. Determines information flow.</td>
+</tr>
+<tr>
+<td>Coordination tax</td>
+<td>&quot;Diminishing returns&quot;</td>
+<td>Above ~4 agents on graph, cost grows faster than quality.</td>
+</tr>
+<tr>
+<td>Volunteer behavior</td>
+<td>&quot;Unprompted help&quot;</td>
+<td>AgentVerse emergent pattern: an agent offers to take a step.</td>
+</tr>
+<tr>
+<td>Conformity behavior</td>
+<td>&quot;Agreement under pressure&quot;</td>
+<td>AgentVerse emergent pattern: an agent aligns with a critic.</td>
+</tr>
+<tr>
+<td>Jury</td>
+<td>&quot;Small specialized panel&quot;</td>
+<td>Sibyl-style ensemble with roles (examiner, context, scorer).</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2203.11171">Wang et al. — Self-Consistency Improves Chain of Thought Reasoning</a> — single-model baseline</li>
+<li><a href="https://arxiv.org/abs/2305.14325">Du et al. — Improving Factuality and Reasoning via Multiagent Debate</a> — both agents AND rounds matter independently</li>
+<li><a href="https://arxiv.org/abs/2503.01935">MultiAgentBench / MARBLE</a> — topology benchmark showing graph best for research, chain for pipelines</li>
+<li><a href="https://arxiv.org/abs/2311.17371">Should we be going MAD?</a> — MAD-strategy survey; finds MAD often loses to self-consistency at equal budget</li>
+<li><a href="https://proceedings.iclr.cc/paper_files/paper/2024/file/578e65cdee35d00c708d4c64bce32971-Paper-Conference.pdf">AgentVerse (ICLR 2024)</a> — volunteer and conformity emergent patterns</li>
+<li><a href="https://github.com/ulab-uiuc/MARBLE">MARBLE repo</a> — reference benchmark implementation</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-consensus-and-bft.html"><span>← Previous</span><b>consensus and bft</b></a>
+      <a class="next" href="./16-negotiation-bargaining.html"><span>Next →</span><b>negotiation bargaining</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

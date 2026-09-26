@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>10 — Rate Limiting — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/10-rate-limiting.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">10 — Rate Limiting</h1>
+    <p class="lesson-sub">**Module goal:** Prevent a single misbehaving client (or your own runaway agent) from taking down your service or bankrupting your LLM bill. Master the algorithms, the storage options, the 429/Retry-After protocol, and the LLM-specific twist: rate limiting by tokens and by dollars, not just by requests.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.6,73.1 L61.7,47.4 L78.8,73.1 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.8" y="41.4" width="32.9" height="32.9" rx="2" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.3 57.9)"/>
+        <rect x="35.0" y="37.1" width="31.7" height="31.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(211 50.8 52.9)"/>
+        <rect x="30.2" y="32.8" width="30.4" height="30.4" rx="2" fill="none" stroke="#0d7c66" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.4 48.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">10 — Rate Limiting</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p><strong>Rate limiting</strong> enforces an upper bound on how much of a resource a client can consume in a time window. Its purposes:</p>
+<ol>
+<li><strong>Fairness</strong> — one noisy user doesn&#39;t starve everyone else</li>
+<li><strong>Cost control</strong> — LLM APIs charge per token; unbounded traffic means unbounded bills</li>
+<li><strong>Abuse mitigation</strong> — brute-force, scraping, credential stuffing, DoS-adjacent attacks</li>
+<li><strong>Backpressure to upstream</strong> — your service can&#39;t pass more than X RPS to Anthropic; you must reject at your edge, not queue infinitely</li>
+<li><strong>SLO protection</strong> — degradation is graceful (429 to <em>some</em> users) instead of catastrophic (5xx to <em>all</em> users)</li>
+</ol>
+<p><strong>Four canonical algorithms:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Algorithm</th>
+<th>Behavior</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Fixed window</strong></td>
+<td>Count requests per calendar minute</td>
+<td>Simple; suffers &quot;double-burst&quot; at window boundary</td>
+</tr>
+<tr>
+<td><strong>Sliding window (log)</strong></td>
+<td>Store every request timestamp</td>
+<td>Accurate; memory-heavy</td>
+</tr>
+<tr>
+<td><strong>Sliding window (counter)</strong></td>
+<td>Weighted approximation of two adjacent windows</td>
+<td>Cheap + accurate — most production choices</td>
+</tr>
+<tr>
+<td><strong>Token bucket</strong></td>
+<td>Refill at rate R, capacity C; each request costs tokens</td>
+<td>Bursty-friendly; standard for API SDKs</td>
+</tr>
+<tr>
+<td><strong>Leaky bucket</strong></td>
+<td>Fixed drain rate, queue at bucket</td>
+<td>Smoothing traffic, not bursty-friendly</td>
+</tr>
+</tbody></table>
+<p><strong>LLM-specific:</strong> you rate-limit by <strong>three dimensions</strong> simultaneously:</p>
+<ul>
+<li><strong>RPM</strong> (requests per minute)</li>
+<li><strong>TPM</strong> (tokens per minute — input + output)</li>
+<li><strong>$ per period</strong> (per-user budget cap)</li>
+</ul>
+<p>An LLM request can be 1× or 100× the cost of the next. Requesting 100 tokens/min is very different from 1000 tokens/min. Every major LLM API (OpenAI, Anthropic, Bedrock) publishes RPM <em>and</em> TPM limits.</p>
+<p><strong>Where to enforce:</strong></p>
+<ul>
+<li><strong>Edge (nginx, Envoy, API Gateway)</strong> — cheap, coarse, DDoS-friendly, but doesn&#39;t know request costs</li>
+<li><strong>Application (middleware)</strong> — per-user, per-route, cost-aware — the most flexible</li>
+<li><strong>Upstream client (SDK)</strong> — protects <em>outbound</em> calls to LLM providers (retry with backoff on 429)</li>
+</ul>
+<p><strong>Storage for counters:</strong></p>
+<ul>
+<li><strong>In-process</strong> — fast, no shared state; only works for single-replica</li>
+<li><strong>Redis</strong> — the standard: <code>INCR</code> + <code>EXPIRE</code>, or Lua script for atomic multi-op</li>
+<li><strong>Cloud-native</strong> — Cloudflare Workers, DynamoDB, Memorystore</li>
+</ul>
+<p><strong>The client contract</strong> (RFC 6585, IETF <code>RateLimit-*</code> draft):</p>
+<ul>
+<li>Status <code>429 Too Many Requests</code></li>
+<li><code>Retry-After: N</code> (seconds) header</li>
+<li><code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code>, <code>RateLimit-Reset</code> (draft-standard)</li>
+<li>A JSON body explaining the limit hit</li>
+</ul>
+<p>If you don&#39;t return <code>Retry-After</code>, well-behaved clients spin.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-token-bucket-the-default-choice"><a class="anchor" href="#21-token-bucket-the-default-choice">#</a> 2.1 Token Bucket — The Default Choice</h3>
+<p>The classic algorithm: a bucket holds tokens (not LLM tokens — abstract permits). Refills at rate $R$ tokens/second, up to capacity $C$. Each request consumes $k$ tokens (usually 1 for RPS, or a computed value for weighted requests). If the bucket has &lt; $k$ tokens, the request is rejected (or queued).</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import time
+from dataclasses import dataclass, field
+
+@dataclass
+class TokenBucket:
+    capacity: float
+    refill_rate: float  # tokens per second
+    tokens: float = field(init=False)
+    last_refill: float = field(init=False)
+
+    def __post_init__(self):
+        self.tokens = self.capacity
+        self.last_refill = time.monotonic()
+
+    def take(self, k: float = 1.0) -&gt; bool:
+        now = time.monotonic()
+        elapsed = now - self.last_refill
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+        self.last_refill = now
+        if self.tokens &gt;= k:
+            self.tokens -= k
+            return True
+        return False</code></pre>
+      </div>
+    <p>Properties: allows short bursts up to <code>capacity</code>, then rate-limits to <code>refill_rate</code>. Tune <code>capacity</code> for bursty legitimate traffic (e.g., a browser tab opens and fires 8 requests in 100ms — you don&#39;t want to reject those).</p>
+<h3 id="22-redis-backed-sliding-window-counter"><a class="anchor" href="#22-redis-backed-sliding-window-counter">#</a> 2.2 Redis-Backed Sliding Window Counter</h3>
+<p>For a multi-replica service, in-process buckets fragment (each replica has its own bucket → user gets N× the intended limit). Use Redis with an atomic Lua script:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># rate_limit.py
+import redis, time
+r = redis.Redis()
+
+LUA_SLIDING = &quot;&quot;&quot;
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+
+redis.call(&#39;ZREMRANGEBYSCORE&#39;, key, 0, now - window)
+local count = redis.call(&#39;ZCARD&#39;, key)
+if count &lt; limit then
+    redis.call(&#39;ZADD&#39;, key, now, now .. &#39;-&#39; .. math.random())
+    redis.call(&#39;EXPIRE&#39;, key, window)
+    return {1, limit - count - 1}
+else
+    local oldest = redis.call(&#39;ZRANGE&#39;, key, 0, 0, &#39;WITHSCORES&#39;)
+    local retry_after = oldest[2] and (tonumber(oldest[2]) + window - now) or window
+    return {0, retry_after}
+end
+&quot;&quot;&quot;
+rl = r.register_script(LUA_SLIDING)
+
+def allow(user_id: str, limit: int, window_sec: int) -&gt; tuple[bool, float]:
+    now = time.time()
+    allowed, meta = rl(keys=[f&quot;rl:{user_id}&quot;], args=[now, window_sec, limit])
+    return bool(allowed), float(meta)</code></pre>
+      </div>
+    <p>Trade-off: the &quot;log&quot; approach stores every timestamp — memory grows with rate. For very high traffic, use the <em>approximate</em> sliding-window counter:</p>
+<p>$$
+\text{count}<em>{\text{effective}} = \text{count}</em>{\text{current}} + \text{count}_{\text{prev}} \cdot \frac{\text{window} - \text{elapsed_in_current}}{\text{window}}
+$$</p>
+<p>O(1) memory, ~5% error at window boundary.</p>
+<h3 id="23-fastapi-middleware-integration"><a class="anchor" href="#23-fastapi-middleware-integration">#</a> 2.3 FastAPI Middleware Integration</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+
+@app.middleware(&quot;http&quot;)
+async def rate_limit_middleware(request: Request, call_next):
+    user_id = request.headers.get(&quot;x-user-id&quot;) or request.client.host
+    tier = get_user_tier(user_id)  # free/pro/enterprise
+    limits = TIER_LIMITS[tier]     # e.g., {&quot;rpm&quot;: 60, &quot;tpm&quot;: 100_000, &quot;usd_per_day&quot;: 5.0}
+
+    allowed, retry_after = allow(user_id, limits[&quot;rpm&quot;], 60)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            headers={
+                &quot;Retry-After&quot;: str(int(retry_after) + 1),
+                &quot;RateLimit-Limit&quot;: str(limits[&quot;rpm&quot;]),
+                &quot;RateLimit-Remaining&quot;: &quot;0&quot;,
+                &quot;RateLimit-Reset&quot;: str(int(time.time() + retry_after)),
+            },
+            content={&quot;error&quot;: &quot;rate_limited&quot;, &quot;detail&quot;: &quot;RPM limit exceeded&quot;},
+        )
+    return await call_next(request)</code></pre>
+      </div>
+    <p>For the <strong>TPM</strong> and <strong>$-per-day</strong> dimensions, you can&#39;t decide before the request — you don&#39;t know the token cost yet. Two patterns:</p>
+<ol>
+<li><strong>Pre-authorize with an estimate</strong>, then reconcile after the response (subtract actual tokens from bucket at the end).</li>
+<li><strong>Post-check</strong> — always allow, but if the user is already over TPM/$ cap for the window, reject <em>next</em> request.</li>
+</ol>
+<p>Anthropic and OpenAI both do variants of this on their end.</p>
+<h3 id="24-client-side-handling-429-from-providers"><a class="anchor" href="#24-client-side-handling-429-from-providers">#</a> 2.4 Client-Side: Handling 429 from Providers</h3>
+<p>Your service calls Anthropic; Anthropic 429s. <strong>Exponential backoff with jitter</strong> is the standard:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import httpx, asyncio, random
+
+async def call_with_backoff(client, request_kwargs, max_retries=5):
+    for attempt in range(max_retries):
+        try:
+            resp = await client.post(**request_kwargs)
+            if resp.status_code != 429:
+                resp.raise_for_status()
+                return resp.json()
+            retry_after = float(resp.headers.get(&quot;retry-after&quot;, &quot;1&quot;))
+        except httpx.TimeoutException:
+            retry_after = 2 ** attempt
+        # Full jitter — random in [0, cap]
+        cap = min(60, retry_after * (2 ** attempt))
+        await asyncio.sleep(random.uniform(0, cap))
+    raise Exception(&quot;max retries exceeded&quot;)</code></pre>
+      </div>
+    <p>Rules:</p>
+<ul>
+<li><strong>Always jitter.</strong> If 1000 clients back off deterministically to the same second, they thundering-herd the retry.</li>
+<li><strong>Cap the wait</strong> (~60s). Beyond that, fail the request; do not tie up a worker for minutes.</li>
+<li><strong>Distinguish retryable errors</strong>: 429 → yes, 503 → yes, 400 → no (retrying makes no difference).</li>
+</ul>
+<p><strong>Anthropic-specific:</strong> the <code>x-ratelimit-*</code> response headers tell you exactly when the bucket refills — you can proactively slow yourself instead of hammering until 429s appear.</p>
+<h3 id="25-cost-based-rate-limiting-the-ai-twist"><a class="anchor" href="#25-cost-based-rate-limiting-the-ai-twist">#</a> 2.5 Cost-Based Rate Limiting (The AI Twist)</h3>
+<p>Traditional RPS misses the point when a request can cost 10× another. The right dimension is <strong>$ per user per period.</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class CostBucket:
+    &quot;&quot;&quot;Redis-backed spending cap.&quot;&quot;&quot;
+    def try_charge(self, user_id: str, cost_usd: float, cap_usd: float, period: str) -&gt; bool:
+        key = f&quot;spend:{user_id}:{period}&quot;  # e.g., spend:u123:2026-09-23
+        # Atomic incrbyfloat and check
+        new_total = r.incrbyfloat(key, cost_usd)
+        r.expire(key, 86400 * 2)
+        if new_total &gt; cap_usd:
+            # Refund and reject
+            r.incrbyfloat(key, -cost_usd)
+            return False
+        return True
+
+# In your handler:
+estimated_cost = estimate_llm_cost(request)  # from token estimate × price
+if not cost_bucket.try_charge(user_id, estimated_cost, cap=5.00, period=today()):
+    raise HTTPException(429, &quot;Daily spending cap reached&quot;)
+resp = await llm_call(...)
+actual_cost = compute_cost(resp)
+delta = actual_cost - estimated_cost
+if delta != 0:
+    r.incrbyfloat(f&quot;spend:{user_id}:{today()}&quot;, delta)  # reconcile</code></pre>
+      </div>
+    <p>Combined with tiers (free = $0.50/day, pro = $10/day, enterprise = unlimited), this is the single most effective LLM cost control.</p>
+<p><code>[IMG-10-01]</code> — <em>Prompt: A diagram illustrating three rate-limiting dimensions for an LLM API service, drawn as three separate bucket icons flowing into a request-processing pipeline. Bucket 1 labeled &quot;RPM: 60 req/min&quot; filled with request icons. Bucket 2 labeled &quot;TPM: 100k tokens/min&quot; filled with token icons. Bucket 3 labeled &quot;USD: $5/day&quot; filled with dollar signs. Arrows show a request must pass through all three checks. Below, a red &quot;429 Too Many Requests&quot; response is emitted when any bucket is empty. Clean technical diagram style, blue/green/red palette.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-amusement-park-line"><a class="anchor" href="#model-1-the-amusement-park-line">#</a> Model 1: The Amusement Park Line</h3>
+<p>Every ride has a maximum riders-per-hour. There&#39;s a queue with a fixed length (bucket capacity). Riders arriving faster than the ride can process either wait (queued) or get turned away (rejected — the sign says &quot;return in 30 minutes&quot;). VIP guests get a shorter line (tier-based limits). The whole park has a total-attendance cap that&#39;s independent of per-ride caps — analogous to global rate limiting on top of per-user.</p>
+<p>The park explicitly rejects overloading: if it let everyone into every line, every ride breaks. The rejection is the <em>feature</em>. Same for rate limiting — the 429 is the design goal, not a bug. Without it, your service would eat <em>every</em> request until it collapsed for everyone.</p>
+<h3 id="model-2-the-credit-card"><a class="anchor" href="#model-2-the-credit-card">#</a> Model 2: The Credit Card</h3>
+<p>Rate limiting is not just RPS; it&#39;s a <strong>credit facility</strong>. Your issuer gives you:</p>
+<ul>
+<li><strong>Credit limit</strong> (max outstanding balance = burst capacity)</li>
+<li><strong>Refill on payment cycle</strong> (refill rate)</li>
+<li><strong>Per-transaction limits</strong> (max cost per request)</li>
+<li><strong>Merchant category codes</strong> (tier / route sensitivity)</li>
+<li><strong>Fraud triggers</strong> (unusual patterns → block)</li>
+</ul>
+<p>The card issuer&#39;s model matches production rate limiting almost exactly, and both exist for the same reason: the party holding the credit (the bank / your service) needs to bound liability from any single account. When a card issuer rejects a $10,000 charge from an account with a $5,000 limit, that&#39;s not &quot;denial of service&quot; — that&#39;s the mechanism working. Same for your 429.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — In-process rate limiting in a multi-replica service.</strong>
+You put a token bucket in FastAPI middleware. In dev, it works. In prod you scale to 5 pods; each pod has its own bucket; the user&#39;s effective limit is 5× the intended limit; the bucket resets independently per pod. Users hit uneven limits based on which pod they land on. <strong>Fix:</strong> back the bucket with Redis (shared state). In-process limiting is a <em>coordination optimization</em> — a small local pre-filter to save a Redis round-trip on the hot path — never the source of truth.</p>
+<p><strong>Pitfall #2 — 429 without <code>Retry-After</code>.</strong>
+Client code sees 429, retries immediately, gets 429, retries immediately, DDoSing you and itself. Legitimate clients (browsers, well-written SDKs) obey <code>Retry-After</code>; without it they degrade to fixed backoff or worse. <strong>Always</strong> emit <code>Retry-After: &lt;seconds&gt;</code> and the <code>RateLimit-*</code> headers. And document them so client authors don&#39;t ignore them. Bonus: SDKs like httpx&#39;s built-in retry transport can be configured to honor these headers automatically.</p>
+<p><strong>Pitfall #3 — Only rate-limiting requests, not cost.</strong>
+&quot;I set 60 RPM per user.&quot; A user sends 60 requests/min, each with a 200k-token context and asking for 8k tokens output. That&#39;s ~12.5M tokens/min from one user; if you&#39;re on Anthropic&#39;s Sonnet at ~$3/M in + $15/M out, that&#39;s roughly $150/min ≈ $216k/day per user. Your RPM limit did nothing to stop it. <strong>Fix:</strong> always add TPM and $-per-day dimensions. Estimate token cost before dispatch; reconcile after. Cap on the tightest dimension. Enforce token-length limits on input (max_prompt_tokens); reject &gt; cap before ever calling the LLM.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> In the token bucket algorithm, <code>capacity</code> is:
+A) The rate at which tokens refill
+B) The maximum number of tokens that can accumulate — i.e., the maximum burst
+C) The maximum requests per second
+D) The window duration</p>
+<p><strong>Q2 (short):</strong> Why is Redis a common backing store for rate limits in a multi-replica service, and what&#39;s the single-replica alternative?</p>
+<p><strong>Q3 (MC):</strong> A well-behaved 429 response should include:
+A) <code>Retry-After</code> seconds header
+B) <code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code>, <code>RateLimit-Reset</code> headers
+C) A JSON body describing the limit that was hit
+D) All of the above</p>
+<p><strong>Q4 (short):</strong> Your service rate-limits at 60 RPM per user. Explain why this alone is insufficient for an LLM-serving API and what dimensions you should add.</p>
+<p><strong>Q5 (MC):</strong> Which retry strategy is safest when 1000 clients simultaneously hit a 429?
+A) Retry immediately
+B) Fixed 1-second backoff
+C) Exponential backoff with jitter, capped at 60s
+D) Retry every second forever</p>
+<p><strong>Q6 (MC):</strong> Rate-limit &quot;double-burst at window boundary&quot; is a problem specific to:
+A) Token bucket
+B) Fixed-window counter
+C) Sliding window counter (approximate)
+D) Leaky bucket</p>
+<p><strong>Q7 (short):</strong> Describe how you&#39;d enforce a $5/day-per-user spend cap on an LLM API. What data structures, when to charge, what to do on cap-hit.</p>
+<p><strong>Q8 (MC):</strong> You call Anthropic and receive a 429 with <code>Retry-After: 12</code>. Your service is behind a caller-facing rate limit of your own. What should you return to your caller?
+A) 500 Internal Server Error
+B) 429 Too Many Requests with your own <code>Retry-After</code> header
+C) 503 Service Unavailable
+D) Wait 12s and retry, then respond</p>
+<p><strong>Q9 (short):</strong> Explain why you should validate max input length (max prompt tokens) as its own gate <em>before</em> the rate limiter, even though the rate limiter caps TPM.</p>
+<p><strong>Q10 (MC):</strong> Global rate limiting (across all users) is complementary to per-user rate limiting because:
+A) It protects the upstream provider&#39;s aggregate limits (you can only push so many RPM to Anthropic)
+B) It smooths thundering herds when many users hit at once
+C) It bounds your infra capacity from any single cause
+D) All of the above</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> <code>capacity</code> is the max stored tokens = the largest burst you&#39;ll allow. <code>refill_rate</code> is (A) — how fast tokens replenish. A bucket configured <code>capacity=10, refill_rate=1/s</code> allows a burst of 10 followed by a steady 1 req/s.</p>
+<p><strong>A2:</strong> Redis provides shared, atomic state across your replicas. Every pod hits the same Redis keys, so a single user&#39;s counter is truly one counter regardless of which pod serves the request. Single-replica alternative: in-process (a Python dict of buckets). It&#39;s faster (no network hop) but only correct if you&#39;ll never scale beyond one replica. In hybrid deployments, some services use in-process as a <em>first-pass</em> cheap check (reject clear over-limits without Redis), falling through to Redis for the authoritative decision.</p>
+<p><strong>A3: D — all of the above.</strong> <code>Retry-After</code> tells the client when to try again; <code>RateLimit-*</code> headers tell them their remaining budget so they can slow down proactively; JSON body allows the client to distinguish which limit fired (RPM vs TPM vs $) and adjust. All three are cheap to include and make your API dramatically nicer to integrate against.</p>
+<p><strong>A4:</strong> RPM alone treats every request as equivalent, but LLM requests vary in cost by orders of magnitude. A 200k-token prompt with a 4k-token output is not the same load as &quot;hi.&quot; Add: <strong>TPM</strong> (total input+output tokens per minute per user) and <strong>$ per day per user</strong> (converts variable request costs into a single fungible budget). Optionally also <strong>concurrent requests per user</strong> (protects against pathological parallel abuse). Rate-limit on the <em>tightest</em> dimension.</p>
+<p><strong>A5: C.</strong> Exponential backoff with jitter is the standard. Immediate retry (A) makes 429s worse. Fixed backoff (B) causes all 1000 clients to retry at t+1s simultaneously — a thundering herd. Retry forever (D) is unbounded resource use. The cap (60s) prevents any single request from tying up a worker indefinitely; the jitter spreads retries; the exponential shape ensures faster recovery than pure random.</p>
+<p><strong>A6: B — fixed-window counter.</strong> Because the counter resets at a fixed boundary (e.g., top of the minute), a user can send 60 requests at 12:00:59 and another 60 at 12:01:00 — effectively 120 in ~1 second. Sliding window and token bucket smooth this. Fixed window is chosen only when the simpler math is worth the accuracy loss (rare in production).</p>
+<p><strong>A7:</strong> Use a Redis key <code>spend:&lt;user_id&gt;:&lt;YYYY-MM-DD&gt;</code> with <code>INCRBYFLOAT</code>. Before dispatching an LLM call, <strong>estimate</strong> the cost from <code>(input_tokens_estimate + max_output_tokens) × price_table[model]</code> and <code>INCRBYFLOAT</code> by that amount. If the new balance exceeds $5, <code>INCRBYFLOAT</code> by the negative delta (refund) and return <code>429 {&quot;error&quot;: &quot;daily_spend_cap&quot;}</code> with <code>Retry-After: &lt;seconds-until-tomorrow-UTC&gt;</code>. After the LLM responds, compute the <strong>actual</strong> cost and <code>INCRBYFLOAT</code> the delta (positive or negative) so the counter converges to reality. Set TTL to 48h to auto-expire yesterday&#39;s key. Roll over at UTC midnight (or user&#39;s timezone if you&#39;re doing per-user local billing).</p>
+<p><strong>A8: B.</strong> Rate-limit exhaustion upstream is a form of rate-limit exhaustion your caller should know about. Returning 500 (A) suggests a server bug they can&#39;t help with. 503 (C) implies you&#39;re broken. 429 with <code>Retry-After</code> (perhaps 12s + a small buffer) is honest and instructs the client correctly. Waiting 12s in-request (D) ties up a worker slot and increases user-visible latency; only makes sense if the wait is very short (&lt; 1s) and you can guarantee it.</p>
+<p><strong>A9:</strong> Because a single 500k-token prompt can, by itself, exceed your TPM cap for the minute — you&#39;d reject the request, but only <em>after</em> the client uploaded and you parsed 500k tokens (network, compute). By validating max prompt length as a cheap upfront gate (e.g., &quot;reject &gt; 32k tokens&quot;), you fail fast, save compute and bandwidth, and give a clearer error (&quot;input too long&quot;) than &quot;rate-limited.&quot; It also protects against a class of DoS where the attacker sends huge prompts hoping to exhaust your token budget instantly. Layered defense: input-length cap → per-request cost estimate → rate-limit check → LLM call.</p>
+<p><strong>A10: D.</strong> All apply. (A) You can&#39;t push more than your provider quota; hitting it results in cascading 429s. Enforce a global RPM/TPM ceiling below your provider&#39;s limit and shed load early. (B) Prevents user-independent traffic spikes (e.g., viral moment) from taking down the whole service. (C) Bounds infra saturation regardless of which user is the cause. Global limits are set at 80–90% of upstream capacity; per-user is set for fairness and business tiering.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/01-fastapi.md</code> — where the middleware attaches</li>
+<li><code>learning/11-caching.md</code> — caching relieves rate-limit pressure by avoiding duplicate calls</li>
+<li><code>learning/12-authentication.md</code> — you need identity to rate-limit per user</li>
+<li><code>learning/14-cost-optimization.md</code> — the $-per-day cap is a cost tool</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Implement the sliding-window Lua script above against local Redis. Test 100 requests at various rates.</li>
+<li>Add a FastAPI middleware that reads <code>x-user-id</code>, looks up their tier, and enforces RPM + TPM + $/day. Emit <code>RateLimit-*</code> headers.</li>
+<li>Write client-side backoff for calls to Anthropic; handle 429s with <code>Retry-After</code>, jitter, and a 60s cap.</li>
+<li>Compare rate-limited service throughput vs. unbounded under 10× the intended load — plot latency curves.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>Stripe engineering blog — &quot;Scaling your API with rate limiters&quot;</li>
+<li>Cloudflare — &quot;How we built rate limiting capable of scaling to millions of domains&quot;</li>
+<li>RFC 6585 — 429 Too Many Requests</li>
+<li>IETF draft — &quot;RateLimit Fields for HTTP&quot; (<code>RateLimit-Limit</code>, etc.)</li>
+<li>Anthropic docs — rate limits, <code>x-ratelimit-*</code> headers</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-09-llm-observability.html"><span>← Previous</span><b>learning 09 llm observability</b></a>
+      <a class="next" href="./learning-11-caching.html"><span>Next →</span><b>learning 11 caching</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hardware-Specialized Inference Compilation — FP8 and NVFP4 on Blackwell — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/07-tensorrt-llm-blackwell/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Hardware-Specialized Inference Compilation — FP8 and NVFP4 on Blackwell</h1>
+    <p class="lesson-sub">Hardware-specialized inference compilation trades portability for throughput, and TensorRT-LLM — NVIDIA-only, tuned for Blackwell — is the clearest example of the trade paying off. On GB200 NVL72 with Dynamo orchestration, SemiAnalysis InferenceX measured $0.012 per million tokens on a 120B model in Q1-Q2 2026, against $0.09/M on H100 + vLLM — a 7x economic gap. The stack is three floating-point regimes compounded: FP8 stays critical for KV cache and attention kernels because it has the dynamic range they need; NVFP4 (4-bit microscaling) handles weights and activations; multi-token prediction (MTP) and disaggregated prefill/decode add another 2-3x on top. Day-0 model support loads FP4 weights directly without post-training conversion. The catch for 2026 engineering teams: TRT-LLM is open-source but NVIDIA-specific — CUDA- and Blackwell-specialized — so adopting it trades portability for throughput. Run the math on your mix of models and hardware before committing.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy FP8/NVFP4 memory and cost calculator)</b></div><div><span>Prerequisites</span><b>Phase 17 · 04 (Serving Engine Internals), Phase 10 · 13 (Quantization)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M80.5,90.7 L87.6,79.9 L94.8,90.7 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M75.7,85.4 L82.2,75.6 L88.7,85.4 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.9,80.1 L76.8,71.2 L82.7,80.1 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M66.1,74.8 L71.4,66.9 L76.6,74.8 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M48.3,77.2 L65.9,50.8 L83.6,77.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Hardware-Specialized</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Inference…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why FP8 stays critical for KV cache and attention even when weights are in NVFP4.</li>
+<li>Compute the HBM footprint of a frontier model under BF16, FP8, and NVFP4 and reason about where the savings come from.</li>
+<li>Name the Blackwell-specific features TRT-LLM exploits (day-0 FP4, MTP, disaggregated serving, all-to-all primitives).</li>
+<li>Decide when TRT-LLM&#39;s NVIDIA-lock is worth the 7x cost gap vs vLLM on Hopper.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The frontier of inference economics in 2026 is &quot;how many tokens per dollar&quot;. The answer depends on four stacked choices: hardware generation (Hopper H100/H200 vs Blackwell B200/GB200), precision (BF16 → FP8 → NVFP4), serving engine (vLLM vs SGLang vs TRT-LLM), and orchestration (plain vs disaggregated vs Dynamo).</p>
+<p>On Hopper with vLLM, a 120B MoE runs at ~$0.09 per million tokens. On Blackwell with TRT-LLM + Dynamo, the same model runs at ~$0.012 — 7x cheaper. Some of that gap is hardware (Blackwell is 11-15x per-GPU LLM throughput vs Hopper). Some is the stack: FP4 weights, MTP draft, disaggregated prefill/decode, and NVLink 5 all-to-all for MoE expert communication.</p>
+<p>You cannot replicate this outside NVIDIA&#39;s stack. That is the tradeoff — portability for economics. Understanding which stack choices give which share of the gap is the point of this lesson.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="why-fp8-is-still-the-floor-for-kv-cache"><a class="anchor" href="#why-fp8-is-still-the-floor-for-kv-cache">#</a> Why FP8 is still the floor for KV cache</h3>
+<p>A common mistake in 2026: assuming NVFP4 applies everywhere. It does not. KV cache needs FP8 (8-bit floating point) because it stores attention keys and values that span a wide dynamic range. Quantizing KV to FP4 causes catastrophic accuracy loss — the tail of the distribution drops off and attention scores collapse. FP8&#39;s exponent bits give KV cache the range it needs.</p>
+<p>NVFP4 (2025-2026) applies to weights and activations. Microscaling: each block of weights has its own scale factor so small blocks can span different dynamic ranges without per-tensor scale loss. For activations, FP4 holds up because activations are small-range within a layer.</p>
+<p>The typical Blackwell config:</p>
+<ul>
+<li>Weights: NVFP4 (4-bit microscaling).</li>
+<li>Activations: NVFP4.</li>
+<li>KV cache: FP8.</li>
+<li>Attention accumulator: FP32 (softmax stability).</li>
+</ul>
+<h3 id="the-blackwell-specific-primitives-trt-llm-uses"><a class="anchor" href="#the-blackwell-specific-primitives-trt-llm-uses">#</a> The Blackwell-specific primitives TRT-LLM uses</h3>
+<ul>
+<li><strong>Day-0 FP4 weights</strong>: model providers ship FP4 weights directly; TRT-LLM loads without post-training conversion. No AWQ / GPTQ step for FP4.</li>
+<li><strong>Multi-token prediction (MTP)</strong>: same idea as EAGLE (Phase 17 · 05) but integrated into the TRT-LLM build.</li>
+<li><strong>Disaggregated serving</strong>: prefill and decode on separate GPU pools, KV cache transferred over NVLink or InfiniBand. Same idea as Dynamo (Phase 17 · 20).</li>
+<li><strong>All-to-all communication primitives</strong>: NVLink 5 cut MoE expert communication latency by 3x vs Hopper. TRT-LLM&#39;s MoE kernels are tuned for this.</li>
+<li><strong>NVFP4 + MXFP8 microscaling</strong>: hardware-accelerated scale-factor handling on Blackwell Tensor Cores.</li>
+</ul>
+<h3 id="the-numbers-you-should-memorize"><a class="anchor" href="#the-numbers-you-should-memorize">#</a> The numbers you should memorize</h3>
+<ul>
+<li>HGX B200 at $0.02/M tokens on GPT-OSS-120B via TRT-LLM.</li>
+<li>GB200 NVL72 at $0.012/M tokens via Dynamo (orchestrating TRT-LLM).</li>
+<li>H100 + vLLM ≈ $0.09/M tokens on comparable workload.</li>
+<li>2.8x throughput gain in three months of TRT-LLM updates (2026).</li>
+<li>11-15x per-GPU LLM throughput, Blackwell vs Hopper.</li>
+<li>MLPerf Inference v6.0 (April 2026): Blackwell dominates every submitted task.</li>
+</ul>
+<h3 id="what-fp4-actually-costs-in-quality"><a class="anchor" href="#what-fp4-actually-costs-in-quality">#</a> What FP4 actually costs in quality</h3>
+<p>NVFP4 is aggressive. On reasoning-heavy workloads (chain-of-thought, math, code-gen with long context), FP4 weights degrade visibly. Per-block calibration mitigates but does not eliminate. Teams shipping reasoning models often use FP8 weights + FP4 activations as a compromise, or stick to H200 with FP8 throughout.</p>
+<p>The rule: always validate task quality on your eval set before committing to NVFP4 weights.</p>
+<h3 id="why-this-is-an-nvidia-lock-decision"><a class="anchor" href="#why-this-is-an-nvidia-lock-decision">#</a> Why this is an NVIDIA-lock decision</h3>
+<p>TRT-LLM is C++ + CUDA + closed-source kernels. Models need to be compiled for a specific GPU SKU. No AMD, no Intel, no ARM. If your infra strategy is multi-vendor, TRT-LLM is a non-starter for the TRT-LLM-served tier — you can still serve from vLLM on mixed hardware. If you are NVIDIA-only, the 7x gap pays for the lock.</p>
+<h3 id="2026-practical-recipe"><a class="anchor" href="#2026-practical-recipe">#</a> 2026 practical recipe</h3>
+<p>For a $100M+ annual inference bill, running on Hopper + vLLM leaves 7-10x on the table. Migrate cost-dominant workloads to Blackwell + TRT-LLM + Dynamo. Keep experimentation tier on H100 + vLLM for model iteration speed. Validate quality on each NVFP4-converted model before production.</p>
+<h3 id="the-disaggregation-bonus"><a class="anchor" href="#the-disaggregation-bonus">#</a> The disaggregation bonus</h3>
+<p>TRT-LLM&#39;s disaggregated serving (separate prefill and decode pools) is covered in depth in Phase 17 · 20. On Blackwell, the multiplier stacks: FP4 weights × MTP speedup × disaggregated placement × cache-aware routing. The 7x number assumes this full stack.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">pipeline-parallel</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> computes HBM footprint, decode throughput (memory-bound regime), and $/M-tokens for a model across three stacks: H100 + BF16 + vLLM, H100 + FP8 + vLLM, B200 + NVFP4/FP8 + TRT-LLM. Run it to see the compounding effect and the share of the gap each change contributes.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-trtllm-blackwell-advisor.md</code>. Given a workload, model size, and annual token volume, it decides whether the Blackwell + TRT-LLM stack is worth the NVIDIA-lock.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. On a 120B MoE with 30% active parameters, compute the memory-bandwidth-limited decode throughput on H100 BF16, H100 FP8, and B200 NVFP4/FP8. Where does the biggest jump come from?</li>
+<li>A customer spends $2M/year on H100 + vLLM. What is the break-even number of Blackwell GPUs they need to buy to amortize a migration to TRT-LLM in 12 months, given the 7x economic gap?</li>
+<li>You see accuracy drop 3 points on MATH after NVFP4 weight conversion. Name two recovery paths: one quality-first (keep FP8 weights), one cost-first (calibrate with in-domain data).</li>
+<li>Read the MLPerf v6.0 inference results. Which task has the smallest Blackwell-over-Hopper gap, and why?</li>
+<li>Compute the HBM needed for a 405B model at NVFP4 weights + FP8 KV cache at 128k context. Does it fit on a single GB200 NVL72 node?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FP8</td>
+<td>&quot;eight-bit float&quot;</td>
+<td>8-bit floating point; used for KV cache and attention due to dynamic range</td>
+</tr>
+<tr>
+<td>NVFP4</td>
+<td>&quot;four-bit micro&quot;</td>
+<td>NVIDIA&#39;s 4-bit microscaling FP format; weights and activations on Blackwell</td>
+</tr>
+<tr>
+<td>MXFP8</td>
+<td>&quot;MX eight&quot;</td>
+<td>Microscaling FP8 variant; hardware-accelerated on Blackwell Tensor Cores</td>
+</tr>
+<tr>
+<td>Day-0 FP4</td>
+<td>&quot;ship FP4 weights&quot;</td>
+<td>Model providers release weights already in FP4; no post-train conversion step</td>
+</tr>
+<tr>
+<td>MTP</td>
+<td>&quot;multi-token prediction&quot;</td>
+<td>TRT-LLM&#39;s integrated speculative-decoding draft (Phase 17 · 05)</td>
+</tr>
+<tr>
+<td>Disaggregated serving</td>
+<td>&quot;split prefill/decode&quot;</td>
+<td>Prefill and decode on separate GPU pools; KV transferred over NVLink/IB</td>
+</tr>
+<tr>
+<td>All-to-all</td>
+<td>&quot;MoE expert comm&quot;</td>
+<td>Communication pattern routing tokens to expert GPUs; NVLink 5 cuts 3x</td>
+</tr>
+<tr>
+<td>InferenceX</td>
+<td>&quot;SemiAnalysis inference bench&quot;</td>
+<td>The 2026 industry-accepted cost-per-token benchmark</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://developer.nvidia.com/blog/nvidia-blackwell-ultra-sets-new-inference-records-in-mlperf-debut/">NVIDIA — Blackwell Ultra MLPerf Inference v6.0</a> — April 2026 MLPerf results.</li>
+<li><a href="https://developer.nvidia.com/blog/delivering-massive-performance-leaps-for-mixture-of-experts-inference-on-nvidia-blackwell/">NVIDIA — MoE Inference on Blackwell</a> — NVLink 5 all-to-all and MoE kernels.</li>
+<li><a href="https://nvidia.github.io/TensorRT-LLM/overview.html">TensorRT-LLM Overview</a> — official engine documentation.</li>
+<li><a href="https://developer.nvidia.com/blog/introducing-nvidia-dynamo-a-low-latency-distributed-inference-framework-for-scaling-reasoning-ai-models/">NVIDIA — Introducing Dynamo</a> — disaggregated orchestration above TRT-LLM.</li>
+<li><a href="https://mlcommons.org/benchmarks/inference-datacenter/">MLPerf Inference</a> — the benchmark suite that publishes Blackwell numbers.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-sglang-radixattention.html"><span>← Previous</span><b>sglang radixattention</b></a>
+      <a class="next" href="./08-inference-metrics-goodput.html"><span>Next →</span><b>inference metrics goodput</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

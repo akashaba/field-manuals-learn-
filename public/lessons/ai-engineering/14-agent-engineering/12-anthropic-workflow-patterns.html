@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Anthropic&#39;s Workflow Patterns: Simple Over Complex — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/12-anthropic-workflow-patterns/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">Anthropic&#39;s Workflow Patterns: Simple Over Complex</h1>
+    <p class="lesson-sub">Schluntz and Zhang (Anthropic, Dec 2024) distinguish workflows (predefined paths) from agents (dynamic tool-use). Five workflow patterns cover most cases. Start with direct API calls. Add agents only when steps cannot be predicted.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 01 (Agent Loop)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="30.4" y="33.0" width="30.4" height="30.4" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(194 45.6 48.2)"/>
+        <rect x="25.6" y="128.7" width="29.1" height="29.1" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(176 40.2 143.3)"/>
+        <rect x="20.9" y="124.4" width="27.9" height="27.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(158 34.8 138.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Anthropic&#39;s Workflow</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Patterns: Simple…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Name Anthropic&#39;s five workflow patterns: prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer.</li>
+<li>Explain the agent-vs-workflow distinction and the engineering cost of each.</li>
+<li>Identify when to pick a workflow over an agent (and vice versa).</li>
+<li>Implement all five patterns in stdlib against a scripted LLM.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Teams reach for multi-agent frameworks for problems that want a single function call. The cost is real: frameworks add layers that obscure prompts, hide control flow, and invite premature complexity. Schluntz and Zhang&#39;s Dec 2024 post is the most-cited industry pushback: start simple, add complexity only when it earns its cost.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="workflows-vs-agents"><a class="anchor" href="#workflows-vs-agents">#</a> Workflows vs agents</h3>
+<ul>
+<li><strong>Workflow.</strong> LLMs and tools orchestrated through predefined code paths. Engineers own the graph.</li>
+<li><strong>Agent.</strong> LLMs dynamically direct their own tools and take their own steps. The model owns the graph.</li>
+</ul>
+<p>Both have their place. Workflows are cheaper, faster, and easier to debug. Agents unlock open-ended problems but make failure modes harder to reason about.</p>
+<h3 id="the-augmented-llm"><a class="anchor" href="#the-augmented-llm">#</a> The augmented LLM</h3>
+<p>Foundation for all five patterns: one LLM with three capabilities wired in — search (retrieval), tools (actions), memory (persistence). Any API call can use these.</p>
+<h3 id="the-five-patterns"><a class="anchor" href="#the-five-patterns">#</a> The five patterns</h3>
+<ol>
+<li><p><strong>Prompt chaining.</strong> Output of call 1 is input to call 2. Use when a task has a clean linear decomposition. Optional programmatic gates between steps.</p>
+</li>
+<li><p><strong>Routing.</strong> A classifier LLM picks which downstream LLM or tool to invoke. Use when categorically different inputs need different handling (tier-1 support vs refund vs bug vs sales).</p>
+</li>
+<li><p><strong>Parallelization.</strong> Run N LLM calls concurrently, aggregate results. Two shapes: sectioning (different chunks) and voting (same prompt, N runs, majority/synthesis).</p>
+</li>
+<li><p><strong>Orchestrator-workers.</strong> An orchestrator LLM dynamically decides which workers (also LLMs) to run and synthesizes their output. Similar to agent loops but the orchestrator does not loop indefinitely.</p>
+</li>
+<li><p><strong>Evaluator-optimizer.</strong> One LLM proposes an answer, another LLM evaluates it. Iterate until the evaluator passes. This is Self-Refine (Lesson 05) generalized.</p>
+</li>
+</ol>
+<h3 id="where-workflows-beat-agents"><a class="anchor" href="#where-workflows-beat-agents">#</a> Where workflows beat agents</h3>
+<ul>
+<li><strong>Predictable tasks.</strong> If you can enumerate the steps, you should.</li>
+<li><strong>Cost-bound tasks.</strong> Workflows have bounded step counts; agents can spiral.</li>
+<li><strong>Compliance-bound tasks.</strong> Auditors want to read the graph, not infer it from trajectories.</li>
+</ul>
+<h3 id="where-agents-beat-workflows"><a class="anchor" href="#where-agents-beat-workflows">#</a> Where agents beat workflows</h3>
+<ul>
+<li><strong>Open-ended research.</strong> When the next step depends on what the last step returned.</li>
+<li><strong>Variable-length tasks.</strong> Minutes to hours of work where step count is unknown.</li>
+<li><strong>Novel domains.</strong> When you don&#39;t yet know the right workflow — exploration first, codify later.</li>
+</ul>
+<h3 id="the-context-engineering-companion"><a class="anchor" href="#the-context-engineering-companion">#</a> The context-engineering companion</h3>
+<p>&quot;Effective context engineering for AI agents&quot; (Anthropic 2025) formalizes the adjacent discipline: the 200k window is a budget, not a container. What to include, when to compact, when to let context grow. Covered in detail in Phase 14 lesson on context compression (Phase 14 earlier lesson 06 in this curriculum before the renumber).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">workflow-chain</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements all five workflow patterns against a <code>ScriptedLLM</code>:</p>
+<ul>
+<li><code>prompt_chain(input, steps)</code> — sequential.</li>
+<li><code>route(input, classifier, handlers)</code> — classification + dispatch.</li>
+<li><code>parallel_vote(prompt, n, aggregator)</code> — N runs, aggregate.</li>
+<li><code>orchestrator_workers(task, workers)</code> — orchestrator picks workers.</li>
+<li><code>evaluator_optimizer(task, proposer, evaluator, max_iter)</code> — loop until pass.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Each pattern prints its trace. Total lines of code per pattern is ~10-15; the cost of a framework is measured in thousands.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li>Direct API calls for most tasks.</li>
+<li>Framework only when the pattern genuinely needs durable state (LangGraph), actor-model concurrency (AutoGen v0.4), or role templating (CrewAI).</li>
+<li>Reach for the Claude Agent SDK when you want the Claude Code harness shape without rebuilding it.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-workflow-picker.md</code> picks the right pattern for a given task description, including the decision rationale and the refactor path to an agent if workflows fall short.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Implement routing with a confidence threshold. Below threshold -&gt; escalate to human. Where does the threshold land for a tier-1 support use case?</li>
+<li>Add a timeout to <code>parallel_vote</code>. What happens when one call hangs? How do you aggregate with missing votes?</li>
+<li>Turn <code>evaluator_optimizer</code> into a bandit: keep the top-2 outputs across iterations so a late good result doesn&#39;t get overwritten by a late bad one.</li>
+<li>Combine prompt chaining with routing: a router picks one of three chains. Measure token cost vs a single big-prompt alternative.</li>
+<li>Pick one of your production features. Draw the workflow graph. Count steps. Would an agent actually be better here?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Workflow</td>
+<td>&quot;Predefined flow&quot;</td>
+<td>Engineer-owned graph of LLM and tool calls</td>
+</tr>
+<tr>
+<td>Agent</td>
+<td>&quot;Autonomous AI&quot;</td>
+<td>Model-owned graph; dynamic tool direction</td>
+</tr>
+<tr>
+<td>Augmented LLM</td>
+<td>&quot;LLM with tools&quot;</td>
+<td>LLM + search + tools + memory; the atomic unit</td>
+</tr>
+<tr>
+<td>Prompt chaining</td>
+<td>&quot;Sequential calls&quot;</td>
+<td>Output of call N is input to call N+1</td>
+</tr>
+<tr>
+<td>Routing</td>
+<td>&quot;Classifier dispatch&quot;</td>
+<td>Pick which chain/model handles the input</td>
+</tr>
+<tr>
+<td>Parallelization</td>
+<td>&quot;Fan out&quot;</td>
+<td>N concurrent calls; aggregate by sectioning or voting</td>
+</tr>
+<tr>
+<td>Orchestrator-workers</td>
+<td>&quot;Dispatcher agent&quot;</td>
+<td>Orchestrator LLM picks specialist LLMs dynamically</td>
+</tr>
+<tr>
+<td>Evaluator-optimizer</td>
+<td>&quot;Proposer + judge&quot;</td>
+<td>Iterate until evaluator passes; Self-Refine generalized</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic, Building Effective Agents (Dec 2024)</a> — the five workflow patterns</li>
+<li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic, Effective context engineering for AI agents</a> — the companion discipline</li>
+<li><a href="https://docs.langchain.com/oss/python/langgraph/overview">LangGraph overview</a> — when stateful graphs earn their cost</li>
+<li><a href="https://openai.github.io/openai-agents-python/">OpenAI Agents SDK</a> — the orchestrator-workers pattern, productized</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-planning-htn-and-evolutionary.html"><span>← Previous</span><b>planning htn and evolutionary</b></a>
+      <a class="next" href="./13-langgraph-stateful-graphs.html"><span>Next →</span><b>langgraph stateful graphs</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

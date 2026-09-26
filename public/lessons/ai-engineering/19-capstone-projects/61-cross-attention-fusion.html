@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cross-Attention Fusion — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/61-cross-attention-fusion/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#tests">Tests</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Cross-Attention Fusion</h1>
+    <p class="lesson-sub">The projection layer aligns one image vector with one caption vector. A real vision-language decoder needs every text token to attend to every patch token, so the model can ground each word in a region. Cross-attention is how that grounding happens. The text queries; the vision keys and values answer. This lesson builds the cross-attention block, the causal text self-attention, and the mask shapes that keep both legal.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (Track B foundations)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 61">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.4,77.3 L66.1,50.9 L83.7,77.3 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.7" y="44.9" width="34.0" height="34.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(243 60.6 61.8)"/>
+        <rect x="38.9" y="40.6" width="32.7" height="32.7" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(225 55.2 56.9)"/>
+        <rect x="34.1" y="36.3" width="31.4" height="31.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(207 49.8 52.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">61</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Cross-Attention</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Fusion</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement multi-head cross-attention where the query stream is text and the key/value stream is vision.</li>
+<li>Compose a decoder block: causal self-attention + cross-attention + feed-forward.</li>
+<li>Get the mask shapes right: causal mask for self-attention, no mask for cross-attention.</li>
+<li>Run a forward pass with batched text tokens and a fixed pool of image tokens.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Concatenating image tokens and text tokens into one sequence is one fusion option (early fusion, the path Chameleon and Emu3 take). Cross-attention is the other (late fusion, the path Flamingo introduced and that every Flamingo-shaped decoder since has copied). In late fusion, the text decoder runs on text-only tokens and reaches over into the image stream through cross-attention at every layer.</p>
+<p>Late fusion has two advantages. First, the text stream stays clean and the model preserves text-only capabilities. Second, the image stream is computed once per image and reused for every decode step, so generation is cheap even for long captions. The cost is one extra attention sub-layer per block.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+  Image[image tokens B x Nv x D] --&gt; Vis[frozen vision encoder]
+  Vis --&gt; Mem[memory tokens B x Nv x D]
+  Text[text token ids] --&gt; Emb[text embedding]
+  Emb --&gt; Self[masked self-attention]
+  Self --&gt; Cross[cross-attention queries=text keys/values=memory]
+  Cross --&gt; FFN[feed-forward]
+  FFN --&gt; Out[next-token logits]
+  Mem --&gt; Cross</pre></div><div class="fig"><pre class="mermaid">flowchart LR
+  Q[text Q B x H x Nt x d] --&gt; Scores[Q K^T / sqrt d]
+  K[image K B x H x Nv x d] --&gt; Scores
+  Scores --&gt; Soft[softmax over Nv]
+  V[image V B x H x Nv x d] --&gt; Out
+  Soft --&gt; Out[output B x H x Nt x d]</pre></div><h3 id="mask-shapes"><a class="anchor" href="#mask-shapes">#</a> Mask shapes</h3>
+<p>The two attentions inside a decoder block need different masks:</p>
+<table>
+<thead>
+<tr>
+<th>Attention</th>
+<th>Query length</th>
+<th>Key length</th>
+<th>Mask</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Self-attention</td>
+<td><code>Nt</code> (text)</td>
+<td><code>Nt</code> (text)</td>
+<td>Causal: lower-triangular <code>(Nt, Nt)</code></td>
+<td>Text tokens may not look ahead during autoregression</td>
+</tr>
+<tr>
+<td>Cross-attention</td>
+<td><code>Nt</code> (text)</td>
+<td><code>Nv</code> (vision)</td>
+<td>No mask</td>
+<td>The whole image is visible to every text position</td>
+</tr>
+</tbody></table>
+<p>The lesson includes one shape-validation function so the mistake of mixing them up surfaces as a <code>ValueError</code> instead of a silently broken loss curve.</p>
+<h3 id="why-no-mask-on-cross-attention"><a class="anchor" href="#why-no-mask-on-cross-attention">#</a> Why no mask on cross-attention</h3>
+<p>The image is fully observed before any text is generated. Token <code>t</code> of the caption may attend to any patch of the image; there is no temporal order on image patches. Some Flamingo variants add a per-sample masking pattern when interleaving multiple images and text segments, but for a single image plus a caption, cross-attention sees everything.</p>
+<h3 id="keyvalue-caching"><a class="anchor" href="#keyvalue-caching">#</a> Key/value caching</h3>
+<p>The image keys and values are computed once at the start of the decode and held in a cache. Each new text token uses the cache without recomputation. This is what makes captioning fast at inference: the heavy ViT runs once; the cross-attention reuses its keys and values for every step. The lesson exposes the cache and tests the cache-hit path.</p>
+<h3 id="block-composition"><a class="anchor" href="#block-composition">#</a> Block composition</h3>
+<p>A decoder block runs: pre-LN -&gt; self-attention -&gt; residual -&gt; pre-LN -&gt; cross-attention -&gt; residual -&gt; pre-LN -&gt; feed-forward -&gt; residual. Three sub-layers, each with its own LayerNorm. The Flamingo paper added a learned gate on cross-attention so the model could opt out of the image path at training-time stability cost; the canonical baseline (used here) has no gate.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class DecoderBlock:
+  def forward(self, text_tokens, image_tokens, text_mask, cross_mask):
+      text_tokens = text_tokens + self.self_attn(self.ln1(text_tokens),
+                                                 mask=text_mask)
+      text_tokens = text_tokens + self.cross_attn(self.ln2(text_tokens),
+                                                  image_tokens,
+                                                  mask=cross_mask)
+      text_tokens = text_tokens + self.ffn(self.ln3(text_tokens))
+      return text_tokens</code></pre>
+      </div>
+    
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-crossattn-fan</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>CrossAttention(hidden, heads)</code>, multi-head cross-attention with separate <code>q</code> and <code>kv</code> projections.</li>
+<li><code>CausalSelfAttention(hidden, heads)</code>, the masked self-attention from a standard decoder.</li>
+<li><code>DecoderBlock</code>, composing the three sub-layers with pre-LN residuals.</li>
+<li><code>VisionLanguageDecoder</code>, four-layer decoder fed by a mock vision encoder output and a small text embedding table.</li>
+<li><code>causal_mask(length)</code> returning a <code>(length, length)</code> lower-triangular boolean tensor.</li>
+<li>A demo that feeds a batch of two text sequences of length 10 with image memory of length 197 and prints output shape, the self-attention mask shape, and the cross-attention output norm per position.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: decoder produces a <code>(2, 10, text_vocab)</code> logits tensor. Mask shape is <code>(10, 10)</code>. The KV-cache reuse check confirms identical logits between the cached and uncached paths.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Cross-attention shows up in two production families:</p>
+<ul>
+<li><strong>Flamingo and IDEFICS.</strong> Insert a cross-attention sub-layer every K language model blocks, with a frozen LM. The vision-language adapter is the cross-attention block plus its gate.</li>
+<li><strong>BLIP-2.</strong> The Q-Former uses cross-attention from a fixed set of 32 query tokens into the image features, then projects the queries into the LM embedding space.</li>
+</ul>
+<p>The shape of the block in this lesson maps directly onto both. The mask discipline (causal on self, none on cross) is the same.</p>
+<h2 id="tests"><a class="anchor" href="#tests">#</a> Tests</h2>
+<p><code>code/test_main.py</code> covers:</p>
+<ul>
+<li>causal mask is lower-triangular and matches expected boolean shape</li>
+<li>cross-attention output shape is <code>(B, Nt, hidden)</code> regardless of key length</li>
+<li>KV-cache path matches uncached path to float tolerance</li>
+<li>shape mismatch between text and image streams raises a clear <code>ValueError</code></li>
+<li>a full decoder forward pass produces the right batch and sequence shape</li>
+</ul>
+<p>Run them:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 -m unittest code/test_main.py</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Add a learned tanh gate to the cross-attention residual (the Flamingo trick) and verify training converges from a near-zero initial gate. The gate starts at 0; the model recovers text-only behavior before mixing the image stream in.</p>
+</li>
+<li><p>Implement interleaved attention where the same decoder consumes multiple images plus multiple text segments. Build the per-sample cross-attention mask that prevents text segment 2 from attending to image 1.</p>
+</li>
+<li><p>Profile the cross-attention vs the self-attention layer at <code>Nt=64, Nv=576</code> (a 24x24 grid at higher resolution). The cross-attention cost is <code>Nt * Nv</code> and dominates at high image resolution.</p>
+</li>
+<li><p>Add a query-side dropout on the cross-attention map and measure caption diversity on the demo (caption sample variance increases with dropout in the cross map).</p>
+</li>
+<li><p>Swap the cross-attention layer for a Q-Former-style attention block where a fixed 32-token query pool attends to image features once per layer.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Late fusion</td>
+<td>Text and vision stay in separate streams; cross-attention bridges them at every block</td>
+</tr>
+<tr>
+<td>Cross-attention</td>
+<td>Q comes from one stream, K and V from another</td>
+</tr>
+<tr>
+<td>Causal mask</td>
+<td>Lower-triangular boolean mask that prevents looking ahead during autoregression</td>
+</tr>
+<tr>
+<td>KV cache</td>
+<td>Image keys and values stored once and reused for every decode step</td>
+</tr>
+<tr>
+<td>Memory tokens</td>
+<td>The frozen image tokens that the decoder reaches into</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Flamingo (2022) for the canonical late-fusion design with gated cross-attention.</li>
+<li>BLIP-2 (2023) for the Q-Former, which is a cross-attention block dressed as a learned query pool.</li>
+<li>IDEFICS (2023) for an open-weight reproduction of the Flamingo recipe.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./60-projection-layer-modality-align.html"><span>← Previous</span><b>projection layer modality align</b></a>
+      <a class="next" href="./62-vision-language-pretraining.html"><span>Next →</span><b>vision language pretraining</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

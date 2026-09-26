@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Transfer Learning &amp; Fine-Tuning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/05-transfer-learning/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Transfer Learning &amp; Fine-Tuning</h1>
+    <p class="lesson-sub">Somebody else spent a million GPU hours teaching a network what edges, textures, and object parts look like. You should borrow those features before training your own.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 4 Lesson 04 (Image Classification)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M46.7,75.4 L64.1,49.3 L81.5,75.4 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.9" y="43.3" width="33.5" height="33.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(236 58.7 60.0)"/>
+        <rect x="37.1" y="39.0" width="32.2" height="32.2" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(218 53.2 55.1)"/>
+        <rect x="32.3" y="34.7" width="30.9" height="30.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(201 47.8 50.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Transfer Learning &amp;</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Fine-Tuning</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish feature extraction from fine-tuning and pick the right one based on dataset size, domain distance, and compute budget</li>
+<li>Load a pretrained backbone, replace its classifier head, and train only the head to a working baseline in under 20 lines</li>
+<li>Progressively unfreeze layers with discriminative learning rates so early generic features get smaller updates than late task-specific ones</li>
+<li>Diagnose the three common failures: feature drift from too-high LR on unfrozen blocks, BN statistics collapse on tiny datasets, and catastrophic forgetting</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Training a ResNet-50 on ImageNet costs around 2,000 GPU-hours. Very few teams have that budget for every task they ship. What almost every team actually ships is a pretrained backbone with a new head trained on a few hundred or few thousand task-specific images.</p>
+<p>This is not a shortcut. The first conv block of any ImageNet-trained CNN learns edges and Gabor-like filters. The next few blocks learn textures and simple motifs. The middle blocks learn object parts. The final blocks learn combinations that start to look like the 1,000 ImageNet categories. The first 90% of that hierarchy transfers almost unchanged to medical imaging, industrial inspection, satellite data, and every other vision task — because nature has a limited vocabulary of edges and textures. The last 10% is what you actually train.</p>
+<p>Getting transfer right has three bugs waiting for you: destroying pretrained features with a too-high learning rate, starving the model of information by freezing too much, and letting BatchNorm&#39;s running statistics drift toward a tiny dataset that the rest of the network never learnt from. This lesson walks each of them on purpose.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="feature-extraction-vs-fine-tuning"><a class="anchor" href="#feature-extraction-vs-fine-tuning">#</a> Feature extraction vs fine-tuning</h3>
+<p>Two regimes, picked by how much you trust the pretrained features and how much data you have.</p>
+<div class="fig"><pre class="mermaid">flowchart TB
+    subgraph FE[&quot;Feature extraction — backbone frozen&quot;]
+        FE1[&quot;Pretrained backbone&lt;br/&gt;(no gradient)&quot;] --&gt; FE2[&quot;New head&lt;br/&gt;(trained)&quot;]
+    end
+    subgraph FT[&quot;Fine-tuning — end-to-end&quot;]
+        FT1[&quot;Pretrained backbone&lt;br/&gt;(tiny LR)&quot;] --&gt; FT2[&quot;New head&lt;br/&gt;(normal LR)&quot;]
+    end
+
+    style FE1 fill:#e5e7eb,stroke:#6b7280
+    style FE2 fill:#dcfce7,stroke:#16a34a
+    style FT1 fill:#fef3c7,stroke:#d97706
+    style FT2 fill:#dcfce7,stroke:#16a34a</pre></div><p>Rules of thumb:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset size</th>
+<th>Domain distance</th>
+<th>Recipe</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&lt; 1k images</td>
+<td>close to ImageNet</td>
+<td>Freeze backbone, train head only</td>
+</tr>
+<tr>
+<td>1k-10k</td>
+<td>close</td>
+<td>Freeze first 2-3 stages, fine-tune the rest</td>
+</tr>
+<tr>
+<td>10k-100k</td>
+<td>any</td>
+<td>Fine-tune end-to-end with discriminative LR</td>
+</tr>
+<tr>
+<td>100k+</td>
+<td>far</td>
+<td>Fine-tune everything; consider training from scratch if domain is far enough</td>
+</tr>
+</tbody></table>
+<p>&quot;Close to ImageNet&quot; roughly means natural RGB photos with object-like content. Medical CT scans, overhead satellite imagery, and microscopy are far domains — the features still help, but you will need to let more layers adapt.</p>
+<h3 id="why-freezing-works-at-all"><a class="anchor" href="#why-freezing-works-at-all">#</a> Why freezing works at all</h3>
+<p>The ImageNet features a CNN learns are not specialised to the 1,000 categories. They are specialised to the statistics of natural images: edges at specific orientations, textures, contrast patterns, shape primitives. Those statistics are stable across almost every visual domain a human can name. That is why a model trained on ImageNet and evaluated zero-shot on CIFAR-10 with just a new linear head (no fine-tuning of the backbone) reaches 80%+ accuracy. The head is learning which of the already-learnt features to weight for this task.</p>
+<h3 id="discriminative-learning-rates"><a class="anchor" href="#discriminative-learning-rates">#</a> Discriminative learning rates</h3>
+<p>When you do unfreeze, early layers should train slower than late layers. Early layers encode generic features that you want to preserve; late layers encode task-specific structure that you need to move a lot.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Typical recipe:
+
+  stage 0 (stem + first group): lr = base_lr / 100    (mostly fixed)
+  stage 1:                       lr = base_lr / 10
+  stage 2:                       lr = base_lr / 3
+  stage 3 (last backbone group): lr = base_lr
+  head:                          lr = base_lr  (or slightly higher)</code></pre>
+      </div>
+    <p>In PyTorch this is just a list of parameter groups passed to the optimizer. One model, five learning rates, zero extra code.</p>
+<h3 id="the-batchnorm-problem"><a class="anchor" href="#the-batchnorm-problem">#</a> The BatchNorm problem</h3>
+<p>BN layers hold <code>running_mean</code> and <code>running_var</code> buffers that were computed on ImageNet. If your task has a different pixel distribution — different lighting, different sensor, different colour space — those buffers are wrong. Three options in order of preference:</p>
+<ol>
+<li><strong>Fine-tune with BN in train mode.</strong> Let BN update its running statistics along with everything else. Default choice when the task dataset is medium-sized (&gt;= 5k examples).</li>
+<li><strong>Freeze BN in eval mode.</strong> Keep the ImageNet statistics and train only the weights. Correct when your dataset is small enough that BN&#39;s moving average would be noisy.</li>
+<li><strong>Replace BN with GroupNorm.</strong> Removes the moving-average problem entirely. Used in detection and segmentation backbones where batch size per GPU is tiny.</li>
+</ol>
+<p>Getting this wrong silently tanks accuracy by 5-15%.</p>
+<h3 id="head-design"><a class="anchor" href="#head-design">#</a> Head design</h3>
+<p>The classifier head is 1-3 linear layers plus an optional dropout. Every torchvision backbone ships a default head that you replace:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">backbone.fc = nn.Linear(backbone.fc.in_features, num_classes)          # ResNet
+backbone.classifier[1] = nn.Linear(..., num_classes)                    # EfficientNet, MobileNet
+backbone.heads.head = nn.Linear(..., num_classes)                       # torchvision ViT</code></pre>
+      </div>
+    <p>For small datasets, a single linear layer is usually enough. Adding a hidden layer (Linear -&gt; ReLU -&gt; Dropout -&gt; Linear) helps when the task distribution is farther from the backbone&#39;s training distribution.</p>
+<h3 id="layer-wise-lr-decay"><a class="anchor" href="#layer-wise-lr-decay">#</a> Layer-wise LR decay</h3>
+<p>A smoother version of discriminative LR used in modern fine-tuning (BEiT, DINOv2, ViT-B fine-tunes). Instead of grouping layers into stages, give every layer a slightly smaller LR than the one above it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">lr_layer_k = base_lr * decay^(L - k)</code></pre>
+      </div>
+    <p>With decay = 0.75 and L = 12 transformer blocks, the first block trains at <code>0.75^11 ≈ 0.04x</code> the head&#39;s LR. Matters more for transformer fine-tunes than for CNNs, where stage-grouped LRs are usually enough.</p>
+<h3 id="what-to-evaluate"><a class="anchor" href="#what-to-evaluate">#</a> What to evaluate</h3>
+<p>Transfer-learning runs need two numbers you would not track on a scratch run:</p>
+<ul>
+<li><strong>Pretrained-only accuracy</strong> — the head&#39;s accuracy with the backbone frozen. This is your floor.</li>
+<li><strong>Fine-tuned accuracy</strong> — the same model after end-to-end training. This is your ceiling.</li>
+</ul>
+<p>If fine-tuned is less than pretrained-only, you have a learning-rate or BN bug. Always print both.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">transfer-learning</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-load-a-pretrained-backbone-and-inspect-it"><a class="anchor" href="#step-1-load-a-pretrained-backbone-and-inspect-it">#</a> Step 1: Load a pretrained backbone and inspect it</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+from torchvision.models import resnet18, ResNet18_Weights
+
+backbone = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+print(backbone)
+print()
+print(&quot;classifier head:&quot;, backbone.fc)
+print(&quot;feature dim:&quot;, backbone.fc.in_features)</code></pre>
+      </div>
+    <p><code>ResNet18</code> has four stages (<code>layer1..layer4</code>) plus a stem and a <code>fc</code> head. Every torchvision classification backbone has an analogous structure.</p>
+<h3 id="step-2-feature-extraction-freeze-everything-replace-the-head"><a class="anchor" href="#step-2-feature-extraction-freeze-everything-replace-the-head">#</a> Step 2: Feature extraction — freeze everything, replace the head</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def make_feature_extractor(num_classes=10):
+    model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+    for p in model.parameters():
+        p.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
+
+model = make_feature_extractor(num_classes=10)
+trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+print(f&quot;trainable: {trainable:&gt;10,}&quot;)
+print(f&quot;frozen:    {frozen:&gt;10,}&quot;)</code></pre>
+      </div>
+    <p>Only <code>model.fc</code> is trainable. The backbone is a frozen feature extractor.</p>
+<h3 id="step-3-discriminative-fine-tuning"><a class="anchor" href="#step-3-discriminative-fine-tuning">#</a> Step 3: Discriminative fine-tuning</h3>
+<p>A utility that builds parameter groups with stage-specific learning rates.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def discriminative_param_groups(model, base_lr=1e-3, decay=0.3):
+    stages = [
+        [&quot;conv1&quot;, &quot;bn1&quot;],
+        [&quot;layer1&quot;],
+        [&quot;layer2&quot;],
+        [&quot;layer3&quot;],
+        [&quot;layer4&quot;],
+        [&quot;fc&quot;],
+    ]
+    groups = []
+    for i, names in enumerate(stages):
+        lr = base_lr * (decay ** (len(stages) - 1 - i))
+        params = [p for n, p in model.named_parameters()
+                  if any(n.startswith(k) for k in names)]
+        if params:
+            groups.append({&quot;params&quot;: params, &quot;lr&quot;: lr, &quot;name&quot;: &quot;_&quot;.join(names)})
+    return groups
+
+model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+model.fc = nn.Linear(model.fc.in_features, 10)
+for p in model.parameters():
+    p.requires_grad = True
+
+groups = discriminative_param_groups(model)
+for g in groups:
+    print(f&quot;{g[&#39;name&#39;]:&gt;10s}  lr={g[&#39;lr&#39;]:.2e}  params={sum(p.numel() for p in g[&#39;params&#39;]):&gt;8,}&quot;)</code></pre>
+      </div>
+    <p><code>decay=0.3</code> means each stage trains at 30% of the rate of the next one. <code>fc</code> gets <code>base_lr</code>, <code>layer4</code> gets <code>0.3 * base_lr</code>, <code>conv1</code> gets <code>0.3^5 * base_lr ≈ 0.00243 * base_lr</code>. Extreme sounding; empirically it works.</p>
+<h3 id="step-4-batchnorm-handling"><a class="anchor" href="#step-4-batchnorm-handling">#</a> Step 4: BatchNorm handling</h3>
+<p>Helper to freeze BN running statistics without freezing its weights.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def freeze_bn_stats(model):
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            m.eval()
+            for p in m.parameters():
+                p.requires_grad = False
+    return model</code></pre>
+      </div>
+    <p>Call it after you set <code>model.train()</code> at the start of every epoch. <code>model.train()</code> flips everything to training mode; this reverses it only for BN layers.</p>
+<h3 id="step-5-a-minimal-end-to-end-fine-tuning-loop"><a class="anchor" href="#step-5-a-minimal-end-to-end-fine-tuning-loop">#</a> Step 5: A minimal end-to-end fine-tuning loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from torch.optim import SGD
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import torch.nn.functional as F
+
+def fine_tune(model, train_loader, val_loader, device, epochs=5, base_lr=1e-3, freeze_bn=False):
+    model = model.to(device)
+    groups = discriminative_param_groups(model, base_lr=base_lr)
+    optimizer = SGD(groups, momentum=0.9, weight_decay=1e-4, nesterov=True)
+    scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
+
+    for epoch in range(epochs):
+        model.train()
+        if freeze_bn:
+            freeze_bn_stats(model)
+        tr_loss, tr_correct, tr_total = 0.0, 0, 0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            logits = model(x)
+            loss = F.cross_entropy(logits, y, label_smoothing=0.1)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            tr_loss += loss.item() * x.size(0)
+            tr_total += x.size(0)
+            tr_correct += (logits.argmax(-1) == y).sum().item()
+        scheduler.step()
+
+        model.eval()
+        va_total, va_correct = 0, 0
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x).argmax(-1)
+                va_total += x.size(0)
+                va_correct += (pred == y).sum().item()
+        print(f&quot;epoch {epoch}  train {tr_loss/tr_total:.3f}/{tr_correct/tr_total:.3f}  &quot;
+              f&quot;val {va_correct/va_total:.3f}&quot;)
+    return model</code></pre>
+      </div>
+    <p>Five epochs with the above recipe on CIFAR-10 takes <code>ResNet18-IMAGENET1K_V1</code> from ~70% zero-shot linear-probe accuracy to ~93% fine-tuned accuracy. The head alone would plateau around 86% without ever touching the backbone.</p>
+<h3 id="step-6-progressive-unfreezing"><a class="anchor" href="#step-6-progressive-unfreezing">#</a> Step 6: Progressive unfreezing</h3>
+<p>A schedule that unfreezes one stage per epoch from the end toward the beginning. Mitigates feature drift at the cost of some extra epochs.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def progressive_unfreeze_schedule(model):
+    stages = [&quot;layer4&quot;, &quot;layer3&quot;, &quot;layer2&quot;, &quot;layer1&quot;]
+    yielded = set()
+
+    def start():
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.fc.parameters():
+            p.requires_grad = True
+
+    def unfreeze(epoch):
+        if epoch &lt; len(stages):
+            name = stages[epoch]
+            yielded.add(name)
+            for n, p in model.named_parameters():
+                if n.startswith(name):
+                    p.requires_grad = True
+            return name
+        return None
+
+    return start, unfreeze</code></pre>
+      </div>
+    <p>Call <code>start()</code> once before the first epoch. Call <code>unfreeze(epoch)</code> at the start of each epoch. Rebuild the optimizer whenever the set of trainable parameters changes, otherwise the frozen params still hold cached moments that confuse it.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For most real tasks, <code>torchvision.models</code> + three lines is enough. The heavier machinery above matters when you run into the problems that library defaults cannot fix.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from torchvision.models import resnet50, ResNet50_Weights
+
+model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+model.fc = nn.Linear(model.fc.in_features, num_classes)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)</code></pre>
+      </div>
+    <p>Two other production-grade defaults:</p>
+<ul>
+<li><code>timm</code> ships ~800 pretrained vision backbones with a consistent API (<code>timm.create_model(&quot;resnet50&quot;, pretrained=True, num_classes=10)</code>). For any fine-tune beyond the torchvision zoo, it is the standard.</li>
+<li>For transformers, <code>transformers.AutoModelForImageClassification.from_pretrained(name, num_labels=N)</code> gives you ViT / BEiT / DeiT with the same loading semantics as text models.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-fine-tune-planner.md</code> — a prompt that picks feature-extraction vs progressive vs end-to-end fine-tuning based on dataset size, domain distance, and compute budget.</li>
+<li><code>outputs/skill-freeze-inspector.md</code> — a skill that, given a PyTorch model, reports which parameters are trainable, which BatchNorm layers are in eval mode, and whether the optimizer is actually being fed the trainable parameters.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Train a <code>ResNet18</code> as a linear probe (backbone frozen) and as a full fine-tune on the same synthetic-CIFAR dataset. Report both accuracies side by side. Explain which gap tells you the features transfer well and which tells you they do not.</li>
+<li><strong>(Medium)</strong> Introduce a bug on purpose: set <code>base_lr = 1e-1</code> on the backbone stage instead of the head. Show the training loss explode, then recover by applying the <code>discriminative_param_groups</code> helper. Record the LR at which each stage starts diverging.</li>
+<li><strong>(Hard)</strong> Take a medical imaging dataset (e.g. CheXpert-small, PatchCamelyon, or HAM10000) and compare three regimes: (a) ImageNet-pretrained frozen backbone + linear head; (b) ImageNet-pretrained fine-tune end-to-end; (c) scratch training. Report accuracy and compute cost for each. At what dataset size does scratch training become competitive?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Feature extraction</td>
+<td>&quot;Freeze and train head&quot;</td>
+<td>Backbone parameters frozen, only the new classifier head receives gradient</td>
+</tr>
+<tr>
+<td>Fine-tuning</td>
+<td>&quot;Retrain end-to-end&quot;</td>
+<td>All parameters trainable, usually with much smaller LR than scratch training</td>
+</tr>
+<tr>
+<td>Discriminative LR</td>
+<td>&quot;Smaller LR for early layers&quot;</td>
+<td>Optimizer parameter groups where early-stage LR is a fraction of late-stage LR</td>
+</tr>
+<tr>
+<td>Layer-wise LR decay</td>
+<td>&quot;Smooth LR gradient&quot;</td>
+<td>Per-layer LR multiplied by decay^(L - k); common in transformer fine-tunes</td>
+</tr>
+<tr>
+<td>Catastrophic forgetting</td>
+<td>&quot;The model lost ImageNet&quot;</td>
+<td>A too-high LR overwrites pretrained features before the new task signal is learnt</td>
+</tr>
+<tr>
+<td>BN statistics drift</td>
+<td>&quot;Running mean is wrong&quot;</td>
+<td>BatchNorm running_mean/var computed on a different distribution than the current task, silently hurting accuracy</td>
+</tr>
+<tr>
+<td>Linear probe</td>
+<td>&quot;Frozen backbone + linear head&quot;</td>
+<td>Evaluation of pretrained features — accuracy of the best linear classifier on top of the frozen representation</td>
+</tr>
+<tr>
+<td>Catastrophic collapse</td>
+<td>&quot;Everything predicts one class&quot;</td>
+<td>Happens when fine-tuning with an LR high enough to destroy features before gradients from the head can stabilise</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1411.1792">How transferable are features in deep neural networks? (Yosinski et al., 2014)</a> — the paper that quantified feature transferability across layers</li>
+<li><a href="https://arxiv.org/abs/1801.06146">Universal Language Model Fine-tuning (ULMFiT, Howard &amp; Ruder, 2018)</a> — the original discriminative LR / progressive unfreezing recipe; the ideas transfer directly to vision</li>
+<li><a href="https://huggingface.co/docs/timm">timm documentation</a> — the reference for modern vision backbones and the exact fine-tune defaults they were trained with</li>
+<li><a href="https://arxiv.org/abs/1805.08974">A Simple Framework for Linear-Probe Evaluation (Kornblith et al., 2019)</a> — why linear-probe accuracy matters and how to report it correctly</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-image-classification.html"><span>← Previous</span><b>image classification</b></a>
+      <a class="next" href="./06-object-detection-yolo.html"><span>Next →</span><b>object detection yolo</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

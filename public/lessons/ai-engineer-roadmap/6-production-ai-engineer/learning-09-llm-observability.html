@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>09 — LLM Observability — AI Engineer Roadmap</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#0d7c66;--accent-2:#08544a;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineer-roadmap"><b>AI Engineer Roadmap</b></a>
+  <nav>
+    <a href="/ai-engineer-roadmap">Index</a>
+    <a href="https://github.com/akashaba/AI-Engineer-Roadmap/blob/main/6%20%E2%80%94%20Production%20AI%20Engineer/Learning/09-llm-observability.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineer-roadmap">AI Engineer Roadmap</a>
+    </div>
+    <div class="phase-label">Production AI Engineer</div>
+    <ol class="toc"><li><a href="#1-executive-summary-core-concepts">1. Executive Summary &amp; Core Concepts</a></li><li><a href="#2-deep-dive-breakdown">2. Deep-Dive Breakdown</a></li><li><a href="#3-mental-models-analogies">3. Mental Models &amp; Analogies</a></li><li><a href="#4-common-pitfalls-misconceptions">4. Common Pitfalls &amp; Misconceptions</a></li><li><a href="#5-self-assessment-bank">5. Self-Assessment Bank</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineer Roadmap · Production AI Engineer</div>
+    <h1 class="lesson-title">09 — LLM Observability</h1>
+    <p class="lesson-sub">**Module goal:** Master the specialized observability stack for LLM applications — tracing every prompt, tracking every token, watching for hallucinations, guardrail hits and cost outliers, and turning production traces into datasets that feed the next model release. Distinguish generic observability (Month 6 modules 6–7) from what LLMs specifically demand.</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineer Roadmap — Production AI Engineer le">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="121.7" cy="117.3" r="11.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.3" cy="112.4" r="10.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="110.8" cy="107.5" r="9.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="105.4" cy="102.6" r="9.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="100.0" cy="97.6" r="8.6" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M86.6,97.5 L94.6,85.5 L102.6,97.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="152" lengthAdjust="spacingAndGlyphs">AI ENGINEER ROADMAP</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">le</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">PRODUCTION AI ENGINEER</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">09 — LLM</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Observability</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <hr>
+<h2 id="1-executive-summary-core-concepts"><a class="anchor" href="#1-executive-summary-core-concepts">#</a> 1. Executive Summary &amp; Core Concepts</h2>
+<p>An LLM call is <strong>fundamentally different</strong> from a traditional HTTP call in ways that break generic observability:</p>
+<ol>
+<li><strong>The input matters.</strong> A <code>POST /users</code> payload rarely tells you why the response was bad. A prompt <em>is</em> the code and the data, and you must retain it (with PII redaction) to diagnose anything.</li>
+<li><strong>The output is unstructured.</strong> No status code says &quot;the answer was wrong.&quot; Success is a semantic judgment.</li>
+<li><strong>Non-determinism is default.</strong> Same prompt → different response. You can&#39;t reproduce a bug from logs alone unless you seed and freeze.</li>
+<li><strong>Cost is per-token.</strong> A pathological input can cost 100× a normal one. Metrics need $ dimensions.</li>
+<li><strong>Latency has fat tails.</strong> Streaming makes &quot;first token latency&quot; and &quot;total generation time&quot; distinct SLIs.</li>
+<li><strong>Composition is deep.</strong> One user request → 5 LLM calls (planner, tool-caller, retriever&#39;s rerank, generator, judge). Traces span services and models.</li>
+</ol>
+<p><strong>LLM observability = tracing + evaluation + cost + quality signals</strong>, unified around the trace as the primary object.</p>
+<p><strong>Core objects:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>Description</th>
+<th>Retention</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Trace</strong></td>
+<td>One user request end-to-end</td>
+<td>Days–weeks; sampled</td>
+</tr>
+<tr>
+<td><strong>Span</strong></td>
+<td>One LLM call or tool call within a trace</td>
+<td>Same as trace</td>
+</tr>
+<tr>
+<td><strong>Dataset</strong></td>
+<td>Curated traces used for eval or fine-tuning</td>
+<td>Forever, versioned</td>
+</tr>
+<tr>
+<td><strong>Score</strong></td>
+<td>Numeric/categorical label on a trace/span (from LLM-judge, user feedback, human review)</td>
+<td>Forever</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>Multi-turn conversation grouping</td>
+<td>Weeks</td>
+</tr>
+</tbody></table>
+<p><strong>The tools:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Type</th>
+<th>Strengths</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>LangSmith</strong></td>
+<td>Managed (LangChain Inc.)</td>
+<td>Deep LangChain integration, dataset management, eval runners</td>
+</tr>
+<tr>
+<td><strong>LangFuse</strong></td>
+<td>Open-source, self-hostable</td>
+<td>Vendor-neutral, cheap, prompt versioning</td>
+</tr>
+<tr>
+<td><strong>Arize Phoenix</strong></td>
+<td>Open-source</td>
+<td>Great UX, embedding drift viz, OTel-native</td>
+</tr>
+<tr>
+<td><strong>Weights &amp; Biases Weave</strong></td>
+<td>Managed</td>
+<td>Ties to W&amp;B ecosystem for experiments</td>
+</tr>
+<tr>
+<td><strong>Braintrust</strong></td>
+<td>Managed</td>
+<td>Strong on eval iteration workflow</td>
+</tr>
+<tr>
+<td><strong>Datadog LLM Observability</strong></td>
+<td>Managed enterprise</td>
+<td>Integrated with existing Datadog fleet</td>
+</tr>
+<tr>
+<td><strong>Home-grown (OTel + Postgres)</strong></td>
+<td>DIY</td>
+<td>Full control, aligned with your existing stack</td>
+</tr>
+</tbody></table>
+<p>The pattern is convergent: they all record traces, attach scores, expose dashboards. <strong>Pick one, instrument once with OTel semantic conventions</strong> (<code>gen_ai.*</code>), avoid lock-in.</p>
+<p><strong>Signals to capture per LLM call:</strong></p>
+<ul>
+<li><strong>Inputs</strong>: system prompt, user messages, model, temperature, max_tokens, tools available, retrieved context</li>
+<li><strong>Output</strong>: raw response, parsed structured output, tool calls returned, finish_reason</li>
+<li><strong>Usage</strong>: input_tokens, output_tokens, cached_tokens (prompt cache hits), reasoning_tokens</li>
+<li><strong>Timing</strong>: request start, first token, last token, total duration</li>
+<li><strong>Metadata</strong>: request_id, user_id (hashed), session_id, environment, git SHA, prompt version</li>
+<li><strong>Cost</strong>: computed from usage × price table</li>
+<li><strong>Quality signals</strong>: user thumbs, LLM-judge score, guardrail results</li>
+</ul>
+<p>The user-facing win: when someone reports &quot;the bot said something weird,&quot; you can pull the exact trace, see the retrieved context, the tool calls, the prompt version — and immediately reproduce or file it as an eval case.</p>
+<hr>
+<h2 id="2-deep-dive-breakdown"><a class="anchor" href="#2-deep-dive-breakdown">#</a> 2. Deep-Dive Breakdown</h2>
+<h3 id="21-tracing-an-llm-call"><a class="anchor" href="#21-tracing-an-llm-call">#</a> 2.1 Tracing an LLM Call</h3>
+<p>The minimum viable trace with LangFuse:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from langfuse import Langfuse, observe
+from langfuse.openai import openai  # drop-in replacement
+
+lf = Langfuse()
+
+@observe()  # creates trace
+def answer_question(user_id: str, question: str) -&gt; str:
+    # Retrieval as a span
+    context = retrieve(question)
+    # LLM call auto-instrumented via the openai wrapper
+    resp = openai.chat.completions.create(
+        model=&quot;claude-sonnet-5&quot;,
+        messages=[
+            {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: SYSTEM_PROMPT},
+            {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: f&quot;Context:\n{context}\n\nQ: {question}&quot;},
+        ],
+        temperature=0.2,
+    )
+    answer = resp.choices[0].message.content
+    lf.update_current_trace(user_id=user_id, tags=[&quot;prod&quot;, &quot;v3.2.1&quot;])
+    return answer
+
+@observe()
+def retrieve(question: str) -&gt; str:
+    # ... vector DB call ...
+    return &quot;...&quot;</code></pre>
+      </div>
+    <p>LangFuse (or Phoenix, or LangSmith) captures the nested spans automatically, records tokens/cost/latency, and shows a waterfall UI you can click through per trace.</p>
+<p><strong>With OTel semantic conventions</strong> (portable, backend-agnostic):</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from opentelemetry import trace
+
+tracer = trace.get_tracer(&quot;my-ai-service&quot;)
+
+def answer(question: str) -&gt; str:
+    with tracer.start_as_current_span(&quot;llm.chat&quot;) as span:
+        span.set_attributes({
+            &quot;gen_ai.system&quot;: &quot;anthropic&quot;,
+            &quot;gen_ai.request.model&quot;: &quot;claude-sonnet-5&quot;,
+            &quot;gen_ai.request.temperature&quot;: 0.2,
+            &quot;gen_ai.request.max_tokens&quot;: 1024,
+            &quot;user.id_hash&quot;: hash_user(user_id),
+        })
+        resp = client.messages.create(...)
+        span.set_attributes({
+            &quot;gen_ai.usage.input_tokens&quot;: resp.usage.input_tokens,
+            &quot;gen_ai.usage.output_tokens&quot;: resp.usage.output_tokens,
+            &quot;gen_ai.usage.cache_read_input_tokens&quot;: resp.usage.cache_read_input_tokens,
+            &quot;gen_ai.response.finish_reasons&quot;: [resp.stop_reason],
+            # PII-safe: hash or truncate input; skip in some tenants
+            &quot;gen_ai.request.messages_hash&quot;: sha256(str(messages)),
+        })
+        return resp.content[0].text</code></pre>
+      </div>
+    <h3 id="22-prompt-versioning"><a class="anchor" href="#22-prompt-versioning">#</a> 2.2 Prompt Versioning</h3>
+<p>A subtle production trap: <strong>you change the prompt, quality drops, and you have no idea when or which change was the culprit</strong>. Every LLM observability tool now offers <strong>prompt management</strong> — versioned strings with a stable ID.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Fetch prompt from LangFuse; if service is down, fall back to bundled default
+prompt_template = lf.get_prompt(&quot;customer-support-classifier&quot;, version=&quot;production&quot;)
+# `production` is an alias like MLflow&#39;s; you promote versions via UI or API
+messages = prompt_template.compile(user_question=q, context=ctx)
+# The prompt version ID gets attached to the trace automatically</code></pre>
+      </div>
+    <p>Benefits:</p>
+<ul>
+<li>Every trace links to the exact prompt version that produced it</li>
+<li>Roll back a bad prompt without redeploying</li>
+<li>A/B test prompts by version-tagged cohort</li>
+<li>Compare eval scores across versions in one dashboard</li>
+</ul>
+<p>Discipline: <strong>prompts are code.</strong> They live in a repo. The LangFuse/LangSmith UI is a <em>deploy convenience,</em> not the source of truth — sync prompt changes back to git via PR.</p>
+<h3 id="23-real-time-user-feedback-loop"><a class="anchor" href="#23-real-time-user-feedback-loop">#</a> 2.3 Real-Time User Feedback Loop</h3>
+<p>Attach user signals (thumbs up/down, edits, copy-events) to the trace by ID:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Return trace_id to the frontend
+@app.post(&quot;/chat&quot;)
+async def chat(req: ChatRequest) -&gt; ChatResponse:
+    with tracer.start_as_current_span(&quot;chat&quot;) as span:
+        trace_id = span.get_span_context().trace_id
+        answer = await answer_question(req.user_id, req.question)
+        return ChatResponse(answer=answer, trace_id=format(trace_id, &quot;032x&quot;))
+
+# Frontend calls this when user clicks 👍/👎
+@app.post(&quot;/feedback&quot;)
+async def feedback(req: FeedbackRequest):
+    lf.score(trace_id=req.trace_id, name=&quot;user_thumbs&quot;, value=req.value)</code></pre>
+      </div>
+    <p>Now your dashboard can filter to <code>user_thumbs = -1</code> traces, cluster them, and generate new eval cases from real failures.</p>
+<h3 id="24-sampling-cost-control-traces-are-expensive"><a class="anchor" href="#24-sampling-cost-control-traces-are-expensive">#</a> 2.4 Sampling &amp; Cost Control (Traces Are Expensive)</h3>
+<p>Full-fidelity tracing of every prompt at scale is costly (storage and observability-tool billing). Strategies:</p>
+<ul>
+<li><strong>Head sampling</strong> — decide at trace start whether to keep (e.g., 10%). Cheap but blind to rare failures.</li>
+<li><strong>Tail sampling</strong> — decide after seeing the outcome. Keep 100% of errors, 100% of slow requests, 5% baseline. Requires an OTel Collector with the <code>tail_sampling</code> processor.</li>
+<li><strong>Always sample</strong>: errors, refusals, guardrail blocks, low LLM-judge scores, cost outliers, user thumbs-down.</li>
+<li><strong>Compress</strong>: hash prompt/context if you can&#39;t retain full text; keep the full trace only for a sampled subset.</li>
+</ul>
+<p>For LLM apps specifically, the trace <em>is</em> the debugging tool — err on the side of full retention for a shorter window (7–30 days), then drop or aggregate.</p>
+<h3 id="25-dashboards-alerts-specific-to-llms"><a class="anchor" href="#25-dashboards-alerts-specific-to-llms">#</a> 2.5 Dashboards &amp; Alerts Specific to LLMs</h3>
+<p>Beyond RED/USE, an LLM-observability dashboard should show:</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>Panels</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cost</td>
+<td>$/hour, $/user, $/route, cost by model</td>
+</tr>
+<tr>
+<td>Volume</td>
+<td>RPM by route, tokens/sec by model, cache hit rate</td>
+</tr>
+<tr>
+<td>Latency</td>
+<td>p50/p95/p99 TTFT (time-to-first-token), full generation, per model</td>
+</tr>
+<tr>
+<td>Quality</td>
+<td>LLM-judge score trend, refusal rate, guardrail block rate, thumbs ratio</td>
+</tr>
+<tr>
+<td>Safety</td>
+<td>PII detection hits, jailbreak attempts, blocked outputs</td>
+</tr>
+<tr>
+<td>Errors</td>
+<td>API error rate by model/provider, retry rate, fallback rate</td>
+</tr>
+</tbody></table>
+<p>Alerts worth setting:</p>
+<ul>
+<li><strong>Cost spike:</strong> <code>rate(llm_cost_usd_total[15m]) &gt; 3 × baseline</code> → page</li>
+<li><strong>Model provider outage:</strong> <code>rate(llm_errors_total{provider=&quot;anthropic&quot;,code=&quot;5xx&quot;}[5m])</code> → alert + auto-fail-over</li>
+<li><strong>Quality drop:</strong> rolling LLM-judge score falls &gt; 5 points → alert</li>
+<li><strong>Refusal spike:</strong> refusal rate 2× baseline → alert (could be prompt regression or attack)</li>
+<li><strong>Latency SLO burn</strong> on TTFT (streaming users feel first-token latency, not full latency)</li>
+</ul>
+<p><code>[IMG-09-01]</code> — <em>Prompt: A four-quadrant LLM observability dashboard mockup. Top-left: a trace waterfall showing parent span &quot;chat_request&quot; with nested spans &quot;retrieve_context&quot; (200ms), &quot;rerank&quot; (150ms), &quot;llm_generate&quot; (1.8s, highlighted). Top-right: a cost-per-hour line chart with a spike labeled &quot;New feature launch — investigate&quot;. Bottom-left: a heatmap of user thumbs-down clustered by intent category. Bottom-right: prompt version A/B comparison bar chart with LLM-judge scores. Modern dark UI, Grafana-like.</em></p>
+<hr>
+<h2 id="3-mental-models-analogies"><a class="anchor" href="#3-mental-models-analogies">#</a> 3. Mental Models &amp; Analogies</h2>
+<h3 id="model-1-the-airline-black-box"><a class="anchor" href="#model-1-the-airline-black-box">#</a> Model 1: The Airline Black Box</h3>
+<p>Every commercial aircraft has a Flight Data Recorder (metrics-like: continuous parameters) and a Cockpit Voice Recorder (log-like: raw signals) that together let investigators reconstruct any incident post hoc. Crucially, the recorders capture what&#39;s needed <em>before</em> an incident happens — you don&#39;t know which flight will crash, so you record all of them.</p>
+<p>LLM tracing is the black box for your AI service. When a user reports &quot;the bot gave me wrong medication info,&quot; you cannot say &quot;we didn&#39;t save that request.&quot; Every prompt-response pair with its retrieval context, tool calls, and versioned prompt IS your black box. Without it you cannot fix, cannot regulate, cannot improve. The rest of the module is <em>how</em> to record without going bankrupt (sampling), <em>what</em> to redact (PII), and <em>how</em> to search back to a single trace at 3 AM.</p>
+<h3 id="model-2-the-restaurant-kitchen-ticket"><a class="anchor" href="#model-2-the-restaurant-kitchen-ticket">#</a> Model 2: The Restaurant Kitchen Ticket</h3>
+<p>In a busy kitchen, every order flows through a chit — the ticket printed at the pass. It records what was ordered, when, by which server, which stations touched it, and any special instructions. Expo staff can pick up any ticket and reconstruct why a table waited 40 minutes. At end-of-service, tickets are sorted into &quot;well-run,&quot; &quot;80s&quot; (issues), and comps — data that improves next service.</p>
+<p>Your LLM trace is that ticket. Each span (retrieval, rerank, generate, judge) is a station stamp. The trace&#39;s <code>finish_reason</code> is &quot;delivered&quot; or &quot;sent back.&quot; Thumbs-down is a comp. Sampling those into a dataset for the next model iteration is the head chef&#39;s Monday morning debrief — the mechanism by which service actually improves. A restaurant without tickets runs on the memory of the person who happened to be there; an LLM service without traces is the same.</p>
+<hr>
+<h2 id="4-common-pitfalls-misconceptions"><a class="anchor" href="#4-common-pitfalls-misconceptions">#</a> 4. Common Pitfalls &amp; Misconceptions</h2>
+<p><strong>Pitfall #1 — Retaining raw prompts with PII forever.</strong>
+LLM traces contain user text. Emails, SSNs, medical questions, credit cards — anything users type. Storing this untreated in a third-party SaaS violates GDPR, HIPAA, likely your own privacy policy, and creates a breach surface. <strong>Fixes:</strong> (1) redact PII pre-storage (regex + entity-recognition pass, see Module 6); (2) hash-only sensitive fields; (3) short retention (7–30 days for raw text; longer for redacted/aggregated); (4) region-pinned storage (EU data in EU tenant); (5) for regulated workloads, self-host LangFuse/Phoenix on your VPC; (6) offer per-user opt-out of trace storage. Not planning this is the #1 way LLM observability becomes a liability.</p>
+<p><strong>Pitfall #2 — Logging structured outputs as strings.</strong>
+Your model returns JSON. You log the string <code>&#39;{&quot;intent&quot;: &quot;cancel&quot;}&#39;</code>. Later you want to filter traces by <code>intent = &quot;cancel&quot;</code>, but you&#39;re doing regex on strings across 10 million rows. <strong>Fix:</strong> parse the output into a Python object at the boundary, attach as structured span attributes (<code>output.intent = &quot;cancel&quot;</code>) <em>and</em> keep the raw string for full fidelity. Same for tool calls: log both the tool name/args as structured attributes AND the raw model output. Now you can dashboard by intent, tool name, or error class trivially.</p>
+<p><strong>Pitfall #3 — Cost visibility only at end-of-month.</strong>
+Your finance team gets a $47,000 Anthropic bill. You have no idea which endpoint, model, or customer drove it. This has happened to real teams multiple times. <strong>Fix:</strong> compute cost per span using a price table at ingestion time, attach as an attribute, and roll up in real time — $/route, $/user, $/model, $/prompt-version. Alert on 15-minute cost-rate spikes. Cap per-user spend with a rate-limiter (see Module 10). The rule: <strong>you should be able to see today&#39;s spend before lunch, not next month.</strong> LangFuse, Phoenix, LangSmith, Braintrust, Datadog LLM all provide cost views out of the box; use them.</p>
+<hr>
+<h2 id="5-self-assessment-bank"><a class="anchor" href="#5-self-assessment-bank">#</a> 5. Self-Assessment Bank</h2>
+<p><strong>Q1 (MC):</strong> A trace in LLM observability represents:
+A) A single LLM API call
+B) One user request end-to-end, potentially spanning multiple LLM/tool calls
+C) A log line
+D) A Prometheus metric</p>
+<p><strong>Q2 (short):</strong> Explain the difference between TTFT (time-to-first-token) and total generation latency. Why does TTFT matter for streaming UIs?</p>
+<p><strong>Q3 (MC):</strong> Your finance team asks why last month&#39;s LLM bill jumped 4×. Your observability stack is only recording aggregate token counts by day. What did you fail to instrument?
+A) Nothing — that&#39;s enough
+B) Per-request, per-user, per-endpoint, per-model cost dimensions
+C) GPU utilization
+D) Prompt versions</p>
+<p><strong>Q4 (MC):</strong> Which of the following is the correct approach to storing prompts with user PII in a hosted LLM-observability tool?
+A) Store as-is; it&#39;s your data
+B) Redact PII (regex + NER) before storage, hash sensitive fields, set short retention, and pin storage region
+C) Never store prompts
+D) Encrypt at rest and forget it</p>
+<p><strong>Q5 (short):</strong> Describe tail sampling and give three signals that should force a trace to be kept.</p>
+<p><strong>Q6 (MC):</strong> Prompt versioning in LLM observability tools lets you:
+A) Roll back a bad prompt without a code deploy
+B) Attach the prompt version ID to every trace it produced
+C) A/B test prompt variants by cohort
+D) All of the above</p>
+<p><strong>Q7 (short):</strong> You have LangFuse, LangSmith, Phoenix, and Datadog LLM Observability shortlisted. Name one differentiator each.</p>
+<p><strong>Q8 (MC):</strong> OpenTelemetry semantic conventions for GenAI use the <code>gen_ai.*</code> namespace. Which of these is a valid attribute?
+A) <code>gen_ai.request.model</code>
+B) <code>openai.model</code>
+C) <code>llm.completion</code>
+D) <code>ai.gen.model</code></p>
+<p><strong>Q9 (short):</strong> You get a bug report: &quot;Yesterday at 3 PM the bot answered incorrectly.&quot; How does end-to-end tracing let you diagnose this in minutes rather than hours?</p>
+<p><strong>Q10 (MC):</strong> Which of the following is NOT a signal you should attach as a score on a trace?
+A) User thumbs up/down
+B) LLM-judge faithfulness score
+C) Guardrail pass/fail
+D) The user&#39;s IP address</p>
+<hr>
+<h3 id="answer-key"><a class="anchor" href="#answer-key">#</a> Answer Key</h3>
+<p><strong>A1: B.</strong> A trace is the whole request-scoped tree; individual LLM calls are spans within it. Distributed-tracing terminology carries over from generic APM: trace = root, spans = nodes. One user chat message may contain a planner call, several tool calls, a retriever call, and a generator call — all under one trace ID.</p>
+<p><strong>A2:</strong> <strong>TTFT</strong> = wall time from request start to the first token appearing in the response stream. <strong>Total generation latency</strong> = TTFT + time to produce all remaining tokens. For streaming UIs, TTFT is what the user <em>feels</em> as &quot;the bot is responding&quot; — a fast TTFT of 400ms feels snappy even if full generation takes 6 seconds. A slow TTFT (say 3s) with the same total feels broken. So streaming applications should SLO both: TTFT p95 &lt; 1s <em>and</em> total p95 &lt; 8s, say. Non-streaming services only need total latency.</p>
+<p><strong>A3: B.</strong> Aggregate tokens/day hides everything. You need cost attributed at request granularity so you can group by user (who&#39;s driving spend), route (which feature), model (are we over-using the expensive one), and prompt version (did a bad prompt double token usage). Instrument at the trace/span level with a price-table multiplication; visualize by all four dimensions.</p>
+<p><strong>A4: B.</strong> The pragmatic answer: (1) run a redaction pass (SSNs, emails, cards, names via NER) before writing to storage; (2) hash irreversibly what you can&#39;t fully clean; (3) 7–30 day retention on raw text, longer on redacted; (4) region-pinned tenant for cross-border compliance; (5) self-host for regulated data. (A) is a lawsuit; (C) makes debugging impossible; (D) doesn&#39;t help — you can still leak to authorized staff, subpoenas, or in a breach.</p>
+<p><strong>A5:</strong> <strong>Tail sampling</strong> decides whether to keep a trace <em>after</em> the request completes, based on outcome — as opposed to head sampling, which decides at start. This lets you retain interesting traces without the cost of retaining everything. Three signals that should force keeping: (1) error / non-2xx / model API failure; (2) latency &gt; SLO threshold; (3) user thumbs-down or LLM-judge score below floor. Also strong candidates: guardrail hit, refusal, cost above per-request cap, novel intent, new prompt version&#39;s first hour of traffic (over-sample new versions).</p>
+<p><strong>A6: D — all of the above.</strong> Prompt versioning gives you (1) rollback without redeploy, since the prompt is fetched at runtime; (2) automatic version→trace linkage for regression debugging; (3) cohort-based A/B testing (route 10% of users to v3.1, 90% to v3.0, compare scores). The catch is you must still sync prompt changes back into your git repo — the SaaS UI is a <em>deploy pane</em>, not the source of truth.</p>
+<p><strong>A7:</strong></p>
+<ul>
+<li><strong>LangSmith</strong> — deep first-party LangChain/LangGraph integration; probably the best dataset+eval iteration UX if you&#39;re on LangChain.</li>
+<li><strong>LangFuse</strong> — open-source, self-hostable; strong prompt management; vendor-agnostic (works with any LLM SDK); cheapest for high volume.</li>
+<li><strong>Arize Phoenix</strong> — open-source, OTel-native; excellent embedding drift visualization; strong for research/prototyping.</li>
+<li><strong>Datadog LLM Observability</strong> — integrated with your existing Datadog fleet metrics/logs/APM; enterprise-friendly if Datadog is already your platform. (Others valid: Braintrust — eval iteration; Weave — W&amp;B ecosystem.)</li>
+</ul>
+<p><strong>A8: A.</strong> <code>gen_ai.request.model</code> is the OTel-conventional attribute. The <code>gen_ai.*</code> namespace covers <code>gen_ai.system</code>, <code>gen_ai.request.model</code>, <code>gen_ai.request.temperature</code>, <code>gen_ai.usage.input_tokens</code>, <code>gen_ai.usage.output_tokens</code>, <code>gen_ai.response.finish_reasons</code>, and others. The convention is drafted by the OTel community and adopted by Anthropic, OpenAI SDK auto-instrumentation, LangSmith, LangFuse, Datadog — using it means dashboards and alerts port across backends.</p>
+<p><strong>A9:</strong> With tracing: pull user&#39;s request from that time window by user_id or session_id → open the trace → see the retrieved context (was it wrong or missing?), the tool calls made (did the extraction fail?), the exact prompt version used (was it the one we rolled back Tuesday?), the raw model response (did it hallucinate or was it intercepted?), the LLM-judge score if attached, and any guardrail results. Total time: 2–5 minutes to root cause. Without tracing: you have only aggregate logs, cannot reproduce the response (non-determinism), don&#39;t know which prompt/model version was active, and rely on the user to remember exactly what they typed. Hours to give up.</p>
+<p><strong>A10: D.</strong> IP address is PII (in many jurisdictions), high-cardinality, and not a quality/behavior signal about the LLM interaction. Scores attach evaluative labels — thumbs, judge, guardrail, human review verdict. IP belongs in access logs (short retention, restricted access), not in trace scores. (A, B, C) are all standard score inputs used to filter for eval-case candidates and to trend quality over time.</p>
+<hr>
+<p><strong>Related modules:</strong></p>
+<ul>
+<li><code>learning/06-logging.md</code> — the base logging layer traces sit on</li>
+<li><code>learning/07-monitoring.md</code> — the metrics layer alongside traces</li>
+<li><code>learning/08-model-evaluation.md</code> — scores from evals attach to traces</li>
+<li><code>learning/14-cost-optimization.md</code> — LLM cost is a first-class LLM-obs metric</li>
+<li><code>../agents-production/12-agent-evaluation.md</code> — agent trace shapes and evaluation</li>
+</ul>
+<p><strong>Practice prompts:</strong></p>
+<ol>
+<li>Sign up for LangFuse Cloud (or self-host). Wire it into your last build. Send 20 requests. Explore the traces UI.</li>
+<li>Add prompt versioning: extract your system prompt to LangFuse. Change it there without redeploy. Confirm the traces show the new version.</li>
+<li>Add a <code>/feedback</code> endpoint that accepts <code>(trace_id, thumbs)</code> and posts a score to LangFuse. Build a dashboard filtered to thumbs-down traces.</li>
+<li>Write a Python script that pulls traces with <code>user_thumbs = -1</code> from the last week and outputs a JSONL eval-set candidate file.</li>
+</ol>
+<p><strong>References:</strong></p>
+<ul>
+<li>OpenTelemetry GenAI Semantic Conventions — <a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">https://opentelemetry.io/docs/specs/semconv/gen-ai/</a></li>
+<li>LangFuse docs — <a href="https://langfuse.com/docs">https://langfuse.com/docs</a></li>
+<li>Arize Phoenix — <a href="https://docs.arize.com/phoenix">https://docs.arize.com/phoenix</a></li>
+<li>LangSmith docs — <a href="https://docs.langchain.com/langsmith">https://docs.langchain.com/langsmith</a></li>
+<li>Chip Huyen, &quot;AI Engineering&quot; (2024) — chapter on observability</li>
+<li>Hamel Husain, &quot;Fuck You, Show Me the Prompt&quot; — practical guide to inspecting LangChain internals</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./learning-08-model-evaluation.html"><span>← Previous</span><b>learning 08 model evaluation</b></a>
+      <a class="next" href="./learning-10-rate-limiting.html"><span>Next →</span><b>learning 10 rate limiting</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#0d7c66", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#0d7c66", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

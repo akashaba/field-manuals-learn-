@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 23: Distributed Email Service — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/23.%20Distributed%20Email%20Service/README.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-understand-the-problem-and-establish-design-scope">Step 1: Understand the Problem and Establish Design Scope</a></li><li><a href="#step-2-propose-high-level-design-and-get-buy-in">Step 2: Propose High-Level Design and Get Buy-In</a></li><li><a href="#step-3-design-deep-dive">Step 3: Design Deep Dive</a></li><li><a href="#step-4-wrap-up">Step 4: Wrap Up</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 23: Distributed Email Service</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 23">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="24.3" cy="128.8" r="12.7" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="18.9" cy="123.9" r="12.0" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="123.4" cy="118.9" r="11.4" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8b3a2a" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8b3a2a" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8b3a2a" letter-spacing="-2">23</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 23:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Distributed Email…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>We&#39;ll design a <strong>distributed email service</strong>, similar to <strong>Gmail</strong> in this chapter.</p>
+<p>In 2020, <strong>Gmail</strong> had 1.8bil active users, while <strong>Outlook</strong> had 400mil users worldwide.</p>
+<hr>
+<h2 id="step-1-understand-the-problem-and-establish-design-scope"><a class="anchor" href="#step-1-understand-the-problem-and-establish-design-scope">#</a> Step 1: Understand the Problem and Establish Design Scope</h2>
+<ul>
+<li>C: How many users use the system?</li>
+<li>I: 1bil users</li>
+<li>C: I think following features are important - auth, send/receive email, fetch email, filter emails, search email, anti-spam protection.</li>
+<li>I: Good list. Don&#39;t worry about auth for now.</li>
+<li>C: How do users connect \w email servers?</li>
+<li>I: Typically, email clients connect via SMTP, POP, IMAP, but we&#39;ll use HTTP for this problem.</li>
+<li>C: Can emails have attachments?</li>
+<li>I: Yes</li>
+</ul>
+<h3 id="non-functional-requirements"><a class="anchor" href="#non-functional-requirements">#</a> <strong>Non-functional requirements</strong></h3>
+<ul>
+<li><strong>Reliability</strong> - we shouldn&#39;t lose data</li>
+<li><strong>Availability</strong> - We should use replication to prevent single points of failure. We should also tolerate partial system failures.</li>
+<li><strong>Scalability</strong> - As userbase grows, our system should be able to handle them.</li>
+<li><strong>Flexibility and extensibility</strong> - system should be flexible and easy to extend with new features. One of the reasons we chose HTTP over SMTP/other mail protocols.</li>
+</ul>
+<h3 id="back-of-the-envelope-estimation"><a class="anchor" href="#back-of-the-envelope-estimation">#</a> <strong>Back-of-the-envelope estimation</strong></h3>
+<ul>
+<li><strong>1bil users</strong></li>
+<li>Assuming one person sends 10 emails per day -&gt; <strong>100k emails per second</strong>.</li>
+<li>Assuming one person receives 40 emails per day and each email on average has 50kb metadata -&gt; <strong>730pb storage per year</strong>.</li>
+<li>Assuming 20% of emails have storage attachments and average size is 500kb -&gt; <strong>1,460pb per year</strong>.</li>
+</ul>
+<hr>
+<h2 id="step-2-propose-high-level-design-and-get-buy-in"><a class="anchor" href="#step-2-propose-high-level-design-and-get-buy-in">#</a> Step 2: Propose High-Level Design and Get Buy-In</h2>
+<h3 id="email-knowledge-101"><a class="anchor" href="#email-knowledge-101">#</a> <strong>Email knowledge 101</strong></h3>
+<p>There are various protocols used for sending and receiving emails:</p>
+<ul>
+<li><strong>SMTP</strong> - standard protocol for sending emails from one server to another.</li>
+<li><strong>POP</strong> - standard protocol for receiving and downloading emails from a remote mail server to a local client. Once retrieved, emails are deleted from remote server.</li>
+<li><strong>IMAP</strong> - similar to POP, it is used for receiving and downloading emails from a remote server, but it keeps the emails on the server-side.</li>
+<li><strong>HTTPS</strong> - not technically an email protocol, but it can be used for web-based email clients.</li>
+</ul>
+<p>Apart from the mailing protocol, there are some DNS records we need to configure for our email server - the MX records:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/dns-lookup.png" alt="dns-lookup" width="500" />
+</div>
+
+<p>Email attachments are sent base64-encoded and there is usually a size limit of 25mb on most mail services.
+This is configurable and varies from individual to corporate accounts.</p>
+<h3 id="traditional-mail-servers"><a class="anchor" href="#traditional-mail-servers">#</a> <strong>Traditional mail servers</strong></h3>
+<p>Traditional mail servers work well when there are a limited number of users, connected to a single server.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/traditional-mail-server.png" alt="traditional-mail-server" width="500" />
+</div>
+
+<ul>
+<li>Alice logs into her Outlook email and presses &quot;send&quot;. Email is sent to Outlook mail server. Communication is via SMTP.</li>
+<li>Outlook server queries DNS to find MX record for gmail.com and transfers the email to their servers. Communication is via SMTP.</li>
+<li>Bob fetches emails from his gmail server via IMAP/POP.</li>
+</ul>
+<p>In traditional mail servers, emails were stored on the local file system. Every email was a separate file.</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/local-dir-storage.png" alt="local-dir-storage" width="500" />
+</div>
+
+<p>As the scale grew, disk I/O became a bottleneck. Also, it doesn&#39;t satisfy our high availability and reliability requirements.
+Disks can be damaged and server can go down.</p>
+<h3 id="distributed-mail-servers"><a class="anchor" href="#distributed-mail-servers">#</a> <strong>Distributed mail servers</strong></h3>
+<p>Distributed mail servers are designed to support modern use-cases and solve modern scalability issues.</p>
+<p>These servers can still support IMAP/POP for native email clients and SMTP for mail exchange across servers.</p>
+<p>But for rich web-based mail clients, a RESTful API over HTTP is typically used.</p>
+<p>Example APIs:</p>
+<ul>
+<li><code>POST /v1/messages</code> - sends a message to recipients in To, Cc, Bcc headers.</li>
+<li><code>GET /v1/folders</code> - returns all folders of an email account</li>
+</ul>
+<p>Example response:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">[{id: string        Unique folder identifier.
+  name: string      Name of the folder.
+                    According to RFC6154 [9], the default folders can be one of
+                    the following: All, Archive, Drafts, Flagged, Junk, Sent,
+                    and Trash.
+  user_id: string   Reference to the account owner
+}]</code></pre>
+      </div>
+    <ul>
+<li><code>GET /v1/folders/{:folder_id}/messages</code> - returns all messages under a folder \w pagination</li>
+<li><code>GET /v1/messages/{:message_id}</code> - get all information about a particular message</li>
+</ul>
+<p>Example response:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">{
+  user_id: string                      // Reference to the account owner.
+  from: {name: string, email: string}  // &lt;name, email&gt; pair of the sender.
+  to: [{name: string, email: string}]  // A list of &lt;name, email&gt; paris
+  subject: string                      // Subject of an email
+  body: string                         //  Message body
+  is_read: boolean                     //  Indicate if a message is read or not.
+}</code></pre>
+      </div>
+    <p>Here&#39;s the high-level design of the distributed mail server:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/high-level-architecture.png" alt="high-level-architecture" width="500" />
+</div>
+
+<ul>
+<li><strong>Webmail</strong> - users use web browsers to send/receive emails</li>
+<li><strong>Web servers</strong> - public-facing request/response services used to manage login, signup, user profile, etc.</li>
+<li><strong>Real-time servers</strong> - Used for pushing new email updates to clients in real-time. We use websockets for real-time communication but fallback to long-polling for older browsers that don&#39;t support them.</li>
+<li><strong>Metadata db</strong> - stores email metadata such as subject, body, from, to, etc.</li>
+<li><strong>Attachment store</strong> - Object store (eg Amazon S3), suitable for storing large files.</li>
+<li><strong>Distributed cache</strong> - We can cache recent emails in Redis to improve UX.</li>
+<li><strong>Search store</strong> - distributed document store, used for supporting full-text searches.</li>
+</ul>
+<p>Here&#39;s what the email sending flow looks like:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/email-sending-flow.png" alt="email-sending-flow" width="500" />
+</div>
+
+<ul>
+<li>User writes an email and presses &quot;send&quot;. Email is sent to load balancer.</li>
+<li>Load balancer rate limits excessive mail sends and routes to one of the web servers.</li>
+<li>Web servers do basic email validation (eg email size) and short-circuits outbound flow if domain is same as sender. But does spam check first.</li>
+<li>If basic validation passes, email is sent to message queue (attachment is referenced from object store)</li>
+<li>If basic validation fails, email is sent to error queue</li>
+<li>SMTP outgoing workers pull messages from outgoing queue, do spam/virus checks and route to destination mail server.</li>
+<li>Email is stored in the &quot;Sent Emails&quot; folder</li>
+</ul>
+<p>We need to also monitor size of outgoing message queue. Growing too large might indicate a problem:</p>
+<ul>
+<li>Recipient&#39;s mail server is unavailable. We can retry sending the email at a later time using exponential backoff.</li>
+<li>Not enough consumers to handle the load, we might have to scale the consumers.</li>
+</ul>
+<p>Here&#39;s the email receiving flow:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/email-receiving-flkow.png" alt="email-receiving-flow" width="500" />
+</div>
+
+<ul>
+<li>Incoming emails arrive at the SMTP load balancer. Mails are distributed to SMTP servers, where mail acceptance policy is done (eg invalid emails are directly discarded).</li>
+<li>If attachment of email is too large, we can put it in object store (s3).</li>
+<li>Mail processing workers do preliminary checks, after which mails are forwarded to storage, cache, object store and real-time servers.</li>
+<li>Offline users get their new emails once they come back online via HTTP API.</li>
+</ul>
+<hr>
+<h2 id="step-3-design-deep-dive"><a class="anchor" href="#step-3-design-deep-dive">#</a> Step 3: Design Deep Dive</h2>
+<p>Let&#39;s now go deeper into some of the components.</p>
+<h3 id="metadata-database"><a class="anchor" href="#metadata-database">#</a> <strong>Metadata database</strong></h3>
+<p>Here are some of the characteristics of email metadata:</p>
+<ul>
+<li>headers are usually small and frequently accessed</li>
+<li>Body size ranges from small to big, but is typically read once</li>
+<li>Most mail operations are isolated to a single user - eg fetching email, marking as read, searching.</li>
+<li>Data recency impacts data usage. Users typically read only recent emails</li>
+<li>Data has high-reliability requirements. Data loss is unacceptable.</li>
+</ul>
+<p>At gmail/outlook scale, the database is typically custom made to reduce input/output operations per second (IOPS).</p>
+<p>Let&#39;s consider what database options we have:</p>
+<ul>
+<li><strong>Relational database</strong> - we can build indexes for headers and body, but these DBs are typically optimized for small chunks of data.</li>
+<li><strong>Distributed object store</strong> - this can be a good option for backup storage, but can&#39;t efficiently support searching/marking as read/etc.</li>
+<li><strong>NoSQL</strong> - Google BigTable is used by gmail, but it&#39;s not open-sourced.</li>
+</ul>
+<p>Based on above analysis, very few existing solutions seems to fit our needs perfectly.
+In an interview setting, it&#39;s infeasible to design a new distributed database solution, but important to mention characteristics:</p>
+<ul>
+<li>Single column can be a single-digit MB</li>
+<li>Strong data consistency</li>
+<li>Designed to reduce disk I/O</li>
+<li>Highly available and fault tolerant</li>
+<li>Should be easy to create incremental backups</li>
+</ul>
+<p>In order to partition the data, we can use the <code>user_id</code> as a partition key, so that one user&#39;s data is stored on a single shard.
+This prohibits us from sharing an email with multiple users, but this is not a requirement for this interview.</p>
+<p>Let&#39;s define the tables:</p>
+<ul>
+<li>Primary key consists of partition key (data distribution) and clustering key (sorting data)</li>
+<li>Queries we need to support - get all folders for a user, display all emails for a folder, create/get/delete an email, fetch read/unread email, get conversation threads (bonus)</li>
+</ul>
+<p>Legend for tables to follow:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/legend.png" alt="legend" width="500" />
+</div>
+
+<p>Here is the folders table:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/folders-table.png" alt="folders-table" width="500" />
+</div>
+
+<p>emails table:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/emails-table.png" alt="emails-table" width="500" />
+</div>
+
+<ul>
+<li>email_id is timeuuid which allows sorting based on timestamp when email was created</li>
+</ul>
+<p>Attachments are stored in a separate table, identified by filename:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/attachments.png" alt="attachments" width="500" />
+</div>
+
+<p>Supporting fetchin read/unread emails is easy in a traditional relational database, but not in Cassandra, since filtering on non-partition/clustering key is prohibited.
+One workaround to fetch all emails in a folder and filter in-memory, but that doesn&#39;t work well for a big-enough application.</p>
+<p>What we can do is denormalize the emails table into read/unread emails tables:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/read-unread-emails.png" alt="read-unread-emails" width="500" />
+</div>
+
+<p>In order to support conversation threads, we can include some headers, which mail clients interpret and use to reconstruct a conversation thread:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">{
+  &quot;headers&quot; {
+     &quot;Message-Id&quot;: &quot;&lt;7BA04B2A-430C-4D12-8B57-862103C34501@gmail.com&gt;&quot;,
+     &quot;In-Reply-To&quot;: &quot;&lt;CAEWTXuPfN=LzECjDJtgY9Vu03kgFvJnJUSHTt6TW@gmail.com&gt;&quot;,
+     &quot;References&quot;: [&quot;&lt;7BA04B2A-430C-4D12-8B57-862103C34501@gmail.com&gt;&quot;]
+  }
+}</code></pre>
+      </div>
+    <p>Finally, we&#39;ll trade availability for consistency for our distributed database, since it is a hard requirement for this problem.</p>
+<p>Hence, in the event of a failover or network parititon, sync/update actions will be briefly unavailable to impacted users.</p>
+<h3 id="email-deliverability"><a class="anchor" href="#email-deliverability">#</a> <strong>Email deliverability</strong></h3>
+<p>It is easy to setup a server to send emails, but getting the email to a receiver&#39;s inbox is hard, due to spam-protection algorithms.</p>
+<p>If we just setup a new mail server and start sending mails through it, our emails will probably end up in the spam folder.</p>
+<p>Here&#39;s what we can do to prevent that:</p>
+<ul>
+<li><strong>Dedicated IPs</strong> - use dedicated IPs for sending emails, otherwise, recipient servers will not trust you.</li>
+<li><strong>Classify emails</strong> - avoid sending marketing emails from the same servers to prevent more important email to be classified as spam</li>
+<li><strong>Warm up your IP address</strong> slowly to build a good reputation with big email providers. It takes 2 to 6 weeks to warm up a new IP</li>
+<li><strong>Ban spammers</strong> quickly to not deteriorate your reputation</li>
+<li><strong>Feedback processing</strong> - setup a feedback loop with ISPs to keep track of complaint rate and ban spam accounts quickly.</li>
+<li><strong>Email authentication</strong> - use common techniques to combat phishing such as Sender Policy Framework, DomainKeys Identified Mail, etc.</li>
+</ul>
+<p>You don&#39;t need to remember all of this. Just know that building a good mail server requires a lot of domain knowledge.</p>
+<h3 id="search"><a class="anchor" href="#search">#</a> <strong>Search</strong></h3>
+<p>Searching includes doing a full-text search based on email contents or more advanced queries based on from, to, subject, unread, etc filters.</p>
+<p>One characteristic of email search is that it is local to the user and it has more writes than reads, because we need to re-index it on each operation, but users rarely use the search tab.</p>
+<p>Let&#39;s compare google search with email search:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Scope</th>
+<th>Sorting</th>
+<th>Accuracy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Google search</td>
+<td>The whole internet</td>
+<td>Sort by relevance</td>
+<td>Indexing takes some time, so not instant results.</td>
+</tr>
+<tr>
+<td>Email search</td>
+<td>User&#39;s own email box</td>
+<td>Sort by attributes eg time, date, etc</td>
+<td>Indexing should be quick and results accurate.</td>
+</tr>
+</tbody></table>
+<p>To achieve this search functionality, one option is to use an Elasticsearch cluster. We can use <code>user_id</code> as the partition key to group data under the same node:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/elasticsearch.png" alt="elasticsearch" width="500" />
+</div>
+
+<p>Mutating operations are async via Kafka in order to decouple services from the reindexing flow.
+Actually searching for data happens synchronously.</p>
+<p>Elasticsearch is one of the most popular search-engine databases and supports full-text search for emails very well.</p>
+<p>Alternatively, we can attempt to develop our own custom search solution to meet our specific requirements.</p>
+<p>Designing such a system is out of scope. One of the core challenges when building it is to optimize it for write-heavy workloads.</p>
+<p>To achieve that, we can use Log-Structured Merge-Trees (LSM) to structure the index data on disk. Write path is optimized for sequential writes only.
+This technique is used in Cassandra, BigTable and RocksDB.</p>
+<p>Its core idea is to store data in-memory until a predefined threshold is reached, after which it is merged in the next layer (disk):</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/lsm-tree.png" alt="lsm-tree" width="500" />
+</div>
+
+<p>Main trade-offs between the two approaches:</p>
+<ul>
+<li>Elasticsearch scales to some extent, whereas a custom search engine can be fine-tuned for the email use-case, allowing it to scale further.</li>
+<li>Elasticsearch is a separate service we need to maintain, alongside the metadata store. A custom solution can be the datastore itself.</li>
+<li>Elasticsearch is an off-the-shelf solution, whereas the custom search engine would require significant engineering effort to build.</li>
+</ul>
+<h3 id="scalability-and-availability"><a class="anchor" href="#scalability-and-availability">#</a> <strong>Scalability and availability</strong></h3>
+<p>Since individual user operations don&#39;t collide with other users, most components can be independently scaled.</p>
+<p>To ensure high availability, we can also use a multi-DC setup with leader-folower failover in case of failures:</p>
+<div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/23.%20Distributed%20Email%20Service/images/multi-dc-example.png" alt="multi-dc-example" width="500" />
+</div>
+
+<hr>
+<h2 id="step-4-wrap-up"><a class="anchor" href="#step-4-wrap-up">#</a> Step 4: Wrap Up</h2>
+<p>Additional talking points:</p>
+<ul>
+<li><strong>Fault tolerance</strong> - Many parts of the system could fail. It is worthwhile how we&#39;d handle node failures.</li>
+<li><strong>Compliance</strong> - PII needs to be stored in a reasonable way, given Europe&#39;s GDPR laws.</li>
+<li><strong>Security</strong> - email encryption, phishing protection, safe browsing, etc.</li>
+<li><strong>Optimizations</strong> - eg preventing duplication of the same attachments, sent multiple times by different users.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./22-hotel-reservation-system.html"><span>← Previous</span><b>hotel reservation system</b></a>
+      <a class="next" href="./24-s3-like-object-storage.html"><span>Next →</span><b>s3 like object storage</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

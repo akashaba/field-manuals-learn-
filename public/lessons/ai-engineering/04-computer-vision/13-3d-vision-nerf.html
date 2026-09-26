@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3D Vision — Point Clouds &amp; NeRFs — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/13-3d-vision-nerf/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">3D Vision — Point Clouds &amp; NeRFs</h1>
+    <p class="lesson-sub">3D vision comes in two flavours. Point clouds are the sensor&#39;s raw output. NeRFs are the learned volumetric field. Both answer &quot;what is where in space.&quot;</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 1 Lesson 12 (Tensor Operations)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.4" y="41.1" width="32.8" height="32.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(227 55.8 57.5)"/>
+        <rect x="34.6" y="36.8" width="31.6" height="31.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.4 52.6)"/>
+        <rect x="29.9" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(192 45.0 47.6)"/>
+        <rect x="25.1" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.6 142.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">3D Vision — Point</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Clouds &amp; NeRFs</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish explicit (point cloud, mesh, voxel) and implicit (signed distance field, NeRF) 3D representations and when each is used</li>
+<li>Understand PointNet&#39;s symmetric-function trick that makes a neural network permutation-invariant over an unordered set of points</li>
+<li>Trace a NeRF forward pass: ray casting, volumetric rendering, positional encoding, MLP density+colour head</li>
+<li>Use <code>nerfstudio</code> or <code>instant-ngp</code> for pretrained 3D reconstruction from a small set of posed images</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A camera produces a 2D image. A LIDAR produces a set of 3D points with no ordering. A structure-from-motion pipeline produces a sparse cloud of 3D keypoints. A NeRF reconstructs an entire 3D scene from a handful of posed images. All of these are &quot;vision&quot; but none of them look like the dense tensor a CNN wants.</p>
+<p>3D vision matters because almost every high-value robot task runs in 3D: grasping, obstacle avoidance, navigation, AR occlusion, 3D content capture. A vision engineer who only understands 2D images is locked out of the fastest-growing slice of the field (AR/VR content, robotics, autonomous driving stacks, NeRF-based 3D reconstruction for real-estate or construction).</p>
+<p>The two representations dominate for different reasons. Point clouds are what sensors give you for free. NeRFs and their successors (3D Gaussian splatting, neural SDFs) are what you get when you ask a neural network to learn a scene.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="point-clouds"><a class="anchor" href="#point-clouds">#</a> Point clouds</h3>
+<p>A point cloud is an unordered set of N points in R^3, optionally each with features (colour, intensity, normal).</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">cloud = [
+  (x1, y1, z1, r1, g1, b1),
+  (x2, y2, z2, r2, g2, b2),
+  ...
+  (xN, yN, zN, rN, gN, bN),
+]</code></pre>
+      </div>
+    <p>No grid, no connectivity. Two properties make this hard for neural networks:</p>
+<ul>
+<li><strong>Permutation invariance</strong> — the output must not depend on point order.</li>
+<li><strong>Variable N</strong> — a single model must handle clouds of different sizes.</li>
+</ul>
+<p>PointNet (Qi et al., 2017) solved both with one idea: apply a shared MLP to every point, then aggregate with a symmetric function (max pool). The result is a fixed-size vector that does not depend on order.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">f(P) = max_{p in P} MLP(p)</code></pre>
+      </div>
+    <p>This is the entire core of PointNet. Deeper variants (PointNet++, Point Transformer) add hierarchical sampling and local aggregation but the symmetric-function trick is unchanged.</p>
+<h3 id="the-pointnet-architecture"><a class="anchor" href="#the-pointnet-architecture">#</a> The PointNet architecture</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    PTS[&quot;N points&lt;br/&gt;(x, y, z)&quot;] --&gt; MLP1[&quot;shared MLP&lt;br/&gt;(64, 64)&quot;]
+    MLP1 --&gt; MLP2[&quot;shared MLP&lt;br/&gt;(64, 128, 1024)&quot;]
+    MLP2 --&gt; MAX[&quot;max pool&lt;br/&gt;(symmetric)&quot;]
+    MAX --&gt; FEAT[&quot;global feature&lt;br/&gt;(1024,)&quot;]
+    FEAT --&gt; FC[&quot;MLP classifier&quot;]
+    FC --&gt; CLS[&quot;class logits&quot;]
+
+    style MLP1 fill:#dbeafe,stroke:#2563eb
+    style MAX fill:#fef3c7,stroke:#d97706
+    style CLS fill:#dcfce7,stroke:#16a34a</pre></div><p>&quot;Shared MLP&quot; means the same MLP runs on every point independently. Implemented as a 1x1 conv over the point dimension for efficiency.</p>
+<h3 id="neural-radiance-fields-nerfs"><a class="anchor" href="#neural-radiance-fields-nerfs">#</a> Neural Radiance Fields (NeRFs)</h3>
+<p>NeRFs (Mildenhall et al., 2020) took the question &quot;can we reconstruct a 3D scene from N photos?&quot; and answered with a neural network that is the scene. The network maps <code>(x, y, z, viewing_direction)</code> to <code>(density, colour)</code>. Rendering a new view is a ray-casting loop over this network.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">NeRF MLP:  (x, y, z, theta, phi) -&gt; (sigma, r, g, b)
+
+To render a pixel (u, v) of a new view:
+  1. Cast a ray from the camera through pixel (u, v)
+  2. Sample points along the ray at distances t_1, t_2, ..., t_N
+  3. Query the MLP at each point
+  4. Composite the colours weighted by (1 - exp(-sigma * dt))
+  5. The sum is the rendered pixel colour</code></pre>
+      </div>
+    <p>A loss compares the rendered pixel to the ground-truth pixel in the training photos. Backprop through the rendering step updates the MLP. No 3D ground truth, no explicit geometry — the scene is stored in the MLP weights.</p>
+<h3 id="positional-encoding-in-nerf"><a class="anchor" href="#positional-encoding-in-nerf">#</a> Positional encoding in NeRF</h3>
+<p>A vanilla MLP on <code>(x, y, z)</code> cannot represent high-frequency details because MLPs are spectrally biased toward low frequencies. NeRF fixes this by encoding each coordinate into a Fourier feature vector before the MLP:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">gamma(p) = (sin(2^0 pi p), cos(2^0 pi p), sin(2^1 pi p), cos(2^1 pi p), ...)</code></pre>
+      </div>
+    <p>Up to L=10 frequency levels. This is the same trick transformers use for positions, and it appears again in diffusion time conditioning (Lesson 10). Without it, NeRFs look blurry.</p>
+<h3 id="volumetric-rendering"><a class="anchor" href="#volumetric-rendering">#</a> Volumetric rendering</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">C(r) = sum_i T_i * (1 - exp(-sigma_i * delta_i)) * c_i
+
+T_i  = exp(- sum_{j&lt;i} sigma_j * delta_j)
+delta_i = t_{i+1} - t_i</code></pre>
+      </div>
+    <p><code>T_i</code> is transmittance — how much light survives to point i. <code>(1 - exp(-sigma_i * delta_i))</code> is the opacity at point i. <code>c_i</code> is the colour. The final pixel is a weighted sum along the ray.</p>
+<h3 id="what-replaced-nerfs"><a class="anchor" href="#what-replaced-nerfs">#</a> What replaced NeRFs</h3>
+<p>Pure NeRFs are slow to train (hours) and slow to render (seconds per image). The lineage since:</p>
+<ul>
+<li><strong>Instant-NGP</strong> (2022) — hash-grid encoding replaces the MLP&#39;s position input; trains in seconds.</li>
+<li><strong>Mip-NeRF 360</strong> — handles unbounded scenes and anti-aliasing.</li>
+<li><strong>3D Gaussian Splatting</strong> (2023) — replaces the volumetric field with millions of 3D Gaussians; trains in minutes, renders in real time. The current production default.</li>
+</ul>
+<p>Almost every real NeRF product in 2026 is actually 3D Gaussian splatting. The mental model is still NeRF.</p>
+<h3 id="datasets-and-benchmarks"><a class="anchor" href="#datasets-and-benchmarks">#</a> Datasets and benchmarks</h3>
+<ul>
+<li><strong>ShapeNet</strong> — classification and segmentation of 3D CAD models as point clouds.</li>
+<li><strong>ScanNet</strong> — real indoor scans for segmentation.</li>
+<li><strong>KITTI</strong> — outdoor LIDAR point clouds for autonomous driving.</li>
+<li><strong>NeRF Synthetic</strong> / <strong>Blended MVS</strong> — posed-image datasets for view synthesis.</li>
+<li><strong>Mip-NeRF 360</strong> dataset — unbounded real scenes.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">nerf-rays</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-pointnet-classifier"><a class="anchor" href="#step-1-pointnet-classifier">#</a> Step 1: PointNet classifier</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+
+class PointNet(nn.Module):
+    def __init__(self, num_classes=10):
+        super().__init__()
+        self.mlp1 = nn.Sequential(
+            nn.Conv1d(3, 64, 1),    nn.BatchNorm1d(64),   nn.ReLU(inplace=True),
+            nn.Conv1d(64, 64, 1),   nn.BatchNorm1d(64),   nn.ReLU(inplace=True),
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Conv1d(64, 128, 1),  nn.BatchNorm1d(128),  nn.ReLU(inplace=True),
+            nn.Conv1d(128, 1024, 1), nn.BatchNorm1d(1024), nn.ReLU(inplace=True),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(1024, 512),   nn.BatchNorm1d(512),  nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),    nn.BatchNorm1d(256),  nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes),
+        )
+
+    def forward(self, x):
+        # x: (N, 3, num_points) — transposed for Conv1d
+        x = self.mlp1(x)
+        x = self.mlp2(x)
+        x = torch.max(x, dim=-1)[0]       # (N, 1024)
+        return self.head(x)
+
+pts = torch.randn(4, 3, 1024)
+net = PointNet(num_classes=10)
+print(f&quot;output: {net(pts).shape}&quot;)
+print(f&quot;params: {sum(p.numel() for p in net.parameters()):,}&quot;)</code></pre>
+      </div>
+    <p>About 1.6M parameters. Runs on 1,024 points per cloud.</p>
+<h3 id="step-2-positional-encoding"><a class="anchor" href="#step-2-positional-encoding">#</a> Step 2: Positional encoding</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def positional_encoding(x, L=10):
+    &quot;&quot;&quot;
+    x: (..., D) -&gt; (..., D * 2 * L)
+    &quot;&quot;&quot;
+    freqs = 2.0 ** torch.arange(L, dtype=x.dtype, device=x.device)
+    args = x.unsqueeze(-1) * freqs * 3.141592653589793
+    sinc = torch.cat([args.sin(), args.cos()], dim=-1)
+    return sinc.reshape(*x.shape[:-1], -1)
+
+x = torch.randn(5, 3)
+y = positional_encoding(x, L=10)
+print(f&quot;input:  {x.shape}&quot;)
+print(f&quot;encoded: {y.shape}     # (5, 60)&quot;)</code></pre>
+      </div>
+    <p>Multiplying by <code>2^l * pi</code> gives progressively higher frequencies.</p>
+<h3 id="step-3-tiny-nerf-mlp"><a class="anchor" href="#step-3-tiny-nerf-mlp">#</a> Step 3: Tiny NeRF MLP</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class TinyNeRF(nn.Module):
+    def __init__(self, L_pos=10, L_dir=4, hidden=128):
+        super().__init__()
+        self.L_pos = L_pos
+        self.L_dir = L_dir
+        pos_dim = 3 * 2 * L_pos
+        dir_dim = 3 * 2 * L_dir
+        self.trunk = nn.Sequential(
+            nn.Linear(pos_dim, hidden), nn.ReLU(inplace=True),
+            nn.Linear(hidden, hidden),  nn.ReLU(inplace=True),
+            nn.Linear(hidden, hidden),  nn.ReLU(inplace=True),
+            nn.Linear(hidden, hidden),  nn.ReLU(inplace=True),
+        )
+        self.sigma = nn.Linear(hidden, 1)
+        self.color = nn.Sequential(
+            nn.Linear(hidden + dir_dim, hidden // 2), nn.ReLU(inplace=True),
+            nn.Linear(hidden // 2, 3), nn.Sigmoid(),
+        )
+
+    def forward(self, x, d):
+        x_enc = positional_encoding(x, self.L_pos)
+        d_enc = positional_encoding(d, self.L_dir)
+        h = self.trunk(x_enc)
+        sigma = torch.relu(self.sigma(h)).squeeze(-1)
+        rgb = self.color(torch.cat([h, d_enc], dim=-1))
+        return sigma, rgb
+
+nerf = TinyNeRF()
+x = torch.randn(128, 3)
+d = torch.randn(128, 3)
+s, c = nerf(x, d)
+print(f&quot;sigma: {s.shape}   rgb: {c.shape}&quot;)</code></pre>
+      </div>
+    <p>Tiny compared to the original NeRF (which has 2 MLP trunks of depth 8). Enough to demonstrate the architecture.</p>
+<h3 id="step-4-volumetric-rendering-along-a-ray"><a class="anchor" href="#step-4-volumetric-rendering-along-a-ray">#</a> Step 4: Volumetric rendering along a ray</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def volumetric_render(sigma, rgb, t_vals):
+    &quot;&quot;&quot;
+    sigma: (..., N_samples)
+    rgb:   (..., N_samples, 3)
+    t_vals: (N_samples,) distances along the ray
+    &quot;&quot;&quot;
+    delta = torch.cat([t_vals[1:] - t_vals[:-1], torch.full_like(t_vals[:1], 1e10)])
+    alpha = 1.0 - torch.exp(-sigma * delta)
+    trans = torch.cumprod(torch.cat([torch.ones_like(alpha[..., :1]), 1.0 - alpha + 1e-10], dim=-1), dim=-1)[..., :-1]
+    weights = alpha * trans
+    rendered = (weights.unsqueeze(-1) * rgb).sum(dim=-2)
+    depth = (weights * t_vals).sum(dim=-1)
+    return rendered, depth, weights
+
+
+N = 64
+t_vals = torch.linspace(2.0, 6.0, N)
+sigma = torch.rand(N) * 0.5
+rgb = torch.rand(N, 3)
+rendered, depth, weights = volumetric_render(sigma, rgb, t_vals)
+print(f&quot;rendered colour: {rendered.tolist()}&quot;)
+print(f&quot;depth:           {depth.item():.2f}&quot;)</code></pre>
+      </div>
+    <p>One ray, 64 samples, composite to a single RGB pixel and a depth.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For real work:</p>
+<ul>
+<li><code>nerfstudio</code> (Tancik et al.) — the current reference library for NeRF / Instant-NGP / Gaussian Splatting. Command-line plus a web viewer.</li>
+<li><code>pytorch3d</code> (Meta) — differentiable rendering, point-cloud utilities, mesh ops.</li>
+<li><code>open3d</code> — point cloud processing, registration, visualisation.</li>
+</ul>
+<p>For deployment, 3D Gaussian splatting has largely replaced pure NeRFs because it renders 100x faster. The reconstruction quality is comparable.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-3d-task-router.md</code> — a prompt that routes to the right 3D representation (point cloud, mesh, voxel, NeRF, Gaussian splat) based on task and input data.</li>
+<li><code>outputs/skill-point-cloud-loader.md</code> — a skill that writes a PyTorch <code>Dataset</code> for .ply / .pcd / .xyz files with correct normalisation, centring, and point sampling.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Show that PointNet is permutation-invariant: run the same cloud through twice, once with points shuffled. Verify outputs are identical up to floating-point noise.</li>
+<li><strong>(Medium)</strong> Implement a minimal ray-generation function that, given camera intrinsics and pose, produces ray origins and directions for every pixel of an H x W image.</li>
+<li><strong>(Hard)</strong> Train a TinyNeRF on a synthetic dataset of rendered views of a coloured cube (generated via differentiable rendering or a simple ray tracer). Report rendering loss at epoch 1, 10, and 100. At what epoch does the model produce recognisable views?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Point cloud</td>
+<td>&quot;3D points from LIDAR&quot;</td>
+<td>Unordered set of (x, y, z) + optional features per point</td>
+</tr>
+<tr>
+<td>PointNet</td>
+<td>&quot;First neural net on point clouds&quot;</td>
+<td>Shared MLP per point + symmetric (max) pool; permutation-invariant by construction</td>
+</tr>
+<tr>
+<td>NeRF</td>
+<td>&quot;MLP that is the scene&quot;</td>
+<td>Network mapping (x, y, z, dir) to (density, colour); rendered by ray casting</td>
+</tr>
+<tr>
+<td>Positional encoding</td>
+<td>&quot;Fourier features&quot;</td>
+<td>Encode each coordinate into sin/cos at multiple frequencies to overcome MLP low-frequency bias</td>
+</tr>
+<tr>
+<td>Volumetric rendering</td>
+<td>&quot;Ray integration&quot;</td>
+<td>Composite samples along a ray into a single pixel using transmittance and alpha</td>
+</tr>
+<tr>
+<td>Instant-NGP</td>
+<td>&quot;Hash-grid NeRF&quot;</td>
+<td>Replaces NeRF&#39;s coordinate MLP with a multi-resolution hash grid; 100-1000x faster</td>
+</tr>
+<tr>
+<td>3D Gaussian splatting</td>
+<td>&quot;Millions of Gaussians&quot;</td>
+<td>Scene = collection of 3D Gaussians; renders in real time, trains in minutes</td>
+</tr>
+<tr>
+<td>SDF</td>
+<td>&quot;Signed distance field&quot;</td>
+<td>Function returning signed distance to the nearest surface; another implicit representation</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1612.00593">PointNet (Qi et al., 2017)</a> — the permutation-invariant classifier</li>
+<li><a href="https://arxiv.org/abs/2003.08934">NeRF (Mildenhall et al., 2020)</a> — the paper that made 3D reconstruction from photos a neural-net problem</li>
+<li><a href="https://arxiv.org/abs/2201.05989">Instant-NGP (Müller et al., 2022)</a> — hash grids, 1000x speedup</li>
+<li><a href="https://arxiv.org/abs/2308.04079">3D Gaussian Splatting (Kerbl et al., 2023)</a> — the architecture that replaced NeRFs in production</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-video-understanding.html"><span>← Previous</span><b>video understanding</b></a>
+      <a class="next" href="./14-vision-transformers.html"><span>Next →</span><b>vision transformers</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

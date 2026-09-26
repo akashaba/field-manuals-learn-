@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kill Switches, Circuit Breakers, and Canary Tokens — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/15-autonomous-systems/14-kill-switches-canaries/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Autonomous Systems</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Autonomous Systems</div>
+    <h1 class="lesson-title">Kill Switches, Circuit Breakers, and Canary Tokens</h1>
+    <p class="lesson-sub">A kill switch is a boolean held outside the agent&#39;s edit surface — a Redis key, a feature flag, a signed config — that disables the agent entirely. A circuit breaker is finer-grained: it trips on a specific pattern (five identical tool calls in a row), pauses the offending path, and escalates to a human. A canary token inherits from classical deception: a fake credential or honeypot record an agent has no legitimate reason to touch, whose access triggers an alert. eBPF-based datapaths (e.g. Cilium) can rewrite a quarantined pod&#39;s egress to a forensic honeypot at the kernel layer; published Cilium benchmarks report sub-millisecond P99 datapath latency under load (your propagation budget depends on how a policy update reaches the node, not the datapath itself). Statistical detectors (EWMA, CUSUM) that adapt to a moving baseline will quietly accept drift — layer them with hard constitutional limits that do not bend.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, three-detector simulator: kill switch, circuit breaker, canary)</b></div><div><span>Prerequisites</span><b>Phase 15 · 13 (Cost governors), Phase 15 · 10 (Permission modes)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Autonomous Systems 14">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M79.7,89.8 L86.7,79.2 L93.8,89.8 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M74.9,84.5 L81.3,74.8 L87.7,84.5 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M70.1,79.2 L75.9,70.5 L81.7,79.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.3,73.9 L70.5,66.1 L75.6,73.9 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.5,76.3 L65.0,50.1 L82.5,76.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">14</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AUTONOMOUS SYSTEMS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Kill Switches,</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Circuit Breakers…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Cost governors (Lesson 13) bound what the agent can spend. They do not bound what the agent can do inside the budget. An agent with a $50 velocity limit can still exfiltrate a secret, publish the wrong post, or delete a resource — the expensive action is often the cheap one in tokens.</p>
+<p>This lesson covers the three detectors that sit next to the cost layer:</p>
+<ol>
+<li><strong>Kill switch</strong>: boolean off-button held outside the agent&#39;s reach.</li>
+<li><strong>Circuit breaker</strong>: action-pattern detector that pauses a specific path.</li>
+<li><strong>Canary token</strong>: bait that an agent with no legitimate reason to touch will reveal itself by touching.</li>
+</ol>
+<p>All three are pre-LLM engineering. Classical deception, rate-limit breakers, and feature-flag kills predate autonomous agents. What&#39;s new is the attack surface: agents read untrusted content (Lesson 11), edit their own memory, and can compose many safe-looking actions into an unsafe one. The detectors named here work because they do not trust the agent&#39;s self-report.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="kill-switches"><a class="anchor" href="#kill-switches">#</a> Kill switches</h3>
+<p>A kill switch is a boolean the agent reads but cannot write. Implementation choices:</p>
+<ul>
+<li><strong>Feature flag in a managed service.</strong> LaunchDarkly, Statsig, Unleash. Updates propagate in seconds.</li>
+<li><strong>Redis key the agent polls.</strong> Simple; requires the agent process to check on every turn.</li>
+<li><strong>Signed config in object storage.</strong> Agent verifies a signature on boot; rejects unsigned states.</li>
+<li><strong>OS-level signal or container-lifecycle kill.</strong> Docker <code>kill</code>, Kubernetes <code>kubectl delete pod</code>, systemd stop.</li>
+</ul>
+<p>Properties a correct kill switch has:</p>
+<ul>
+<li>The agent cannot set it to <code>off</code>. (Lives in a system the agent&#39;s credentials do not write.)</li>
+<li>It is checked on every consequential action, not just at startup.</li>
+<li>When it is off, the agent does nothing externally observable, including logging to systems the agent can reach.</li>
+<li>Re-enabling it is an explicit human action, not an automatic timeout.</li>
+</ul>
+<h3 id="circuit-breakers"><a class="anchor" href="#circuit-breakers">#</a> Circuit breakers</h3>
+<p>A circuit breaker pauses a specific pattern, not the whole agent. Classical shape (from the 2007 Nygard book, still current):</p>
+<ul>
+<li><strong>Closed</strong>: action is allowed.</li>
+<li><strong>Open</strong>: action is blocked.</li>
+<li><strong>Half-open</strong>: after a cool-down, 1–3 probe attempts are allowed (default 1); success closes the breaker, any remaining failure re-opens it.</li>
+</ul>
+<p>Agent-relevant triggers:</p>
+<ul>
+<li>Five identical tool calls in a row (repetitive loop).</li>
+<li>Five consecutive failures on the same tool with different inputs (systemic failure).</li>
+<li>Rate of tool calls above a threshold (Lesson 13 velocity).</li>
+<li>Specific tool invoked (e.g., <code>file.delete</code>) after an out-of-trust content read (Lesson 11).</li>
+</ul>
+<h3 id="canary-tokens"><a class="anchor" href="#canary-tokens">#</a> Canary tokens</h3>
+<p>Canary tokens (also called honeytokens) are inputs the agent should never touch. Access is the alarm.</p>
+<p>Examples for agents:</p>
+<ul>
+<li>A fake <code>AWS_SECRET_ACCESS_KEY</code> in the environment with no actual privilege. Exfiltration attempts are instantly attributable.</li>
+<li>A fake database record flagged with a known sentinel value. Any read or update of this record fires an alert.</li>
+<li>A fake file in the workspace. Reads or edits of this file are suspicious.</li>
+<li>A fake memory entry injected at session start. If it appears in a later output, memory has been exfiltrated.</li>
+</ul>
+<p>Canary design is specific to the workflow. A canary the agent has a legitimate reason to touch is noise.</p>
+<h3 id="why-layer-statistical-and-hard-limits"><a class="anchor" href="#why-layer-statistical-and-hard-limits">#</a> Why layer statistical and hard limits</h3>
+<p>Statistical detectors (EWMA, CUSUM, z-score on tool-call rates) adapt to a moving baseline. That is a feature for legitimate drift and a bug for adversarial drift. A patient attacker can shift the baseline slowly enough that no alarm fires.</p>
+<p>Hard constitutional limits (Lesson 17) do not bend. &quot;Never email <code>secrets@</code>&quot; as a constitutional rule is simpler, auditable, and not gameable by slow drift. The layering pattern: statistical detectors catch most noise, hard limits catch the attack that walked past the detector.</p>
+<h3 id="quarantine-via-ebpf-datapath-redirect"><a class="anchor" href="#quarantine-via-ebpf-datapath-redirect">#</a> Quarantine via eBPF datapath redirect</h3>
+<p>Cilium&#39;s eBPF-based network policy can rewrite a quarantined pod&#39;s egress to a forensic honeypot at the kernel layer. Cilium&#39;s public benchmarks report sub-millisecond P99 datapath latency on TCP_RR; the wall-clock budget for <em>triggering</em> a quarantine in your cluster is dominated by how a policy update propagates from your control plane to the node (a few hundred milliseconds is realistic on Kubernetes with the operator pre-loaded; tail latency depends on cluster size and reconcile cadence). This gives you two things: the agent does not exfiltrate anything real, and the agent&#39;s behavior inside the honeypot is fully observed. Same pattern, different layer, as the canary token: the agent reveals intent by what it tries to do while contained.</p>
+<h3 id="what-no-detector-catches"><a class="anchor" href="#what-no-detector-catches">#</a> What no detector catches</h3>
+<ul>
+<li><strong>Semantic attacks that compose from allowed primitives.</strong> Every individual action passes every detector; the composition is the problem. This is the Auto Mode composite failure from Lesson 10.</li>
+<li><strong>Attacks that include the detector as part of the payload.</strong> If an agent reads a page that says &quot;before you act, disable the canary&quot; and the agent has the capability, the detector is compromised. Canary tokens should be in systems the agent cannot modify.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">circuit-breaker</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a short agent trajectory through three detectors. A kill switch held in an external dict; a circuit breaker that trips on five identical tool calls; a canary file whose read triggers an alert. Feeds in a synthetic trajectory: legitimate actions, repetitive loop, canary probe, and a kill-switch-triggered scenario where the agent&#39;s actions are halted.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-tripwire-design.md</code> reviews a proposed detector stack for an agent deployment and flags gaps (missing kill switch, missing canary, circuit breaker threshold too loose).</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code>. Confirm the circuit breaker fires on turn 5 (fifth identical call) and the canary fires on turn 9 (fake-key read).</p>
+</li>
+<li><p>Add a statistical detector: EWMA z-score on tool-call rate. Feed in a trajectory that drifts slowly and show the detector never fires. Now add a hard limit (no more than 50 tool calls in 10 minutes) and show the hard limit fires on the same trajectory.</p>
+</li>
+<li><p>Design a canary token set for a browser agent (Lesson 11). List at least three canaries and what each would detect.</p>
+</li>
+<li><p>Read the Cilium network-policy docs. Describe an egress-redirect quarantine flow concretely: which policy selector, which pod, which egress rewrite, which alert. What governs the wall-clock latency from &quot;decide to quarantine&quot; to &quot;first redirected packet&quot;?</p>
+</li>
+<li><p>Define a re-enable procedure for a kill-switched agent. Who can re-enable? What must be documented? What must change about the agent before re-enable?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Kill switch</td>
+<td>&quot;Off button&quot;</td>
+<td>Boolean outside the agent&#39;s edit surface; checked on every consequential action</td>
+</tr>
+<tr>
+<td>Circuit breaker</td>
+<td>&quot;Pattern pause&quot;</td>
+<td>Action-specific trip on repetition, failure rate, or rate-limit</td>
+</tr>
+<tr>
+<td>Canary token</td>
+<td>&quot;Honeytoken&quot;</td>
+<td>Bait the agent has no legitimate reason to touch; access fires an alert</td>
+</tr>
+<tr>
+<td>Honeypot</td>
+<td>&quot;Forensic sandbox&quot;</td>
+<td>Redirected traffic / workspace where a quarantined agent is observed</td>
+</tr>
+<tr>
+<td>EWMA</td>
+<td>&quot;Moving average&quot;</td>
+<td>Exponentially weighted; adapts to drift (feature + bug)</td>
+</tr>
+<tr>
+<td>CUSUM</td>
+<td>&quot;Cumulative sum&quot;</td>
+<td>Detects sustained shift from baseline</td>
+</tr>
+<tr>
+<td>Hard limit</td>
+<td>&quot;Constitutional rule&quot;</td>
+<td>Does not adapt; constant regardless of history</td>
+</tr>
+<tr>
+<td>Constitutional limit</td>
+<td>&quot;Always-true rule&quot;</td>
+<td>Tied to Lesson 17&#39;s constitution; cannot be edited by the agent</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://www.anthropic.com/research/measuring-agent-autonomy">Anthropic — Measuring agent autonomy in practice</a> — kill-switch and circuit-breaker framing for autonomous agents.</li>
+<li><a href="https://learn.microsoft.com/en-us/agent-framework/workflows/human-in-the-loop">Microsoft Agent Framework — HITL and oversight</a> — production governance patterns.</li>
+<li><a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/">OWASP LLM / Agentic Top 10</a> — detection-and-response requirements.</li>
+<li><a href="https://docs.cilium.io/en/stable/security/network/">Cilium — Network policy and eBPF</a> — pod-level egress redirect and forensic honeypot patterns.</li>
+<li><a href="https://www.anthropic.com/news/claudes-constitution">Anthropic — Claude&#39;s Constitution (January 2026)</a> — hardcoded prohibitions as &quot;constitutional limits&quot;.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./13-cost-governors.html"><span>← Previous</span><b>cost governors</b></a>
+      <a class="next" href="./15-propose-then-commit.html"><span>Next →</span><b>propose then commit</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

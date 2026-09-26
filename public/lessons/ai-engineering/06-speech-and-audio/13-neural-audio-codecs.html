@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Neural Audio Codecs — EnCodec, SNAC, Mimi, DAC and the Semantic-Acoustic Split — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/13-neural-audio-codecs/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Neural Audio Codecs — EnCodec, SNAC, Mimi, DAC and the Semantic-Acoustic Split</h1>
+    <p class="lesson-sub">2026 audio generation is almost all tokens. EnCodec, SNAC, Mimi, and DAC turn continuous waveforms into discrete sequences that a transformer can predict. The semantic-vs-acoustic token split — first-codebook as semantic, rest as acoustic — is the most important architectural shift since the Transformer for audio.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 02 (Spectrograms), Phase 10 · 11 (Quantization), Phase 5 · 19 (Subword Tokenization)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M68.9,77.9 L74.5,69.4 L80.2,77.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M51.1,80.3 L69.1,53.4 L87.1,80.3 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.3,75.0 L63.7,49.0 L81.0,75.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.6" y="43.0" width="33.4" height="33.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(235 58.3 59.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Neural Audio Codecs</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">— EnCodec, SNAC…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Language models work on discrete tokens. Audio is continuous. If you want an LLM-style model for speech / music — MusicGen, Moshi, Sesame CSM, VibeVoice, Orpheus — you first need a <strong>neural audio codec</strong>: a learned encoder that discretizes audio into a small vocabulary of tokens, and a matching decoder that reconstructs the waveform.</p>
+<p>Two families have emerged:</p>
+<ol>
+<li><strong>Reconstruction-first codecs</strong> — EnCodec, DAC. Optimize perceptual audio quality. Tokens are &quot;acoustic&quot; — they capture everything including speaker identity, timbre, background noise.</li>
+<li><strong>Semantic-first codecs</strong> — Mimi (Kyutai), SpeechTokenizer. Force the first codebook to encode linguistic / phonetic content (often by distilling from WavLM). Subsequent codebooks are acoustic detail.</li>
+</ol>
+<p>The 2024-2026 insight: <strong>a pure reconstruction codec gives you blurry speech when you try to generate from text.</strong> The LLM over codec tokens has to learn both language structure AND acoustic structure in the same codebook, which doesn&#39;t scale. Separating them — semantic codebook 0, acoustic codebooks 1-N — is what makes Moshi and Sesame CSM work.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/13-neural-audio-codecs/assets/codec-comparison.svg" alt="Four codec landscape: EnCodec, DAC, SNAC (multi-scale), Mimi (semantic+acoustic)" loading="lazy" /></figure></p>
+<h3 id="the-core-trick-residual-vector-quantization-rvq"><a class="anchor" href="#the-core-trick-residual-vector-quantization-rvq">#</a> The core trick: Residual Vector Quantization (RVQ)</h3>
+<p>Rather than one big codebook (which would need millions of codes for good quality), all modern audio codecs use <strong>RVQ</strong>: a cascade of small codebooks. The first codebook quantizes the encoder output; the second quantizes the residual; etc. Each codebook is 1024 codes. 8 codebooks = effective vocabulary of 1024^8 = 10^24.</p>
+<p>At inference time, the decoder sums all chosen codes per frame to reconstruct.</p>
+<h3 id="the-four-codecs-that-matter-in-2026"><a class="anchor" href="#the-four-codecs-that-matter-in-2026">#</a> The four codecs that matter in 2026</h3>
+<p><strong>EnCodec (Meta, 2022).</strong> The baseline. Encoder-decoder over waveform, RVQ bottleneck. 24 kHz, 32 codebooks possible, default 4 codebooks @ 1.5 kbps. Uses <code>1D conv + transformer + 1D conv</code> architecture. Used by MusicGen.</p>
+<p><strong>DAC (Descript, 2023).</strong> RVQ with L2-normalized codebooks, periodic activation functions, improved losses. Highest reconstruction fidelity of any open codec — sometimes indistinguishable from original speech with 12 codebooks. 44.1 kHz full-band.</p>
+<p><strong>SNAC (Hubert Siuzdak, 2024).</strong> Multi-scale RVQ — the coarse codebooks operate at a lower frame rate than fine ones. Effectively models audio hierarchically: a coarse &quot;sketch&quot; at ~12 Hz plus detail at 50 Hz. Used by Orpheus-3B because the hierarchical structure maps well onto LM-based generation.</p>
+<p><strong>Mimi (Kyutai, 2024).</strong> The 2026 game-changer. 12.5 Hz frame rate (extremely low), 8 codebooks @ 4.4 kbps. Codebook 0 is <strong>distilled from WavLM</strong> — trained to predict WavLM&#39;s speech-content features. Codebooks 1-7 are acoustic residuals. This split powers Moshi (Lesson 15) and Sesame CSM.</p>
+<h3 id="frame-rates-matter-for-language-modeling"><a class="anchor" href="#frame-rates-matter-for-language-modeling">#</a> Frame rates matter for language modeling</h3>
+<p>Lower frame rate = shorter sequence = faster LM.</p>
+<table>
+<thead>
+<tr>
+<th>Codec</th>
+<th>Frame rate</th>
+<th>1 s = N frames</th>
+<th>Good for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>EnCodec-24k</td>
+<td>75 Hz</td>
+<td>75</td>
+<td>music, general audio</td>
+</tr>
+<tr>
+<td>DAC-44.1k</td>
+<td>86 Hz</td>
+<td>86</td>
+<td>high-fidelity music</td>
+</tr>
+<tr>
+<td>SNAC-24k (coarse)</td>
+<td>~12 Hz</td>
+<td>12</td>
+<td>AR-LM efficient</td>
+</tr>
+<tr>
+<td>Mimi</td>
+<td>12.5 Hz</td>
+<td>12.5</td>
+<td>streaming speech</td>
+</tr>
+</tbody></table>
+<p>At 12.5 Hz, a 10-second utterance is only 125 codec frames — a transformer can easily predict them.</p>
+<h3 id="semantic-vs-acoustic-tokens"><a class="anchor" href="#semantic-vs-acoustic-tokens">#</a> Semantic vs acoustic tokens</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">frame_t → [semantic_token_t, acoustic_token_0_t, acoustic_token_1_t, ..., acoustic_token_6_t]</code></pre>
+      </div>
+    <ul>
+<li><strong>Semantic token (codebook 0 in Mimi).</strong> Encodes what was said — phonemes, words, content. Distilled from WavLM via an auxiliary prediction loss.</li>
+<li><strong>Acoustic tokens (codebooks 1-7).</strong> Encode timbre, speaker identity, prosody, background noise, fine detail.</li>
+</ul>
+<p>An AR LM predicts the semantic token first (conditioned on text), then predicts acoustic tokens (conditioned on semantic + speaker reference). This factorization is why modern TTS can zero-shot-clone voices: the semantic model handles content; the acoustic model handles timbre.</p>
+<h3 id="2026-reconstruction-quality-bits-per-sec-lower-bitrate-is-better"><a class="anchor" href="#2026-reconstruction-quality-bits-per-sec-lower-bitrate-is-better">#</a> 2026 reconstruction quality (bits per sec, lower bitrate is better)</h3>
+<table>
+<thead>
+<tr>
+<th>Codec</th>
+<th>Bitrate</th>
+<th>PESQ</th>
+<th>ViSQOL</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Opus-20kbps</td>
+<td>20 kbps</td>
+<td>4.0</td>
+<td>4.3</td>
+</tr>
+<tr>
+<td>EnCodec-6kbps</td>
+<td>6 kbps</td>
+<td>3.2</td>
+<td>3.8</td>
+</tr>
+<tr>
+<td>DAC-6kbps</td>
+<td>6 kbps</td>
+<td>3.5</td>
+<td>4.0</td>
+</tr>
+<tr>
+<td>SNAC-3kbps</td>
+<td>3 kbps</td>
+<td>3.3</td>
+<td>3.8</td>
+</tr>
+<tr>
+<td>Mimi-4.4kbps</td>
+<td>4.4 kbps</td>
+<td>3.1</td>
+<td>3.7</td>
+</tr>
+</tbody></table>
+<p>Traditional codecs like Opus still win per bit on perceptual quality. Neural codecs win on <strong>discrete tokens</strong> (which Opus does not produce) and <strong>generative-model quality</strong> (what the LM can do with those tokens).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">rvq-codec-cascade</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-encode-with-encodec"><a class="anchor" href="#step-1-encode-with-encodec">#</a> Step 1: encode with EnCodec</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from encodec import EncodecModel
+import torch
+
+model = EncodecModel.encodec_model_24khz()
+model.set_target_bandwidth(6.0)  # kbps
+
+wav = torch.randn(1, 1, 24000)
+with torch.no_grad():
+    encoded = model.encode(wav)
+codes, scale = encoded[0]
+# codes: (1, n_codebooks, n_frames), dtype=int64</code></pre>
+      </div>
+    <p><code>n_codebooks=8</code> at 6 kbps. Each code is 0-1023 (10-bit).</p>
+<h3 id="step-2-decode-and-measure-reconstruction"><a class="anchor" href="#step-2-decode-and-measure-reconstruction">#</a> Step 2: decode and measure reconstruction</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">with torch.no_grad():
+    wav_recon = model.decode([(codes, scale)])
+
+from torchaudio.functional import compute_deltas
+import torch.nn.functional as F
+
+mse = F.mse_loss(wav_recon[:, :, :wav.shape[-1]], wav).item()</code></pre>
+      </div>
+    <h3 id="step-3-the-semantic-acoustic-split-mimi-style"><a class="anchor" href="#step-3-the-semantic-acoustic-split-mimi-style">#</a> Step 3: the semantic-acoustic split (Mimi-style)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from moshi.models import loaders
+mimi = loaders.get_mimi()
+
+with torch.no_grad():
+    codes = mimi.encode(wav)  # shape (1, 8, frames@12.5Hz)
+
+semantic = codes[:, 0]
+acoustic = codes[:, 1:]</code></pre>
+      </div>
+    <p>Semantic codebook 0 is WavLM-aligned. You can train a text-to-semantic transformer — much smaller vocabulary than going direct-to-audio. Then a separate acoustic-to-waveform decoder conditions on a speaker reference.</p>
+<h3 id="step-4-why-ar-lm-over-codec-tokens-works"><a class="anchor" href="#step-4-why-ar-lm-over-codec-tokens-works">#</a> Step 4: why AR LM over codec tokens works</h3>
+<p>For a 10 s speech clip at Mimi&#39;s 12.5 Hz × 8 codebooks:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">N_tokens = 10 * 12.5 * 8 = 1000 tokens</code></pre>
+      </div>
+    <p>1000 tokens is a trivial context for a transformer. A 256M-parameter transformer can generate 10 seconds of speech in milliseconds on a modern GPU.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Map problem → codec:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Codec</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>General music generation</td>
+<td>EnCodec-24k</td>
+</tr>
+<tr>
+<td>Highest-fidelity reconstruction</td>
+<td>DAC-44.1k</td>
+</tr>
+<tr>
+<td>AR LM over speech (TTS)</td>
+<td>SNAC or Mimi</td>
+</tr>
+<tr>
+<td>Streaming full-duplex speech</td>
+<td>Mimi (12.5 Hz)</td>
+</tr>
+<tr>
+<td>Sound-effect library with text</td>
+<td>EnCodec + T5 condition</td>
+</tr>
+<tr>
+<td>Fine-grained audio editing</td>
+<td>DAC + inpainting</td>
+</tr>
+</tbody></table>
+<p>Rule of thumb: <strong>if you&#39;re building a generative model, start with Mimi or SNAC. If you&#39;re building a compression pipeline, use Opus.</strong></p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Too many codebooks.</strong> Adding codebooks increases fidelity linearly but LM sequence length linearly too. Stop at 8-12.</li>
+<li><strong>Frame-rate mismatch.</strong> Training LM on 12.5 Hz Mimi then fine-tuning on 50 Hz EnCodec fails silently.</li>
+<li><strong>Assuming all codebooks equal.</strong> In Mimi, codebook 0 carries content; losing it destroys intelligibility. Losing codebook 7 is barely noticeable.</li>
+<li><strong>Using reconstruction quality as the only metric.</strong> A codec can have great reconstruction but be useless for LM-based generation if the semantic structure is bad.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-codec-picker.md</code>. Pick a codec for a given generative or compression task.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. It implements a toy scalar + residual quantizer and measures reconstruction error as you add codebooks.</li>
+<li><strong>Medium.</strong> Install <code>encodec</code> and compare 1, 4, 8, 32 codebooks on a held-out speech clip. Plot PESQ or MSE vs bitrate.</li>
+<li><strong>Hard.</strong> Load Mimi. Encode a clip. Replace codebook 0 with random integers; decode. Then replace codebook 7 similarly. Compare the two corruptions — codebook 0 corruption should destroy intelligibility; codebook 7 corruption should barely change anything.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RVQ</td>
+<td>Residual quantization</td>
+<td>Cascade of small codebooks; each quantizes the previous residual.</td>
+</tr>
+<tr>
+<td>Frame rate</td>
+<td>Codec speed</td>
+<td>How many token-frames per second. Lower = faster LM.</td>
+</tr>
+<tr>
+<td>Semantic codebook</td>
+<td>Codebook 0 (Mimi)</td>
+<td>Codebook distilled from SSL features; encodes content.</td>
+</tr>
+<tr>
+<td>Acoustic codebooks</td>
+<td>Everything else</td>
+<td>Timbre, prosody, noise, fine detail.</td>
+</tr>
+<tr>
+<td>PESQ / ViSQOL</td>
+<td>Perceptual quality</td>
+<td>Objective metrics correlating with MOS.</td>
+</tr>
+<tr>
+<td>EnCodec</td>
+<td>Meta codec</td>
+<td>The RVQ baseline; used by MusicGen.</td>
+</tr>
+<tr>
+<td>Mimi</td>
+<td>Kyutai codec</td>
+<td>12.5 Hz frame rate; semantic-acoustic split; powers Moshi.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.13438">Défossez et al. (2023). EnCodec</a> — the RVQ baseline.</li>
+<li><a href="https://arxiv.org/abs/2306.06546">Kumar et al. (2023). Descript Audio Codec (DAC)</a> — highest-fidelity open.</li>
+<li><a href="https://arxiv.org/abs/2410.14411">Siuzdak (2024). SNAC</a> — multi-scale RVQ.</li>
+<li><a href="https://kyutai.org/codec-explainer">Kyutai (2024). Mimi codec</a> — semantic-acoustic split, WavLM distillation.</li>
+<li><a href="https://arxiv.org/abs/2209.03143">Borsos et al. (2023). AudioLM</a> — the two-stage semantic/acoustic paradigm.</li>
+<li><a href="https://arxiv.org/abs/2107.03312">Zeghidour et al. (2021). SoundStream</a> — the original streamable RVQ codec.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-voice-assistant-pipeline.html"><span>← Previous</span><b>voice assistant pipeline</b></a>
+      <a class="next" href="./14-voice-activity-detection-turn-taking.html"><span>Next →</span><b>voice activity detection turn taking</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

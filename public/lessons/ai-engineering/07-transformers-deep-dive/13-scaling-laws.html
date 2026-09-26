@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scaling Laws — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/13-scaling-laws/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">Scaling Laws</h1>
+    <p class="lesson-sub">The 2020 Kaplan paper said: bigger model, lower loss. The 2022 Hoffmann paper said: you were under-training. Compute goes into two buckets — parameters and tokens — and the split is not obvious.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 05 (Full Transformer), Phase 7 · 07 (GPT)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 13">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="29.8" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(191 45.0 47.6)"/>
+        <rect x="25.1" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.6 142.7)"/>
+        <rect x="20.3" y="123.9" width="27.7" height="27.7" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(156 34.1 137.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">13</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Scaling Laws</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>When you have C FLOPs of training compute and want the best model, you face two knobs:</p>
+<ol>
+<li><strong>How many parameters (N)?</strong> Bigger model, higher capacity.</li>
+<li><strong>How many training tokens (D)?</strong> More data, better use of capacity.</li>
+</ol>
+<p>FLOPs scale approximately as <code>6 × N × D</code>. You can push N up and D down, or D up and N down. Which is better?</p>
+<p>Before 2022, the answer was &quot;push N hard.&quot; GPT-3 (2020) was 175B parameters trained on ~300B tokens. A ratio of about 1.7 tokens per parameter. The Kaplan scaling laws backed this up.</p>
+<p>Hoffmann et al. (2022), training a small family of models called Chinchilla, found something different: optimal ratio is closer to <strong>20 tokens per parameter</strong>. GPT-3 was 10× undertrained. Chinchilla (70B params, 1.4T tokens) beat GPT-3 (175B, 300B tokens) on every benchmark at 2.5× less inference cost.</p>
+<p>2026 is Chinchilla&#39;s world — with one important twist. Llama 3 8B was trained on 15 trillion tokens, a ratio of 1,875 tokens per parameter. Ninety-four times past Chinchilla-optimal. Inference cost matters more than training cost for models that will be used at scale, so over-training (past Chinchilla) for a smaller deployable footprint is the 2026 default.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/07-transformers-deep-dive/13-scaling-laws/assets/scaling-laws.svg" alt="Chinchilla curves: loss vs compute at various N/D ratios" loading="lazy" /></figure></p>
+<h3 id="the-hoffmann-law"><a class="anchor" href="#the-hoffmann-law">#</a> The Hoffmann law</h3>
+<p>From the Chinchilla paper, loss follows:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L(N, D) = A / N^α + B / D^β + E</code></pre>
+      </div>
+    <ul>
+<li><code>N</code> = parameters (non-embedding).</li>
+<li><code>D</code> = training tokens.</li>
+<li><code>α ≈ 0.34</code>, <code>β ≈ 0.28</code> (roughly symmetric).</li>
+<li><code>E ≈ 1.69</code>, the irreducible loss ceiling.</li>
+<li><code>A ≈ 406</code>, <code>B ≈ 411</code>.</li>
+</ul>
+<p>Two terms trade against each other as you scale. Take the derivative w.r.t. <code>N</code> at fixed compute (C = 6ND) and solve:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">N_opt ≈ 0.6 × (C/6)^0.5
+D_opt ≈ 0.6 × (C/6)^0.5
+D_opt / N_opt ≈ 20</code></pre>
+      </div>
+    <p>Compute-optimal: 20 tokens per parameter.</p>
+<h3 id="why-over-training-anyway"><a class="anchor" href="#why-over-training-anyway">#</a> Why over-training anyway</h3>
+<p>Chinchilla-optimal minimizes training loss per training FLOP. But you pay training cost once; inference cost forever.</p>
+<p>For a chatbot that serves a trillion tokens per month, inference dominates total cost. Llama&#39;s approach: train smaller, longer. 8B at 15T tokens is deeply inference-optimized:</p>
+<ul>
+<li>Fits on consumer GPUs.</li>
+<li>Latency is a fraction of 70B Chinchilla-optimal.</li>
+<li>Quality is close enough for most tasks.</li>
+</ul>
+<p>DeepMind&#39;s 2024 paper (&quot;Over-training is the new optimal&quot;) formalized this. For inference-dominated workloads, the right ratio is closer to 100–500 tokens per parameter depending on serving volume.</p>
+<h3 id="emergence-vs-smoothness"><a class="anchor" href="#emergence-vs-smoothness">#</a> Emergence vs smoothness</h3>
+<p>Claim: certain abilities (arithmetic, multi-step reasoning, chain-of-thought following) &quot;emerge&quot; suddenly at some scale.</p>
+<p>Schaeffer et al. (2023) argued this is a measurement artifact: emergent metrics use discontinuous scoring (exact match, accuracy at threshold) that hide smooth improvement in the underlying logits. Continuous metrics (cross-entropy) show smooth curves.</p>
+<p>In 2026 the consensus is: predictions via continuous loss are reliable. Benchmark jumps are often scorer artifacts. Plan budgets against continuous metrics.</p>
+<h3 id="the-2026-picture"><a class="anchor" href="#the-2026-picture">#</a> The 2026 picture</h3>
+<p>Scaling laws still work, but:</p>
+<table>
+<thead>
+<tr>
+<th>Factor</th>
+<th>Changed how</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Data quality</td>
+<td>Curating &quot;good&quot; tokens (Phi-style) shifts curves by &gt;2× effective compute</td>
+</tr>
+<tr>
+<td>MoE</td>
+<td>Total params decouple from active FLOPs; scaling laws per-active-FLOP</td>
+</tr>
+<tr>
+<td>Post-training</td>
+<td>Some capabilities (instruction following, code) shift with SFT+RLHF more than pretraining</td>
+</tr>
+<tr>
+<td>Multimodality</td>
+<td>Image + text tokens scale together; separate curves per modality</td>
+</tr>
+<tr>
+<td>Synthetic data</td>
+<td>Models generate training data; effective compute can compound</td>
+</tr>
+</tbody></table>
+<p>The Muon optimizer (Kimi Moonlight, 2024) showed a ~2× effective-compute gain over AdamW at matched data. Some 2026 training runs use Muon by default. Changes the absolute constant in the scaling law, not its shape.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">scaling-laws</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>See <code>code/main.py</code>. We implement the Chinchilla loss equation and solve for compute-optimal <code>(N, D)</code> at each of several compute budgets.</p>
+<h3 id="step-1-chinchilla-loss"><a class="anchor" href="#step-1-chinchilla-loss">#</a> Step 1: Chinchilla loss</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def chinchilla_loss(N, D, A=406.4, B=410.7, alpha=0.34, beta=0.28, E=1.69):
+    return A / N ** alpha + B / D ** beta + E</code></pre>
+      </div>
+    <p>Plot <code>L</code> as a contour over <code>(N, D)</code> at fixed <code>C = 6ND</code>. Find the minimum.</p>
+<h3 id="step-2-compute-optimal-frontier"><a class="anchor" href="#step-2-compute-optimal-frontier">#</a> Step 2: compute-optimal frontier</h3>
+<p>For compute budgets from <code>1e17</code> to <code>1e25</code> FLOPs, find <code>(N, D)</code> that minimize loss subject to <code>6ND = C</code>. Verify the ratio <code>D/N ≈ 20</code>.</p>
+<h3 id="step-3-over-training-cost"><a class="anchor" href="#step-3-over-training-cost">#</a> Step 3: over-training cost</h3>
+<p>Compute the extra loss you pay to train a 10× smaller model (1/10 of optimal N, 10× the optimal D). Reports the inference FLOP savings (proportional to N) in exchange.</p>
+<h3 id="step-4-compare-to-real-models"><a class="anchor" href="#step-4-compare-to-real-models">#</a> Step 4: compare to real models</h3>
+<p>Drop in known <code>(N, D)</code> pairs for GPT-3, Chinchilla, Llama 3 8B, DeepSeek-V3 (active params), and compare predicted vs reported loss.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>You&#39;re unlikely to train a frontier model yourself. But scaling laws tell you:</p>
+<ol>
+<li><strong>Whether your fine-tune has enough data.</strong> If your task-specific data is below 20 tokens per param of the base model, expect saturation at some loss floor.</li>
+<li><strong>Whether to pick a bigger base model.</strong> If you&#39;re spending all your budget on inference, prefer a smaller, longer-trained model.</li>
+<li><strong>Where the returns diminish.</strong> Beyond 1000× Chinchilla-optimal, log-loss changes become noise.</li>
+</ol>
+<p><strong>The research trajectory in 2026:</strong></p>
+<ul>
+<li><strong>Data-constrained regime.</strong> The web has a finite number of high-quality tokens (~5–10 trillion English after filtering). Frontier pretraining is approaching this ceiling. Synthetic data, multilingual, multimodal, and RLHF-scaled fine-tuning are the next levers.</li>
+<li><strong>Compute-multiplier tricks.</strong> Muon optimizer, MoE, better data curation — each shifts the absolute constants, not the asymptote.</li>
+<li><strong>Scaling laws for RL.</strong> Open question. Early evidence suggests power-law in RL samples but with very different exponents than pretraining.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-training-budget-estimator.md</code>. The skill picks <code>(N, D, hours, GPU)</code> for a new training run given compute budget, deployment constraints, and target loss.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Print Chinchilla-optimal <code>(N, D)</code> for compute budgets <code>1e20</code>, <code>1e22</code>, <code>1e24</code>. Compare to the real model table.</li>
+<li><strong>Medium.</strong> Implement the Hoffmann loss-as-function-of-compute curve. Plot loss vs <code>log10(C)</code> for the compute-optimal frontier. Identify when the law predicts we&#39;d need <code>&gt;10^28</code> FLOPs for the next 0.1 reduction in cross-entropy.</li>
+<li><strong>Hard.</strong> Fit your own scaling law on 5 tiny models (100K to 10M params) trained on the same dataset. Estimate <code>α</code> and <code>E</code>. How well do your exponents match published ones?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Parameters (N)</td>
+<td>&quot;Model size&quot;</td>
+<td>Non-embedding weight count; determines capacity.</td>
+</tr>
+<tr>
+<td>Tokens (D)</td>
+<td>&quot;Training data&quot;</td>
+<td>Number of training tokens seen; determines how well the parameters get used.</td>
+</tr>
+<tr>
+<td>Compute (C)</td>
+<td>&quot;FLOPs spent&quot;</td>
+<td>Approximately <code>6 × N × D</code> for a standard transformer.</td>
+</tr>
+<tr>
+<td>Chinchilla-optimal</td>
+<td>&quot;D/N ≈ 20&quot;</td>
+<td>Ratio that minimizes loss per FLOP of pretraining.</td>
+</tr>
+<tr>
+<td>Over-training</td>
+<td>&quot;Past Chinchilla&quot;</td>
+<td>Spend extra training FLOPs to save inference FLOPs; D/N &gt;&gt; 20.</td>
+</tr>
+<tr>
+<td>Irreducible loss</td>
+<td>&quot;The floor&quot;</td>
+<td>The <code>E</code> term in the scaling law; the entropy of the data itself.</td>
+</tr>
+<tr>
+<td>Emergent capability</td>
+<td>&quot;Sudden jumps at scale&quot;</td>
+<td>Often a scorer artifact; continuous loss is smooth.</td>
+</tr>
+<tr>
+<td>Effective compute</td>
+<td>&quot;Training-efficiency multiplier&quot;</td>
+<td>Better data / optimizer / architecture multiplies how far a FLOP goes.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2001.08361">Kaplan et al. (2020). Scaling Laws for Neural Language Models</a> — the first scaling law paper; undertrained.</li>
+<li><a href="https://arxiv.org/abs/2203.15556">Hoffmann et al. (2022). Training Compute-Optimal Large Language Models</a> — Chinchilla.</li>
+<li><a href="https://arxiv.org/abs/2304.15004">Schaeffer et al. (2023). Are Emergent Abilities of Large Language Models a Mirage?</a> — emergence as measurement artifact.</li>
+<li><a href="https://arxiv.org/abs/2401.00448">Sardana, Frankle (2024). Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws</a> — why Llama&#39;s over-training is right for its workload.</li>
+<li><a href="https://kellerjordan.github.io/posts/muon/">Jordan et al. (2024). Muon: An optimizer for hidden layers in neural networks</a> — 2× compute multiplier.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./12-kv-cache-flash-attention.html"><span>← Previous</span><b>kv cache flash attention</b></a>
+      <a class="next" href="./14-build-a-transformer-capstone.html"><span>Next →</span><b>build a transformer capstone</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Text Splitting Concepts and Architecture — RAG from Scratch</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#c05621;--accent-2:#8a3d17;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/rag-from-scratch"><b>RAG from Scratch</b></a>
+  <nav>
+    <a href="/rag-from-scratch">Index</a>
+    <a href="https://github.com/pguso/rag-from-scratch/blob/main/examples/03_text_splitting_and_chunking/CONCEPT.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/rag-from-scratch">RAG from Scratch</a>
+    </div>
+    <div class="phase-label">Text Splitting</div>
+    <ol class="toc"><li><a href="#table-of-contents">Table of Contents</a></li><li><a href="#overview">Overview</a></li><li><a href="#core-architecture">Core Architecture</a></li><li><a href="#comparison-with-langchainjs">Comparison with LangChain.js</a></li><li><a href="#summary">Summary</a></li><li><a href="#code-walkthrough">Code walkthrough</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">RAG from Scratch · Text Splitting</div>
+    <h1 class="lesson-title">Text Splitting Concepts and Architecture</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RAG from Scratch — Text Splitting ov">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="17.0" y="120.9" width="26.8" height="26.8" rx="2" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55" transform="rotate(144 30.4 134.3)"/>
+        <rect x="12.2" y="116.6" width="25.5" height="25.5" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(126 24.9 129.4)"/>
+        <circle cx="19.5" cy="124.5" r="12.1" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#c05621" textLength="128" lengthAdjust="spacingAndGlyphs">RAG FROM SCRATCH</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#c05621" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#c05621" letter-spacing="-2">ov</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">TEXT SPLITTING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Text Splitting</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Concepts and…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="table-of-contents"><a class="anchor" href="#table-of-contents">#</a> Table of Contents</h2>
+<ol>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#core-architecture">Core Architecture</a></li>
+<li><a href="#comparison-with-langchainjs">Comparison with LangChain.js</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol>
+<hr>
+<h2 id="overview"><a class="anchor" href="#overview">#</a> Overview</h2>
+<p>This module implements text splitting functionality for Retrieval-Augmented Generation (RAG) systems. It takes large documents and breaks them into smaller, manageable chunks while preserving context through overlapping segments.</p>
+<h3 id="key-concepts"><a class="anchor" href="#key-concepts">#</a> Key Concepts</h3>
+<p><strong>Why Split Text?</strong></p>
+<ul>
+<li>Embedding models have token limits (typically 512-8192 tokens)</li>
+<li>Smaller chunks improve retrieval precision</li>
+<li>Overlap maintains context across boundaries</li>
+<li>Better semantic search results</li>
+</ul>
+<p><strong>The Core Problem:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Large Document (10,000 chars)
+        ↓
+[Chunk 1] [Chunk 2] [Chunk 3] [Chunk 4]
+   ↑overlap↑  ↑overlap↑  ↑overlap↑</code></pre>
+      </div>
+    <hr>
+<h2 id="core-architecture"><a class="anchor" href="#core-architecture">#</a> Core Architecture</h2>
+<h3 id="class-hierarchy"><a class="anchor" href="#class-hierarchy">#</a> Class Hierarchy</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">TextSplitter (Base Class)
+    ├── CharacterTextSplitter
+    ├── RecursiveCharacterTextSplitter
+    └── TokenTextSplitter</code></pre>
+      </div>
+    <h3 id="design-philosophy"><a class="anchor" href="#design-philosophy">#</a> Design Philosophy</h3>
+<ol>
+<li><strong>Single Responsibility</strong>: Each class has one job</li>
+<li><strong>Inheritance</strong>: Common logic in base class</li>
+<li><strong>Polymorphism</strong>: Different splitting strategies via <code>splitText()</code></li>
+<li><strong>Composition</strong>: Complex splitters use simpler ones internally</li>
+</ol>
+<hr>
+<h2 id="comparison-with-langchainjs"><a class="anchor" href="#comparison-with-langchainjs">#</a> Comparison with LangChain.js</h2>
+<h3 id="similarities"><a class="anchor" href="#similarities">#</a> Similarities</h3>
+<h4 id="1-same-core-api"><a class="anchor" href="#1-same-core-api">#</a> 1. <strong>Same Core API</strong></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Our Implementation
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200
+});
+const chunks = await splitter.splitDocuments(documents);
+
+// LangChain.js
+import { RecursiveCharacterTextSplitter } from &quot;langchain/text_splitter&quot;;
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200
+});
+const chunks = await splitter.splitDocuments(documents);</code></pre>
+      </div>
+    <p><strong>Result:</strong> Drop-in compatible! Code works with both.</p>
+<h4 id="2-same-class-hierarchy"><a class="anchor" href="#2-same-class-hierarchy">#</a> 2. <strong>Same Class Hierarchy</strong></h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Both implementations:
+- TextSplitter (base)
+  ├── CharacterTextSplitter
+  ├── RecursiveCharacterTextSplitter
+  └── TokenTextSplitter</code></pre>
+      </div>
+    <h4 id="3-same-splitting-logic"><a class="anchor" href="#3-same-splitting-logic">#</a> 3. <strong>Same Splitting Logic</strong></h4>
+<ul>
+<li>Both use the &quot;merge with overlap&quot; algorithm</li>
+<li>Same recursive strategy for large chunks</li>
+<li>Same separator hierarchy</li>
+</ul>
+<h4 id="4-same-metadata-structure"><a class="anchor" href="#4-same-metadata-structure">#</a> 4. <strong>Same Metadata Structure</strong></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    pageContent: &quot;chunk text&quot;,
+    metadata: {
+        source: &quot;...&quot;,
+        chunk: 0,
+        totalChunks: 5
+    }
+}</code></pre>
+      </div>
+    <h3 id="differences"><a class="anchor" href="#differences">#</a> Differences</h3>
+<h4 id="1-code-simplicity"><a class="anchor" href="#1-code-simplicity">#</a> 1. <strong>Code Simplicity</strong></h4>
+<p><strong>Our Implementation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Concise constructor
+constructor({chunkSize = 1000, chunkOverlap = 200, lengthFunction = t =&gt; t.length} = {}) {
+    if (chunkOverlap &gt;= chunkSize) {
+        throw new Error(&#39;chunkOverlap must be less than chunkSize&#39;);
+    }
+    Object.assign(this, {chunkSize, chunkOverlap, lengthFunction});
+}</code></pre>
+      </div>
+    <p><strong>LangChain.js:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// More verbose, more validation
+constructor(fields) {
+    super(fields);
+    this.chunkSize = fields?.chunkSize ?? 1000;
+    this.chunkOverlap = fields?.chunkOverlap ?? 200;
+    // ... many more fields
+    // ... extensive validation
+    // ... error handling
+}</code></pre>
+      </div>
+    <p><strong>Why Simpler?</strong></p>
+<ul>
+<li>Educational focus</li>
+<li>Fewer edge cases</li>
+<li>Easier to understand</li>
+<li>Less production overhead</li>
+</ul>
+<h4 id="2-token-counting"><a class="anchor" href="#2-token-counting">#</a> 2. <strong>Token Counting</strong></h4>
+<p><strong>Our Implementation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const lengthFunction = text =&gt; Math.ceil(text.length / 4);</code></pre>
+      </div>
+    <ul>
+<li>Simple approximation</li>
+<li>No external dependencies</li>
+<li>Fast but less accurate</li>
+</ul>
+<p><strong>LangChain.js:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { encodingForModel } from &quot;js-tiktoken&quot;;
+const encoder = encodingForModel(&quot;gpt-4&quot;);
+const tokens = encoder.encode(text);</code></pre>
+      </div>
+    <ul>
+<li>Uses tiktoken library</li>
+<li>Exact token counting</li>
+<li>Slower but accurate</li>
+</ul>
+<h4 id="3-error-handling"><a class="anchor" href="#3-error-handling">#</a> 3. <strong>Error Handling</strong></h4>
+<p><strong>Our Implementation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Minimal error handling
+if (chunkOverlap &gt;= chunkSize) {
+    throw new Error(&#39;chunkOverlap must be less than chunkSize&#39;);
+}</code></pre>
+      </div>
+    <p><strong>LangChain.js:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Extensive error handling
+if (chunkOverlap &gt;= chunkSize) {
+    throw new Error(`chunkOverlap (${chunkOverlap}) must be less than chunkSize (${chunkSize})`);
+}
+if (chunkSize &lt;= 0) {
+    throw new Error(&#39;chunkSize must be positive&#39;);
+}
+// ... many more validations</code></pre>
+      </div>
+    <h4 id="4-features"><a class="anchor" href="#4-features">#</a> 4. <strong>Features</strong></h4>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Our Implementation</th>
+<th>LangChain.js</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Basic splitting</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Recursive splitting</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Token splitting</td>
+<td>✓ (approximate)</td>
+<td>✓ (exact)</td>
+</tr>
+<tr>
+<td>Metadata tracking</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Custom separators</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Markdown splitting</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Code splitting</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>LaTeX splitting</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>HTML splitting</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Transform callbacks</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Document transformers</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+</tbody></table>
+<h4 id="5-typescript"><a class="anchor" href="#5-typescript">#</a> 5. <strong>TypeScript</strong></h4>
+<p><strong>Our Implementation:</strong></p>
+<ul>
+<li>Pure JavaScript</li>
+<li>JSDoc comments for type hints</li>
+<li>Simpler to understand</li>
+</ul>
+<p><strong>LangChain.js:</strong></p>
+<ul>
+<li>Written in TypeScript</li>
+<li>Full type safety</li>
+<li>Better IDE support</li>
+<li>More complex codebase</li>
+</ul>
+<h3 id="migration-path"><a class="anchor" href="#migration-path">#</a> Migration Path</h3>
+<p><strong>From Our Implementation to LangChain.js:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Step 1: Change import
+// From:
+import { RecursiveCharacterTextSplitter } from &#39;./example.js&#39;;
+// To:
+import { RecursiveCharacterTextSplitter } from &quot;langchain/text_splitter&quot;;
+
+// Step 2: Code stays the same!
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200
+});
+const chunks = await splitter.splitDocuments(documents);
+
+// Step 3: Optionally add LangChain features
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    // LangChain-specific features:
+    separators: [&quot;\n\n&quot;, &quot;\n&quot;, &quot;.&quot;, &quot;!&quot;, &quot;?&quot;, &quot;;&quot;, &quot;,&quot;, &quot; &quot;, &quot;&quot;]
+});</code></pre>
+      </div>
+    <p><strong>Compatibility:</strong> 95% of code works without changes!</p>
+<hr>
+<h2 id="summary"><a class="anchor" href="#summary">#</a> Summary</h2>
+<h3 id="key-takeaways"><a class="anchor" href="#key-takeaways">#</a> Key Takeaways</h3>
+<ol>
+<li><strong>TextSplitter Pattern</strong>: Base class + specialized subclasses</li>
+<li><strong>Core Algorithm</strong>: Merge with overlap for context continuity</li>
+<li><strong>Recursive Strategy</strong>: Try large separators first, fall back to smaller ones</li>
+<li><strong>API Compatibility</strong>: Same interface as LangChain.js</li>
+<li><strong>Simplicity</strong>: Focused on clarity over features</li>
+</ol>
+<h3 id="architecture-benefits"><a class="anchor" href="#architecture-benefits">#</a> Architecture Benefits</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">✓ Modular design (easy to extend)
+✓ Clear separation of concerns
+✓ Reusable components
+✓ Well-documented
+✓ Production-ready algorithm
+✓ LangChain-compatible</code></pre>
+      </div>
+    <h3 id="what-youve-learned"><a class="anchor" href="#what-youve-learned">#</a> What You&#39;ve Learned</h3>
+<ol>
+<li>How text splitting works algorithmically</li>
+<li>Why overlap matters for context</li>
+<li>Recursive splitting strategy</li>
+<li>Token vs character splitting</li>
+<li>How to choose the right configuration</li>
+<li>Differences from LangChain.js</li>
+</ol>
+<h3 id="next-steps"><a class="anchor" href="#next-steps">#</a> Next Steps</h3>
+<ol>
+<li>Implement custom splitters for your domain</li>
+<li>Add specialized separators for your document types</li>
+<li>Experiment with different chunk sizes</li>
+<li>Measure retrieval quality with your data</li>
+</ol>
+
+<h2 id="code-walkthrough"><a class="anchor" href="#code-walkthrough">#</a> Code walkthrough</h2>
+<h2 id="table-of-contents"><a class="anchor" href="#table-of-contents">#</a> Table of Contents</h2>
+<ol>
+<li><a href="#class-by-class-breakdown">Class-by-Class Breakdown</a></li>
+<li><a href="#algorithm-deep-dive">Algorithm Deep Dive</a></li>
+<li><a href="#examples-walkthrough">Examples Walkthrough</a></li>
+<li><a href="#best-practices">Best Practices</a></li>
+</ol>
+<hr>
+<h2 id="class-by-class-breakdown"><a class="anchor" href="#class-by-class-breakdown">#</a> Class-by-Class Breakdown</h2>
+<h3 id="1-textsplitter-base-class"><a class="anchor" href="#1-textsplitter-base-class">#</a> 1. TextSplitter (Base Class)</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">export class TextSplitter {
+    constructor({
+        chunkSize = 1000,
+        chunkOverlap = 200,
+        lengthFunction = t =&gt; t.length,
+        keepSeparator = false
+    } = {}) {
+        if (chunkOverlap &gt;= chunkSize) {
+            throw new Error(&#39;chunkOverlap must be less than chunkSize&#39;);
+        }
+        Object.assign(this, {chunkSize, chunkOverlap, lengthFunction, keepSeparator});
+    }</code></pre>
+      </div>
+    <h4 id="constructor-parameters"><a class="anchor" href="#constructor-parameters">#</a> Constructor Parameters</h4>
+<p><strong><code>chunkSize</code></strong> (default: 1000)</p>
+<ul>
+<li>Maximum size of each chunk</li>
+<li>Measured by <code>lengthFunction</code> (characters or tokens)</li>
+<li>Think of it as the &quot;target size&quot; for chunks</li>
+</ul>
+<p><strong><code>chunkOverlap</code></strong> (default: 200)</p>
+<ul>
+<li>How much content to repeat between chunks</li>
+<li>Creates context continuity</li>
+<li>Must be less than <code>chunkSize</code></li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">Text: &quot;ABCDEFGHIJ&quot; (10 chars)
+chunkSize = 4
+chunkOverlap = 1
+
+Result:
+Chunk 1: &quot;ABCD&quot;
+Chunk 2:    &quot;DEFG&quot;  (D is overlap)
+Chunk 3:       &quot;GHIJ&quot; (G is overlap)</code></pre>
+      </div>
+    <p><strong><code>lengthFunction</code></strong></p>
+<ul>
+<li>How to measure text length</li>
+<li>Default: character count <code>t =&gt; t.length</code></li>
+<li>For tokens: <code>t =&gt; Math.ceil(t.length / 4)</code></li>
+<li>Allows flexible measurement strategies</li>
+</ul>
+<p><strong><code>keepSeparator</code></strong></p>
+<ul>
+<li>Whether to include separators in chunks</li>
+<li>Usually <code>false</code> (remove separators)</li>
+<li>Example: Keep <code>\n\n</code> vs. remove it</li>
+</ul>
+<h4 id="validation"><a class="anchor" href="#validation">#</a> Validation</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (chunkOverlap &gt;= chunkSize) {
+    throw new Error(&#39;chunkOverlap must be less than chunkSize&#39;);
+}</code></pre>
+      </div>
+    <p><strong>Why?</strong> If overlap ≥ size, chunks would infinitely repeat content.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">chunkSize = 5, overlap = 5
+Chunk 1: &quot;ABCDE&quot;
+Chunk 2: &quot;ABCDE&quot; (same content!)
+Chunk 3: &quot;ABCDE&quot; (infinite loop!)</code></pre>
+      </div>
+    <hr>
+<h3 id="2-core-methods"><a class="anchor" href="#2-core-methods">#</a> 2. Core Methods</h3>
+<h4 id="splittext"><a class="anchor" href="#splittext">#</a> <code>splitText()</code></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">splitText() {
+    throw new Error(&#39;splitText() must be implemented by subclass&#39;);
+}</code></pre>
+      </div>
+    <p><strong>Abstract Method Pattern</strong></p>
+<ul>
+<li>Forces subclasses to implement their own logic</li>
+<li>Each splitter has unique splitting strategy</li>
+<li>Base class provides common infrastructure</li>
+</ul>
+<hr>
+<h4 id="splitdocuments"><a class="anchor" href="#splitdocuments">#</a> <code>splitDocuments()</code></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async splitDocuments(documents) {
+    const chunks = [];
+    for (const doc of documents) {
+        chunks.push(...await this.createDocuments([doc.pageContent], [doc.metadata]));
+    }
+    return chunks;
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Main entry point for splitting multiple documents</p>
+<p><strong>Step-by-Step:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input:  [Document1, Document2, Document3]
+           ↓
+Loop:   Document1 → createDocuments() → [Chunk1, Chunk2, Chunk3]
+        Document2 → createDocuments() → [Chunk4, Chunk5]
+        Document3 → createDocuments() → [Chunk6, Chunk7, Chunk8]
+           ↓
+Output: [Chunk1, Chunk2, ..., Chunk8]</code></pre>
+      </div>
+    <p><strong>Key Points:</strong></p>
+<ul>
+<li>Preserves metadata from original documents</li>
+<li>Processes each document independently</li>
+<li>Flattens results into single array</li>
+<li><code>async</code> for potential future async operations</li>
+</ul>
+<hr>
+<h4 id="createdocuments"><a class="anchor" href="#createdocuments">#</a> <code>createDocuments()</code></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async createDocuments(texts, metadatas = []) {
+    const documents = [];
+    for (let i = 0; i &lt; texts.length; i++) {
+        const text = texts[i];
+        const metadata = metadatas[i] || {};
+        const chunks = this.splitText(text);
+
+        for (let j = 0; j &lt; chunks.length; j++) {
+            documents.push(
+                new Document(chunks[j], {
+                    ...metadata,
+                    chunk: j,
+                    totalChunks: chunks.length
+                })
+            );
+        }
+    }
+    return documents;
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Convert text strings into Document objects with metadata</p>
+<p><strong>Step-by-Step Flow:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Input: texts=[&quot;full text&quot;], metadatas=[{source: &quot;pdf&quot;, page: 5}]
+   
+2. Split text:
+   chunks = this.splitText(&quot;full text&quot;)
+   → [&quot;chunk1&quot;, &quot;chunk2&quot;, &quot;chunk3&quot;]
+
+3. Create Documents:
+   For each chunk, create Document with:
+   - pageContent: the chunk text
+   - metadata: original + chunk info
+   
+4. Metadata enrichment:
+   {
+       source: &quot;pdf&quot;,        // from original
+       page: 5,              // from original
+       chunk: 0,             // NEW: which chunk (0-indexed)
+       totalChunks: 3        // NEW: total count
+   }</code></pre>
+      </div>
+    <p><strong>Why add chunk metadata?</strong></p>
+<ul>
+<li>Track position in original document</li>
+<li>Enable &quot;next/previous chunk&quot; navigation</li>
+<li>Useful for reassembly or debugging</li>
+<li>Helps with deduplication</li>
+</ul>
+<hr>
+<h4 id="mergesplits-the-core-algorithm"><a class="anchor" href="#mergesplits-the-core-algorithm">#</a> <code>mergeSplits()</code> - The Core Algorithm</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">mergeSplits(splits, separator) {
+    const chunks = [];
+    let current = [];
+    let length = 0;
+
+    for (const split of splits) {
+        const splitLength = this.lengthFunction(split);
+        const extraLength = current.length ? separator.length : 0;
+
+        // finalize current chunk if it exceeds size
+        if (length + splitLength + extraLength &gt; this.chunkSize) {
+            if (current.length) {
+                chunks.push(this.joinSplits(current, separator));
+            }
+
+            // maintain overlap
+            while (length &gt; this.chunkOverlap &amp;&amp; current.length) {
+                length -= this.lengthFunction(current.shift()) + separator.length;
+            }
+        }
+
+        current.push(split);
+        length += splitLength + (current.length &gt; 1 ? separator.length : 0);
+    }
+
+    if (current.length) {
+        chunks.push(this.joinSplits(current, separator));
+    }
+
+    return chunks.filter(Boolean);
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Core algorithm that creates overlapping chunks</p>
+<p><strong>Visual Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">splits = [&quot;A&quot;, &quot;B&quot;, &quot;C&quot;, &quot;D&quot;, &quot;E&quot;, &quot;F&quot;]
+chunkSize = 3 (chars)
+chunkOverlap = 1 (char)
+separator = &quot;&quot;
+
+Iteration 1: Add &quot;A&quot;
+  current = [&quot;A&quot;], length = 1
+
+Iteration 2: Add &quot;B&quot;
+  current = [&quot;A&quot;, &quot;B&quot;], length = 2
+
+Iteration 3: Add &quot;C&quot;
+  current = [&quot;A&quot;, &quot;B&quot;, &quot;C&quot;], length = 3
+
+Iteration 4: Try to add &quot;D&quot;
+  length + &quot;D&quot; = 3 + 1 = 4 &gt; chunkSize (3)
+  → Finalize chunk: &quot;ABC&quot;
+  → Remove splits until length ≤ overlap (1)
+  → Remove &quot;A&quot;, &quot;B&quot; → Keep &quot;C&quot;
+  → current = [&quot;C&quot;], length = 1
+  → Add &quot;D&quot;: current = [&quot;C&quot;, &quot;D&quot;], length = 2
+
+Iteration 5: Add &quot;E&quot;
+  current = [&quot;C&quot;, &quot;D&quot;, &quot;E&quot;], length = 3
+
+Iteration 6: Try to add &quot;F&quot;
+  length + &quot;F&quot; = 4 &gt; chunkSize
+  → Finalize chunk: &quot;CDE&quot;
+  → Maintain overlap: current = [&quot;E&quot;]
+  → Add &quot;F&quot;: current = [&quot;E&quot;, &quot;F&quot;]
+
+Final: Add remaining: &quot;EF&quot;
+
+Result: [&quot;ABC&quot;, &quot;CDE&quot;, &quot;EF&quot;]
+         overlap→ C
+                overlap→ E</code></pre>
+      </div>
+    <p><strong>Key Algorithm Steps:</strong></p>
+<ol>
+<li><p><strong>Accumulation Phase:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">current.push(split);
+length += splitLength + (current.length &gt; 1 ? separator.length : 0);</code></pre>
+      </div>
+    <ul>
+<li>Add split to current chunk</li>
+<li>Track cumulative length</li>
+<li>Account for separators between splits</li>
+</ul>
+</li>
+<li><p><strong>Overflow Check:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (length + splitLength + extraLength &gt; this.chunkSize) {</code></pre>
+      </div>
+    <ul>
+<li>Would adding this split exceed the limit?</li>
+<li>If yes, finalize current chunk first</li>
+</ul>
+</li>
+<li><p><strong>Finalization:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (current.length) {
+    chunks.push(this.joinSplits(current, separator));
+}</code></pre>
+      </div>
+    <ul>
+<li>Join accumulated splits</li>
+<li>Add to chunks array</li>
+</ul>
+</li>
+<li><p><strong>Overlap Maintenance:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">while (length &gt; this.chunkOverlap &amp;&amp; current.length) {
+    length -= this.lengthFunction(current.shift()) + separator.length;
+}</code></pre>
+      </div>
+    <ul>
+<li>Remove splits from the beginning</li>
+<li>Keep removing until length ≤ chunkOverlap</li>
+<li>This creates the overlap for next chunk</li>
+</ul>
+</li>
+</ol>
+<p><strong>Why <code>filter(Boolean)</code> at the end?</strong></p>
+<ul>
+<li><code>joinSplits()</code> might return <code>null</code> for empty chunks</li>
+<li>Removes any null/undefined entries</li>
+<li>Ensures only valid chunks returned</li>
+</ul>
+<hr>
+<h4 id="joinsplits"><a class="anchor" href="#joinsplits">#</a> <code>joinSplits()</code></h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">joinSplits(splits, separator) {
+    const text = splits.join(separator).trim();
+    return text || null;
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Combine text fragments back into a single string</p>
+<p><strong>Examples:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// With separator
+joinSplits([&quot;Hello&quot;, &quot;World&quot;], &quot; &quot;)
+→ &quot;Hello World&quot;
+
+// With newline separator
+joinSplits([&quot;Paragraph 1&quot;, &quot;Paragraph 2&quot;], &quot;\n\n&quot;)
+→ &quot;Paragraph 1\n\nParagraph 2&quot;
+
+// Empty result
+joinSplits([&quot;&quot;, &quot;&quot;], &quot; &quot;)
+→ null (because trim() makes it empty)</code></pre>
+      </div>
+    <p><strong>Why return <code>null</code> for empty?</strong></p>
+<ul>
+<li>Signals &quot;no valid content&quot;</li>
+<li>Filtered out by <code>mergeSplits()</code></li>
+<li>Prevents empty chunks in final result</li>
+</ul>
+<hr>
+<h3 id="3-charactertextsplitter"><a class="anchor" href="#3-charactertextsplitter">#</a> 3. CharacterTextSplitter</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">export class CharacterTextSplitter extends TextSplitter {
+    constructor({
+        separator = &#39;\n\n&#39;,
+        chunkSize = 1000,
+        chunkOverlap = 200,
+        lengthFunction,
+        keepSeparator = false
+    } = {}) {
+        super({chunkSize, chunkOverlap, lengthFunction, keepSeparator});
+        this.separator = separator;
+    }
+
+    splitText(text) {
+        const splits = text.split(this.separator).filter(s =&gt; s.trim().length &gt; 0);
+        return this.mergeSplits(splits, this.separator);
+    }
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Simple splitting by a single separator</p>
+<p><strong>How It Works:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input text:
+&quot;Paragraph 1\n\nParagraph 2\n\nParagraph 3&quot;
+
+Step 1: Split by separator (&#39;\n\n&#39;)
+→ [&quot;Paragraph 1&quot;, &quot;Paragraph 2&quot;, &quot;Paragraph 3&quot;]
+
+Step 2: Filter empty strings
+→ [&quot;Paragraph 1&quot;, &quot;Paragraph 2&quot;, &quot;Paragraph 3&quot;]
+
+Step 3: Merge with overlap
+→ Uses base class mergeSplits() algorithm</code></pre>
+      </div>
+    <p><strong>Use Cases:</strong></p>
+<ul>
+<li>Splitting by paragraphs (<code>\n\n</code>)</li>
+<li>Splitting by lines (<code>\n</code>)</li>
+<li>Splitting by sections (custom separator)</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const splitter = new CharacterTextSplitter({
+    separator: &#39;\n\n&#39;,
+    chunkSize: 500,
+    chunkOverlap: 50
+});
+
+const text = &quot;Para 1\n\nPara 2\n\nPara 3\n\nPara 4&quot;;
+const chunks = splitter.splitText(text);
+// If each para is ~150 chars:
+// Chunk 1: &quot;Para 1\n\nPara 2\n\nPara 3&quot; (450 chars)
+// Chunk 2: &quot;Para 3\n\nPara 4&quot; (overlap from Para 3)</code></pre>
+      </div>
+    <hr>
+<h3 id="4-recursivecharactertextsplitter-most-important"><a class="anchor" href="#4-recursivecharactertextsplitter-most-important">#</a> 4. RecursiveCharacterTextSplitter (Most Important)</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">export class RecursiveCharacterTextSplitter extends TextSplitter {
+    constructor({
+        separators = [&#39;\n\n&#39;, &#39;\n&#39;, &#39;. &#39;, &#39; &#39;, &#39;&#39;],
+        chunkSize = 1000,
+        chunkOverlap = 200,
+        lengthFunction,
+        keepSeparator = false
+    } = {}) {
+        super({chunkSize, chunkOverlap, lengthFunction, keepSeparator});
+        this.separators = separators;
+    }</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Smart splitting that tries multiple separators hierarchically</p>
+<p><strong>Separator Hierarchy:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. &#39;\n\n&#39;  → Paragraphs (largest semantic unit)
+2. &#39;\n&#39;    → Lines
+3. &#39;. &#39;    → Sentences
+4. &#39; &#39;     → Words
+5. &#39;&#39;      → Characters (last resort)</code></pre>
+      </div>
+    <p><strong>Why This Order?</strong></p>
+<ul>
+<li>Preserves larger semantic units when possible</li>
+<li>Falls back to smaller units only when necessary</li>
+<li>Maintains meaning and context</li>
+</ul>
+<hr>
+<h4 id="the-splittext-algorithm"><a class="anchor" href="#the-splittext-algorithm">#</a> The <code>splitText()</code> Algorithm</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">splitText(text) {
+    const finalChunks = [];
+    let separator = this.separators.at(-1);  // Default to last (empty string)
+    let nextSeparators = [];
+
+    // Choose appropriate separator
+    for (let i = 0; i &lt; this.separators.length; i++) {
+        const sep = this.separators[i];
+        if (text.includes(sep)) {
+            separator = sep;
+            nextSeparators = this.separators.slice(i + 1);
+            break;
+        }
+    }
+
+    const splits = text.split(separator).filter(Boolean);
+    let temp = [];
+
+    for (const s of splits) {
+        if (this.lengthFunction(s) &lt;= this.chunkSize) {
+            temp.push(s);  // Accumulate good splits
+        } else {
+            // Split is too large
+            if (temp.length) {
+                finalChunks.push(...this.mergeSplits(temp, separator));
+                temp = [];
+            }
+
+            if (nextSeparators.length === 0) {
+                finalChunks.push(s);  // No more separators, keep as-is
+            } else {
+                // Recursively split with next separator
+                const recursiveSplitter = new RecursiveCharacterTextSplitter({
+                    ...this,
+                    separators: nextSeparators
+                });
+                finalChunks.push(...recursiveSplitter.splitText(s));
+            }
+        }
+    }
+
+    if (temp.length) {
+        finalChunks.push(...this.mergeSplits(temp, separator));
+    }
+
+    return finalChunks;
+}</code></pre>
+      </div>
+    <p><strong>Step-by-Step Walkthrough:</strong></p>
+<p><strong>Example Text:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;This is paragraph 1.\n\nThis is a very long paragraph that exceeds the chunk size limit and needs to be split further. It has multiple sentences.\n\nThis is paragraph 3.&quot;</code></pre>
+      </div>
+    <p><strong>Execution:</strong></p>
+<p><strong>Step 1: Choose Separator</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">for (let i = 0; i &lt; this.separators.length; i++) {
+    const sep = this.separators[i];
+    if (text.includes(sep)) {
+        separator = sep;
+        nextSeparators = this.separators.slice(i + 1);
+        break;
+    }
+}</code></pre>
+      </div>
+    <ul>
+<li>Check <code>\n\n</code>: ✓ Found!</li>
+<li><code>separator = &#39;\n\n&#39;</code></li>
+<li><code>nextSeparators = [&#39;\n&#39;, &#39;. &#39;, &#39; &#39;, &#39;&#39;]</code></li>
+</ul>
+<p><strong>Step 2: Split by Chosen Separator</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const splits = text.split(separator).filter(Boolean);</code></pre>
+      </div>
+    <p>Result:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">splits = [
+    &quot;This is paragraph 1.&quot;,
+    &quot;This is a very long paragraph...&quot;,  // Too long!
+    &quot;This is paragraph 3.&quot;
+]</code></pre>
+      </div>
+    <p><strong>Step 3: Process Each Split</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">for (const s of splits) {
+    if (this.lengthFunction(s) &lt;= this.chunkSize) {
+        temp.push(s);  // Good size, accumulate
+    } else {
+        // Too large, needs further splitting
+    }
+}</code></pre>
+      </div>
+    <p><strong>Processing:</strong></p>
+<ol>
+<li><p><strong>Split 1: &quot;This is paragraph 1.&quot;</strong> (22 chars)</p>
+<ul>
+<li>✓ Within limit (assuming chunkSize = 100)</li>
+<li>Add to <code>temp</code>: <code>temp = [&quot;This is paragraph 1.&quot;]</code></li>
+</ul>
+</li>
+<li><p><strong>Split 2: &quot;This is a very long paragraph...&quot;</strong> (150 chars)</p>
+<ul>
+<li>✗ Exceeds limit!</li>
+<li>Finalize <code>temp</code>: <code>finalChunks.push(...mergeSplits(temp))</code></li>
+<li><code>temp = []</code></li>
+<li><strong>Recursively split</strong> with next separators <code>[&#39;\n&#39;, &#39;. &#39;, &#39; &#39;, &#39;&#39;]</code></li>
+</ul>
+</li>
+<li><p><strong>Recursive Call:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const recursiveSplitter = new RecursiveCharacterTextSplitter({
+    ...this,
+    separators: [&#39;\n&#39;, &#39;. &#39;, &#39; &#39;, &#39;&#39;]  // Without &#39;\n\n&#39;
+});
+finalChunks.push(...recursiveSplitter.splitText(largeParagraph));</code></pre>
+      </div>
+    <ul>
+<li>Try <code>\n</code>: Not found (no line breaks)</li>
+<li>Try <code>. </code>: ✓ Found!</li>
+<li>Split into sentences</li>
+<li>Each sentence is now within limit</li>
+</ul>
+</li>
+<li><p><strong>Split 3: &quot;This is paragraph 3.&quot;</strong> (22 chars)</p>
+<ul>
+<li>✓ Within limit</li>
+<li>Add to <code>temp</code></li>
+</ul>
+</li>
+</ol>
+<p><strong>Step 4: Finalize Remaining</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (temp.length) {
+    finalChunks.push(...this.mergeSplits(temp, separator));
+}</code></pre>
+      </div>
+    <p><strong>Visual Flow:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Input:
+┌─────────────────────────────────────────┐
+│ Para1 \n\n HUGE_Para2 \n\n Para3        │
+└─────────────────────────────────────────┘
+              ↓ split by &#39;\n\n&#39;
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│  Para1   │  │ HUGE_Para│  │  Para3   │
+│  (OK)    │  │   (TOO   │  │  (OK)    │
+│          │  │   BIG!)  │  │          │
+└──────────┘  └──────────┘  └──────────┘
+                    ↓ recursive split by &#39;. &#39;
+              ┌─────┬─────┬─────┐
+              │Sent1│Sent2│Sent3│
+              │(OK) │(OK) │(OK) │
+              └─────┴─────┴─────┘
+                    ↓
+Final Chunks: [Para1, Sent1, Sent2, Sent3, Para3]</code></pre>
+      </div>
+    <p><strong>Key Insights:</strong></p>
+<ol>
+<li><p><strong>Greedy Separator Selection:</strong></p>
+<ul>
+<li>Always use the largest separator that exists in text</li>
+<li>Preserves semantic units</li>
+</ul>
+</li>
+<li><p><strong>Recursion for Large Splits:</strong></p>
+<ul>
+<li>If a split is too large after using current separator</li>
+<li>Try smaller separators recursively</li>
+<li>Continues until all chunks fit</li>
+</ul>
+</li>
+<li><p><strong>Accumulation Strategy:</strong></p>
+<ul>
+<li>Collect &quot;good&quot; splits in <code>temp</code></li>
+<li>Merge them together (with overlap)</li>
+<li>Only recurse when absolutely necessary</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="5-tokentextsplitter"><a class="anchor" href="#5-tokentextsplitter">#</a> 5. TokenTextSplitter</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">export class TokenTextSplitter extends TextSplitter {
+    constructor({
+        encodingName = &#39;cl100k_base&#39;,
+        chunkSize = 1000,
+        chunkOverlap = 200
+    } = {}) {
+        const lengthFunction = text =&gt; Math.ceil(text.length / 4);
+        super({chunkSize, chunkOverlap, lengthFunction});
+        this.encodingName = encodingName;
+    }
+
+    splitText(text) {
+        const splitter = new RecursiveCharacterTextSplitter({
+            separators: [&#39;\n\n&#39;, &#39;\n&#39;, &#39;. &#39;, &#39; &#39;, &#39;&#39;],
+            chunkSize: this.chunkSize,
+            chunkOverlap: this.chunkOverlap,
+            lengthFunction: this.lengthFunction
+        });
+        return splitter.splitText(text);
+    }
+}</code></pre>
+      </div>
+    <p><strong>Purpose:</strong> Split based on estimated token count instead of characters</p>
+<p><strong>Token Estimation:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const lengthFunction = text =&gt; Math.ceil(text.length / 4);</code></pre>
+      </div>
+    <p><strong>Approximation Rule:</strong></p>
+<ul>
+<li>1 token ≈ 4 characters (rough estimate)</li>
+<li>Actual varies by language and tokenizer</li>
+<li>For production: use proper tokenizer (tiktoken, GPT-tokenizer)</li>
+</ul>
+<p><strong>How It Works:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Text: &quot;Hello world&quot; (11 chars)
+Token estimate: Math.ceil(11 / 4) = 3 tokens
+
+Actual GPT tokens: [&quot;Hello&quot;, &quot; world&quot;] = 2 tokens
+(Approximation is close enough for chunking)</code></pre>
+      </div>
+    <p><strong>Why Approximate?</strong></p>
+<ul>
+<li>Proper tokenization is slow</li>
+<li>Good enough for determining chunk boundaries</li>
+<li>Exact token count happens later during embedding</li>
+</ul>
+<p><strong>Use Cases:</strong></p>
+<ul>
+<li>Embedding models with token limits (e.g., 512 tokens)</li>
+<li>OpenAI API token limits</li>
+<li>Ensuring chunks fit in context windows</li>
+</ul>
+<p><strong>Example:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const splitter = new TokenTextSplitter({
+    encodingName: &#39;cl100k_base&#39;,  // GPT-4 encoding
+    chunkSize: 500,                // 500 tokens
+    chunkOverlap: 50               // 50 token overlap
+});
+
+// Internally uses RecursiveCharacterTextSplitter
+// but with token-based length measurement</code></pre>
+      </div>
+    <hr>
+<h2 id="algorithm-deep-dive"><a class="anchor" href="#algorithm-deep-dive">#</a> Algorithm Deep Dive</h2>
+<h3 id="the-overlap-algorithm-explained"><a class="anchor" href="#the-overlap-algorithm-explained">#</a> The Overlap Algorithm Explained</h3>
+<p><strong>Problem:</strong> How do you create overlapping chunks efficiently?</p>
+<p><strong>Solution:</strong> The &quot;Sliding Window with Memory&quot; approach</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">while (length &gt; this.chunkOverlap &amp;&amp; current.length) {
+    length -= this.lengthFunction(current.shift()) + separator.length;
+}</code></pre>
+      </div>
+    <p><strong>Visual Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Text: &quot;A B C D E F G H I J&quot;
+chunkSize = 3 words
+chunkOverlap = 1 word
+
+Step 1: Build first chunk
+current = [&quot;A&quot;, &quot;B&quot;, &quot;C&quot;]
+length = 3
+→ Finalize: &quot;A B C&quot;
+
+Step 2: Maintain overlap
+Remove from beginning until length ≤ 1:
+  Remove &quot;A&quot;: current = [&quot;B&quot;, &quot;C&quot;], length = 2
+  Remove &quot;B&quot;: current = [&quot;C&quot;], length = 1 ✓
+  
+Step 3: Build next chunk starting with overlap
+current = [&quot;C&quot;]  ← This is the overlap!
+Add &quot;D&quot;: current = [&quot;C&quot;, &quot;D&quot;], length = 2
+Add &quot;E&quot;: current = [&quot;C&quot;, &quot;D&quot;, &quot;E&quot;], length = 3
+→ Finalize: &quot;C D E&quot;
+
+Result:
+Chunk 1: &quot;A B C&quot;
+Chunk 2:     &quot;C D E&quot;  ← &quot;C&quot; is shared
+           ↑ overlap</code></pre>
+      </div>
+    <p><strong>Why This Works:</strong></p>
+<ol>
+<li>Keeps last N items from previous chunk</li>
+<li>N determined by <code>chunkOverlap</code> setting</li>
+<li>Ensures context continuity</li>
+<li>Prevents information loss at boundaries</li>
+</ol>
+<hr>
+<h3 id="recursive-splitting-complexity"><a class="anchor" href="#recursive-splitting-complexity">#</a> Recursive Splitting Complexity</h3>
+<p><strong>Time Complexity Analysis:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Best Case: O(n)
+- Text splits cleanly with first separator
+- No recursion needed
+
+Worst Case: O(n * m)
+- n = text length
+- m = number of separators
+- Must try all separators for each large chunk
+
+Average Case: O(n * log m)
+- Usually splits well with first 2-3 separators</code></pre>
+      </div>
+    <p><strong>Space Complexity:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">O(n) - stores all chunks in memory</code></pre>
+      </div>
+    <p><strong>Optimization Opportunities:</strong></p>
+<ol>
+<li>Cache separator checks</li>
+<li>Limit recursion depth</li>
+<li>Stream large documents</li>
+<li>Parallel processing for multiple docs</li>
+</ol>
+<hr>
+<h2 id="examples-walkthrough"><a class="anchor" href="#examples-walkthrough">#</a> Examples Walkthrough</h2>
+<h3 id="example-1-basic-character-splitting"><a class="anchor" href="#example-1-basic-character-splitting">#</a> Example 1: Basic Character Splitting</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example1() {
+    const url = &#39;https://arxiv.org/pdf/2402.19473&#39;;
+    const documents = await OutputHelper.withSpinner(
+        &#39;Loading PDF...&#39;, 
+        () =&gt; extractTextFromPDF(url, {splitPages: true})
+    );
+
+    OutputHelper.log.info(&#39;Using CharacterTextSplitter (500/50)&#39;);
+    const splitter = new CharacterTextSplitter({
+        chunkSize: 500, 
+        chunkOverlap: 50
+    });
+
+    const chunks = await OutputHelper.withSpinner(
+        &#39;Splitting text...&#39;, 
+        () =&gt; splitter.splitDocuments(documents)
+    );
+
+    OutputHelper.formatStats({
+        Pages: documents.length,
+        Chunks: chunks.length,
+        AvgPerPage: (chunks.length / documents.length).toFixed(1),
+        Splitter: &#39;CharacterTextSplitter&#39;
+    });
+    
+    chunks.slice(0, 3).forEach(OutputHelper.formatChunkPreview);
+}</code></pre>
+      </div>
+    <p><strong>What This Does:</strong></p>
+<ol>
+<li><strong>Load PDF</strong>: Fetches and parses PDF, splitting by pages</li>
+<li><strong>Create Splitter</strong>: CharacterTextSplitter with 500 char chunks, 50 char overlap</li>
+<li><strong>Split Documents</strong>: Each page → multiple chunks</li>
+<li><strong>Display Stats</strong>: Shows chunk counts and averages</li>
+<li><strong>Preview Chunks</strong>: Shows first 3 chunks</li>
+</ol>
+<p><strong>Output Example:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Loading PDF... ✓ Done
+ℹ Using CharacterTextSplitter (500/50)
+Splitting text... ✓ Done
+
+Statistics:
+  Pages: 22
+  Chunks: 156
+  AvgPerPage: 7.1
+  Splitter: CharacterTextSplitter
+
+[Chunk 1]
+Chunk 1/7 | Page 1 | 487 chars
+Retrieval-Augmented Generation for AI-Generated Content...</code></pre>
+      </div>
+    <p><strong>Why 156 Chunks?</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">22 pages × ~7 chunks/page = 154 chunks
+(varies based on page content density)</code></pre>
+      </div>
+    <hr>
+<h3 id="example-2-recursive-character-splitting"><a class="anchor" href="#example-2-recursive-character-splitting">#</a> Example 2: Recursive Character Splitting</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example2() {
+    const docs = await OutputHelper.withSpinner(
+        &#39;Loading PDF...&#39;, 
+        () =&gt; extractTextFromPDF(url, {splitPages: true})
+    );
+
+    const splitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 1000, 
+        chunkOverlap: 200
+    });
+
+    const chunks = await splitter.splitDocuments(docs);
+    const {avg, min, max, median} = OutputHelper.analyzeChunks(chunks);
+
+    OutputHelper.formatStats({
+        &#39;Total Chunks&#39;: chunks.length,
+        &#39;Average Size&#39;: `${avg} chars`,
+        &#39;Min Size&#39;: `${min} chars`,
+        &#39;Max Size&#39;: `${max} chars`,
+        &#39;Median Size&#39;: `${median} chars`,
+        &#39;Chunk Size Limit&#39;: &#39;1000&#39;,
+        &#39;Overlap&#39;: &#39;200&#39;
+    });
+}</code></pre>
+      </div>
+    <p><strong>Key Difference from Example 1:</strong></p>
+<ul>
+<li>Uses <strong>RecursiveCharacterTextSplitter</strong> (smarter)</li>
+<li>Larger chunks (1000 vs 500)</li>
+<li>More overlap (200 vs 50)</li>
+<li>Analyzes chunk size distribution</li>
+</ul>
+<p><strong>Why Median Matters:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">If chunks = [100, 200, 950, 980, 1000, 1000]
+Average = 705 chars
+Median = 965 chars
+
+→ Median shows most chunks are near the limit
+→ Average affected by a few small chunks</code></pre>
+      </div>
+    <hr>
+<h3 id="example-3-token-based-splitting"><a class="anchor" href="#example-3-token-based-splitting">#</a> Example 3: Token-Based Splitting</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example3() {
+    const splitter = new TokenTextSplitter({
+        chunkSize: 500,   // 500 TOKENS (not chars)
+        chunkOverlap: 50
+    });
+
+    const chunks = await splitter.splitDocuments(docs);
+    
+    const tokens = chunks.map(c =&gt; splitter.lengthFunction(c.pageContent));
+    const avg = Math.round(tokens.reduce((a, b) =&gt; a + b, 0) / tokens.length);
+}</code></pre>
+      </div>
+    <p><strong>Difference from Character Splitting:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Character-based: chunkSize = 500 chars
+Token-based:     chunkSize = 500 tokens ≈ 2000 chars
+
+Same chunkSize number, different meaning!</code></pre>
+      </div>
+    <p><strong>Why Use This?</strong></p>
+<ul>
+<li>OpenAI embeddings: 8191 token limit</li>
+<li>GPT-4 context: 128k token limit</li>
+<li>Need to fit within token budgets</li>
+</ul>
+<hr>
+<h3 id="example-4-metadata-filtering"><a class="anchor" href="#example-4-metadata-filtering">#</a> Example 4: Metadata Filtering</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example4() {
+    const chunks = await splitter.splitDocuments(docs);
+    
+    // Filter by chunk position
+    const firstTen = chunks.filter(c =&gt; c.metadata.chunk &lt; 10);
+    
+    // Simulated retrieval
+    const query = &#39;retrieval augmented generation&#39;;
+    const relevant = chunks.filter(c =&gt; 
+        c.pageContent.toLowerCase().includes(query)
+    ).slice(0, 3);
+}</code></pre>
+      </div>
+    <p><strong>What This Shows:</strong></p>
+<ol>
+<li><strong>Metadata is preserved</strong> through splitting</li>
+<li><strong>Can filter by chunk position</strong> (useful for pagination)</li>
+<li><strong>Simulates keyword search</strong> (real RAG uses embeddings)</li>
+</ol>
+<p><strong>Metadata Structure:</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    source: &quot;https://arxiv.org/pdf/2402.19473&quot;,
+    pdf: {...},
+    loc: {pageNumber: 5},
+    chunk: 2,          // This is chunk 2
+    totalChunks: 8     // Out of 8 total from this page
+}</code></pre>
+      </div>
+    <hr>
+<h3 id="example-5-strategy-comparison"><a class="anchor" href="#example-5-strategy-comparison">#</a> Example 5: Strategy Comparison</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function example5() {
+    const strategies = [
+        {name: &#39;Large (1500/150)&#39;, size: 1500, overlap: 150},
+        {name: &#39;Medium (1000/200)&#39;, size: 1000, overlap: 200},
+        {name: &#39;Small (500/50)&#39;, size: 500, overlap: 50}
+    ];
+
+    for (const s of strategies) {
+        const splitter = new RecursiveCharacterTextSplitter({
+            chunkSize: s.size, 
+            chunkOverlap: s.overlap
+        });
+        const chunks = await splitter.splitDocuments(docs);
+        // Compare results...
+    }
+}</code></pre>
+      </div>
+    <p><strong>Results Comparison:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Chunks</th>
+<th>Avg Size</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Large</td>
+<td>45</td>
+<td>1350</td>
+<td>Max context, summarization</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td>67</td>
+<td>920</td>
+<td>Balanced, general purpose</td>
+</tr>
+<tr>
+<td>Small</td>
+<td>156</td>
+<td>480</td>
+<td>Max precision, Q&amp;A</td>
+</tr>
+</tbody></table>
+<p><strong>Trade-offs:</strong></p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">More Chunks:
+  ✓ Better precision
+  ✓ More granular retrieval
+  ✗ Less context per chunk
+  ✗ More compute (embeddings)
+
+Fewer Chunks:
+  ✓ More context
+  ✓ Better for comprehension
+  ✗ Less precise retrieval
+  ✗ May exceed limits</code></pre>
+      </div>
+    <hr>
+<h2 id="best-practices"><a class="anchor" href="#best-practices">#</a> Best Practices</h2>
+<h3 id="1-choosing-chunk-size"><a class="anchor" href="#1-choosing-chunk-size">#</a> 1. Choosing Chunk Size</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Question Answering (need precision)
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 500,
+    chunkOverlap: 50
+});
+
+// Summarization (need context)
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 2000,
+    chunkOverlap: 400
+});
+
+// General Purpose (balanced)
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200
+});</code></pre>
+      </div>
+    <h3 id="2-choosing-overlap"><a class="anchor" href="#2-choosing-overlap">#</a> 2. Choosing Overlap</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Rule of thumb: 10-20% of chunk size
+chunkSize: 1000 → chunkOverlap: 100-200
+chunkSize: 500  → chunkOverlap: 50-100
+chunkSize: 2000 → chunkOverlap: 200-400</code></pre>
+      </div>
+    <h3 id="3-testing-different-strategies"><a class="anchor" href="#3-testing-different-strategies">#</a> 3. Testing Different Strategies</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">async function testStrategies(docs) {
+    const configs = [
+        {size: 500, overlap: 50},
+        {size: 1000, overlap: 100},
+        {size: 1000, overlap: 200},
+        {size: 1500, overlap: 150}
+    ];
+    
+    for (const config of configs) {
+        const splitter = new RecursiveCharacterTextSplitter(config);
+        const chunks = await splitter.splitDocuments(docs);
+        
+        // Measure retrieval quality
+        const quality = await evaluateRetrieval(chunks, queries);
+        console.log(`${config.size}/${config.overlap}: ${quality}`);
+    }
+}</code></pre>
+      </div>
+    <h3 id="4-respecting-document-structure"><a class="anchor" href="#4-respecting-document-structure">#</a> 4. Respecting Document Structure</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// For markdown documents
+const splitter = new RecursiveCharacterTextSplitter({
+    separators: [
+        &#39;\n## &#39;,      // H2 headers
+        &#39;\n### &#39;,     // H3 headers
+        &#39;\n\n&#39;,       // Paragraphs
+        &#39;\n&#39;,         // Lines
+        &#39;. &#39;          // Sentences
+    ]
+});
+
+// For code
+const splitter = new RecursiveCharacterTextSplitter({
+    separators: [
+        &#39;\n\nclass &#39;,  // Class definitions
+        &#39;\n\ndef &#39;,    // Function definitions
+        &#39;\n\n&#39;,        // Blank lines
+        &#39;\n&#39;,          // Lines
+        &#39; &#39;            // Words
+    ]
+});</code></pre>
+      </div>
+    
+
+    <nav class="paginate">
+      <span></span>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#c05621", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#c05621", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

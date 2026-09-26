@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stable Diffusion — Architecture &amp; Fine-Tuning — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/11-stable-diffusion/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Stable Diffusion — Architecture &amp; Fine-Tuning</h1>
+    <p class="lesson-sub">Stable Diffusion is a DDPM that runs in the latent space of a pretrained VAE, conditioned on text via cross-attention, sampled with a fast deterministic ODE solver, and steered by classifier-free guidance.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Use</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 10 (Diffusion), Phase 7 Lesson 02 (Self-Attention)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="113.0" cy="109.5" r="10.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.6" cy="104.6" r="9.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.2" cy="99.6" r="8.9" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M88.5,99.6 L96.8,87.3 L105.0,99.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.7,94.3 L91.4,82.9 L99.0,94.3 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <rect x="15.1" y="119.2" width="26.3" height="26.3" rx="2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.2 132.4)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Stable Diffusion —</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Architecture &amp;…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Trace the five pieces of a Stable Diffusion pipeline: VAE, text encoder, U-Net, scheduler, safety checker — and what each of them actually does</li>
+<li>Explain latent diffusion and why training in a 4x64x64 latent space (instead of a 3x512x512 image) reduces compute by 48x without quality loss</li>
+<li>Use <code>diffusers</code> to generate images, run image-to-image, inpainting, and ControlNet-guided generation</li>
+<li>Fine-tune Stable Diffusion with LoRA on a small custom dataset and load the LoRA adapter at inference</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Training a DDPM directly on 512x512 RGB images is expensive. Every training step backprops through a U-Net that sees 3x512x512 = 786,432 input values, and sampling takes 50+ forward passes through that same U-Net. At the quality level of Stable Diffusion 1.5 (released 2022), pixel-space diffusion would need roughly 256 GPU-months of training and 10-30 seconds per image on a consumer GPU.</p>
+<p>The trick that made open-weight text-to-image practical was <strong>latent diffusion</strong> (Rombach et al., CVPR 2022). Train a VAE that maps a 3x512x512 image to a 4x64x64 latent tensor and back, then do the diffusion in that latent space. Compute drops by <code>(3*512*512)/(4*64*64) = 48x</code>. Sampling drops from tens of seconds to under two seconds on the same GPU.</p>
+<p>Almost every modern image-generation model — SDXL, SD3, FLUX, HunyuanDiT, Wan-Video — is a latent diffusion model with variations on the autoencoder, the denoiser (U-Net or DiT), and the text conditioning. Learn Stable Diffusion and you have learnt the template.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-pipeline"><a class="anchor" href="#the-pipeline">#</a> The pipeline</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    TXT[&quot;Text prompt&quot;] --&gt; TE[&quot;Text encoder&lt;br/&gt;(CLIP-L or T5)&quot;]
+    TE --&gt; CT[&quot;Text&lt;br/&gt;embedding&quot;]
+
+    NOISE[&quot;Noise&lt;br/&gt;4x64x64&quot;] --&gt; UNET[&quot;UNet&lt;br/&gt;(denoiser with&lt;br/&gt;cross-attention&lt;br/&gt;to text)&quot;]
+    CT --&gt; UNET
+
+    UNET --&gt; SCHED[&quot;Scheduler&lt;br/&gt;(DPM-Solver++,&lt;br/&gt;Euler)&quot;]
+    SCHED --&gt; LATENT[&quot;Clean latent&lt;br/&gt;4x64x64&quot;]
+    LATENT --&gt; VAE[&quot;VAE decoder&quot;]
+    VAE --&gt; IMG[&quot;512x512&lt;br/&gt;RGB image&quot;]
+
+    style TE fill:#dbeafe,stroke:#2563eb
+    style UNET fill:#fef3c7,stroke:#d97706
+    style SCHED fill:#fecaca,stroke:#dc2626
+    style IMG fill:#dcfce7,stroke:#16a34a</pre></div><ul>
+<li><strong>VAE</strong> — frozen autoencoder. Encoder turns image into latents (used for img2img and training). Decoder turns latents back into an image.</li>
+<li><strong>Text encoder</strong> — CLIP text encoder (SD 1.x/2.x), CLIP-L + CLIP-G (SDXL), or T5-XXL (SD3/FLUX). Produces a sequence of token embeddings.</li>
+<li><strong>U-Net</strong> — the denoiser. Has cross-attention layers that attend from latents to the text embedding at every resolution level.</li>
+<li><strong>Scheduler</strong> — the sampling algorithm (DDIM, Euler, DPM-Solver++). Picks sigmas, blends predicted noise back into the latent.</li>
+<li><strong>Safety checker</strong> — optional NSFW / illegal-content filter on the output image.</li>
+</ul>
+<h3 id="classifier-free-guidance-cfg"><a class="anchor" href="#classifier-free-guidance-cfg">#</a> Classifier-free guidance (CFG)</h3>
+<p>Plain text conditioning learns <code>epsilon_theta(x_t, t, c)</code> for every prompt <code>c</code>. CFG trains the same network with <code>c</code> dropped 10% of the time (replaced by an empty embedding), giving a single model that predicts both the conditional and the unconditional noise. At inference:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">eps = eps_uncond + w * (eps_cond - eps_uncond)</code></pre>
+      </div>
+    <p><code>w</code> is the guidance scale. <code>w=0</code> is unconditional, <code>w=1</code> is plain conditional, <code>w&gt;1</code> pushes the output toward being &quot;more conditioned on the prompt&quot; at the cost of diversity. SD default is <code>w=7.5</code>.</p>
+<p>CFG is the reason text-to-image works at production quality. Without it, prompts bias the output weakly; with it, prompts dominate.</p>
+<h3 id="latent-space-geometry"><a class="anchor" href="#latent-space-geometry">#</a> Latent space geometry</h3>
+<p>The VAE&#39;s 4-channel latent is not just a compressed image. It is a manifold where arithmetic roughly corresponds to semantic edits (prompt engineering + interpolation both live here), and where the diffusion U-Net has been trained to spend its entire modelling budget. Decoding a random 4x64x64 latent does not produce a random-looking image — it produces garbage, because only a specific submanifold of latents decodes to valid images.</p>
+<p>Two consequences:</p>
+<ol>
+<li><strong>Img2img</strong> = encode image to latent, add partial noise, run the denoiser, decode. Image structure survives because encoding is near-invertible; content changes based on the prompt.</li>
+<li><strong>Inpainting</strong> = same as img2img but the denoiser only updates masked regions; unmasked regions are kept at the encoded latent.</li>
+</ol>
+<h3 id="the-u-net-architecture"><a class="anchor" href="#the-u-net-architecture">#</a> The U-Net architecture</h3>
+<p>The SD U-Net is a big version of the TinyUNet from Lesson 10 with three additions:</p>
+<ul>
+<li><strong>Transformer blocks</strong> at every spatial resolution, containing self-attention + cross-attention to the text embedding.</li>
+<li><strong>Time embedding</strong> via MLP on sinusoidal encoding.</li>
+<li><strong>Skip connections</strong> between encoder and decoder at matching resolutions.</li>
+</ul>
+<p>Total parameters in SD 1.5: ~860M. SDXL: ~2.6B. FLUX: ~12B. The jump in params is mostly in attention layers.</p>
+<h3 id="lora-fine-tuning"><a class="anchor" href="#lora-fine-tuning">#</a> LoRA fine-tuning</h3>
+<p>Full fine-tuning of Stable Diffusion needs 20+ GB of VRAM and updates 860M parameters. LoRA (Low-Rank Adaptation) keeps the base model frozen and injects small rank-decomposition matrices into the attention layers. A LoRA adapter for SD is typically 10-50 MB, trains in 10-60 minutes on a single consumer GPU, and loads at inference time as a drop-in modification.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Original: W_q : (d_in, d_out)   frozen
+LoRA:     W_q + alpha * (A @ B)   where A : (d_in, r), B : (r, d_out)
+
+r is typically 4-32.</code></pre>
+      </div>
+    <p>LoRA is how almost every community fine-tune is distributed. CivitAI and Hugging Face host millions of them.</p>
+<h3 id="schedulers-you-will-see"><a class="anchor" href="#schedulers-you-will-see">#</a> Schedulers you will see</h3>
+<ul>
+<li><strong>DDIM</strong> — deterministic, ~50 steps, simple.</li>
+<li><strong>Euler ancestral</strong> — stochastic, 30-50 steps, slightly more creative samples.</li>
+<li><strong>DPM-Solver++ 2M Karras</strong> — deterministic, 20-30 steps, production default.</li>
+<li><strong>LCM / TCD / Turbo</strong> — consistency models and distilled variants; 1-4 steps at the cost of some quality.</li>
+</ul>
+<p>Swapping schedulers is a one-line change in <code>diffusers</code> and sometimes fixes sample issues without any retraining.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-latent-compression</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>This lesson uses <code>diffusers</code> end-to-end rather than rebuilding Stable Diffusion from scratch. The pieces you would need to rebuild (VAE, text encoder, U-Net, scheduler) are topics of their own lessons; here the goal is fluency with the production API.</p>
+<h3 id="step-1-text-to-image"><a class="anchor" href="#step-1-text-to-image">#</a> Step 1: Text-to-image</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    &quot;runwayml/stable-diffusion-v1-5&quot;,
+    torch_dtype=torch.float16,
+).to(&quot;cuda&quot;)
+
+image = pipe(
+    prompt=&quot;a dog riding a skateboard in tokyo, studio ghibli style&quot;,
+    guidance_scale=7.5,
+    num_inference_steps=25,
+    generator=torch.Generator(&quot;cuda&quot;).manual_seed(42),
+).images[0]
+image.save(&quot;dog.png&quot;)</code></pre>
+      </div>
+    <p><code>float16</code> halves VRAM with no visible quality loss. <code>num_inference_steps=25</code> with the default DPM-Solver++ matches <code>num_inference_steps=50</code> with DDIM.</p>
+<h3 id="step-2-swap-the-scheduler"><a class="anchor" href="#step-2-swap-the-scheduler">#</a> Step 2: Swap the scheduler</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from diffusers import DPMSolverMultistepScheduler, EulerAncestralDiscreteScheduler
+
+pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)</code></pre>
+      </div>
+    <p>Scheduler state is decoupled from U-Net weights. You can train on DDPM and sample with any scheduler.</p>
+<h3 id="step-3-image-to-image"><a class="anchor" href="#step-3-image-to-image">#</a> Step 3: Image-to-image</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from diffusers import StableDiffusionImg2ImgPipeline
+from PIL import Image
+
+img2img = StableDiffusionImg2ImgPipeline.from_pretrained(
+    &quot;runwayml/stable-diffusion-v1-5&quot;,
+    torch_dtype=torch.float16,
+).to(&quot;cuda&quot;)
+
+init_image = Image.open(&quot;dog.png&quot;).convert(&quot;RGB&quot;).resize((512, 512))
+out = img2img(
+    prompt=&quot;a dog riding a skateboard, oil painting&quot;,
+    image=init_image,
+    strength=0.6,
+    guidance_scale=7.5,
+).images[0]</code></pre>
+      </div>
+    <p><code>strength</code> is how much noise to add before denoising (0.0 = unchanged, 1.0 = full regeneration). 0.5-0.7 is the standard range for style transfer.</p>
+<h3 id="step-4-inpainting"><a class="anchor" href="#step-4-inpainting">#</a> Step 4: Inpainting</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from diffusers import StableDiffusionInpaintPipeline
+
+inpaint = StableDiffusionInpaintPipeline.from_pretrained(
+    &quot;runwayml/stable-diffusion-inpainting&quot;,
+    torch_dtype=torch.float16,
+).to(&quot;cuda&quot;)
+
+image = Image.open(&quot;dog.png&quot;).convert(&quot;RGB&quot;).resize((512, 512))
+mask = Image.open(&quot;dog_mask.png&quot;).convert(&quot;L&quot;).resize((512, 512))
+
+out = inpaint(
+    prompt=&quot;a cat&quot;,
+    image=image,
+    mask_image=mask,
+    guidance_scale=7.5,
+).images[0]</code></pre>
+      </div>
+    <p>White pixels in the mask are the area to regenerate. Black pixels are preserved.</p>
+<h3 id="step-5-lora-loading"><a class="anchor" href="#step-5-lora-loading">#</a> Step 5: LoRA loading</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">pipe.load_lora_weights(&quot;sayakpaul/sd-lora-ghibli&quot;)
+pipe.fuse_lora(lora_scale=0.8)
+
+image = pipe(prompt=&quot;a village square in ghibli style&quot;).images[0]</code></pre>
+      </div>
+    <p><code>lora_scale</code> controls strength; 0.0 = no effect, 1.0 = full effect. <code>fuse_lora</code> bakes the adapter into the weights in place for speed, but prevents swapping. Call <code>pipe.unfuse_lora()</code> before loading a different adapter.</p>
+<h3 id="step-6-lora-training-sketch"><a class="anchor" href="#step-6-lora-training-sketch">#</a> Step 6: LoRA training (sketch)</h3>
+<p>Real LoRA training lives in <code>peft</code> or <code>diffusers.training</code>. The outline:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Pseudocode
+for step, batch in enumerate(dataloader):
+    images, prompts = batch
+    latents = vae.encode(images).latent_dist.sample() * 0.18215
+
+    t = torch.randint(0, num_train_timesteps, (batch_size,))
+    noise = torch.randn_like(latents)
+    noisy_latents = scheduler.add_noise(latents, noise, t)
+
+    text_emb = text_encoder(tokenizer(prompts))
+
+    pred_noise = unet(noisy_latents, t, text_emb)  # LoRA weights injected here
+
+    loss = F.mse_loss(pred_noise, noise)
+    loss.backward()
+    optimizer.step()</code></pre>
+      </div>
+    <p>Only the LoRA matrices receive gradient; the base U-Net, VAE, and text encoder are frozen. With a batch size of 1 and gradient checkpointing this fits in 8 GB of VRAM.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In production, the decisions you actually make:</p>
+<ul>
+<li><strong>Model family</strong>: SD 1.5 for open-source community fine-tunes, SDXL for higher fidelity, SD3 / FLUX for state of the art and strict licensing requirements.</li>
+<li><strong>Scheduler</strong>: DPM-Solver++ 2M Karras for 20-30 steps, LCM-LoRA when latency is under 1s.</li>
+<li><strong>Precision</strong>: <code>float16</code> on 4080/4090, <code>bfloat16</code> on A100 and newer, <code>int8</code> (via <code>bitsandbytes</code> or <code>compel</code>) when VRAM is tight.</li>
+<li><strong>Conditioning</strong>: plain text works; for stronger control, add ControlNet (canny, depth, pose) on top of the base pipeline.</li>
+</ul>
+<p>For batch generation, <code>AUTO1111</code> / <code>ComfyUI</code> are the community tools; for production APIs, <code>diffusers</code> + <code>accelerate</code> or <code>optimum-nvidia</code> with TensorRT compilation.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-sd-pipeline-planner.md</code> — a prompt that picks SD 1.5 / SDXL / SD3 / FLUX plus scheduler and precision given a latency budget, fidelity target, and licensing constraint.</li>
+<li><code>outputs/skill-lora-training-setup.md</code> — a skill that writes a full LoRA training config for a custom dataset including captions, rank, batch size, and learning rate.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Generate the same prompt with <code>guidance_scale</code> in <code>[1, 3, 5, 7.5, 10, 15]</code>. Describe how the image changes. At what guidance value do artefacts appear?</li>
+<li><strong>(Medium)</strong> Take any real photograph, run it through <code>StableDiffusionImg2ImgPipeline</code> at <code>strength</code> in <code>[0.2, 0.4, 0.6, 0.8, 1.0]</code>. Which strength preserves composition while changing style? Why does 1.0 ignore the input entirely?</li>
+<li><strong>(Hard)</strong> Train a LoRA on 10-20 images of a single subject (a pet, a logo, a character) and generate novel scenes with that subject in them. Report the LoRA rank and training steps that produced the best identity preservation without overfitting to the input images.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Latent diffusion</td>
+<td>&quot;Diffuse in latents&quot;</td>
+<td>Run the entire DDPM in the VAE latent space (4x64x64) instead of pixel space (3x512x512); 48x compute saving</td>
+</tr>
+<tr>
+<td>VAE scale factor</td>
+<td>&quot;0.18215&quot;</td>
+<td>Constant that rescales the VAE&#39;s raw latent to roughly unit variance; hardcoded in every SD pipeline</td>
+</tr>
+<tr>
+<td>Classifier-free guidance</td>
+<td>&quot;CFG&quot;</td>
+<td>Mix conditional and unconditional noise predictions; the single most impactful inference knob</td>
+</tr>
+<tr>
+<td>Scheduler</td>
+<td>&quot;Sampler&quot;</td>
+<td>The algorithm that turns noise + model predictions into a denoised latent trajectory</td>
+</tr>
+<tr>
+<td>LoRA</td>
+<td>&quot;Low-rank adapter&quot;</td>
+<td>Small rank-decomposition matrices that fine-tune attention layers without touching base weights</td>
+</tr>
+<tr>
+<td>Cross-attention</td>
+<td>&quot;Text-image attention&quot;</td>
+<td>Attention from latent tokens to text tokens; injects prompt information at every U-Net level</td>
+</tr>
+<tr>
+<td>ControlNet</td>
+<td>&quot;Structure conditioning&quot;</td>
+<td>A separately-trained adapter that steers SD with an extra input (canny, depth, pose, segmentation)</td>
+</tr>
+<tr>
+<td>DPM-Solver++</td>
+<td>&quot;The default scheduler&quot;</td>
+<td>Second-order deterministic ODE solver; best quality at low step counts (20-30) in 2026</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2112.10752">High-Resolution Image Synthesis with Latent Diffusion (Rombach et al., 2022)</a> — the Stable Diffusion paper; includes every ablation that justifies the design</li>
+<li><a href="https://arxiv.org/abs/2207.12598">Classifier-Free Diffusion Guidance (Ho &amp; Salimans, 2022)</a> — the CFG paper</li>
+<li><a href="https://arxiv.org/abs/2106.09685">LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)</a> — LoRA was NLP-first; it transferred to SD with almost no changes</li>
+<li><a href="https://huggingface.co/docs/diffusers">diffusers documentation</a> — the reference for every SD / SDXL / SD3 / FLUX pipeline</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-image-generation-diffusion.html"><span>← Previous</span><b>image generation diffusion</b></a>
+      <a class="next" href="./12-video-understanding.html"><span>Next →</span><b>video understanding</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

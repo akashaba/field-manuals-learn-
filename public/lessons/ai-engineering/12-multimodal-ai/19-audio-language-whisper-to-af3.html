@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audio-Language Models: the Whisper to Audio Flamingo 3 Arc — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/19-audio-language-whisper-to-af3/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Audio-Language Models: the Whisper to Audio Flamingo 3 Arc</h1>
+    <p class="lesson-sub">Whisper (Radford et al., December 2022) settled speech recognition — 680k hours of weakly-supervised multilingual speech, a simple encoder-decoder transformer, a benchmark that made every subsequent ASR release cite it. But recognition is not reasoning. Asking &quot;what instruments are in this recording&quot; or &quot;what emotion is the speaker expressing&quot; or &quot;what happened at minute 3&quot; requires audio understanding, not transcription. Qwen-Audio, SALMONN, LTU, and NVIDIA&#39;s Audio Flamingo 3 (AF3, July 2025) progressively built that stack: keep Whisper-class encoders, bolt on Q-formers, train on audio-text instruction data, add chain-of-thought reasoning. This lesson walks the arc.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, log-Mel spectrogram + audio Q-former skeleton)</b></div><div><span>Prerequisites</span><b>Phase 6 (Speech and Audio), Phase 12 · 03 (Q-Former)</b></div><div><span>Time</span><b>~180 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 19">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="42.3" y="43.7" width="33.6" height="33.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(238 59.2 60.5)"/>
+        <rect x="37.6" y="39.4" width="32.3" height="32.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(220 53.7 55.6)"/>
+        <rect x="32.8" y="35.1" width="31.1" height="31.1" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(202 48.3 50.6)"/>
+        <rect x="28.0" y="30.8" width="29.8" height="29.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(185 42.9 45.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">19</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Audio-Language</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Models: the Whisper…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Compute a log-Mel spectrogram from a waveform: windowing, FFT, filter banks, log transform.</li>
+<li>Compare encoder options: Whisper encoder, BEATs, AF-Whisper hybrid. When each wins.</li>
+<li>Build an audio Q-former: N learnable queries cross-attending to spectrogram patches.</li>
+<li>Explain cascaded (Whisper-then-LLM) vs end-to-end audio-LLM training: why end-to-end scales better for reasoning.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Speech recognition was solved by Whisper. OCR-of-audio is a commodity. But &quot;commodity&quot; stops at transcription. If the model cannot reason over what it heard — timing, speakers, emotion, music structure, environmental sounds — transcription alone cannot drive product features.</p>
+<p>Three obvious routes:</p>
+<ol>
+<li><p>Cascade: Whisper transcribes, LLM reasons over the transcript. Works for pure-speech scenarios. Fails for music, environmental audio, multi-speaker overlap, emotion.</p>
+</li>
+<li><p>End-to-end audio-LLM: an audio encoder feeds audio tokens directly into an LLM, skipping transcription. Preserves acoustic information (emotion, speaker, environment). Needs new training data.</p>
+</li>
+<li><p>Hybrid: audio encoder + text decoder that can both transcribe and reason. Qwen-Audio and Audio Flamingo pick this route.</p>
+</li>
+</ol>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="log-mel-spectrogram-the-input-feature"><a class="anchor" href="#log-mel-spectrogram-the-input-feature">#</a> Log-Mel spectrogram: the input feature</h3>
+<p>Every audio encoder starts with the same feature: a log-Mel spectrogram.</p>
+<ol>
+<li>Resample to 16 kHz.</li>
+<li>Short-time Fourier transform with 25ms windows, 10ms hop.</li>
+<li>Take magnitude of the FFT result.</li>
+<li>Apply Mel filter banks (typically 80 filters log-spaced 0-8000 Hz) to warp to perceptual frequency.</li>
+<li>Log compress (log(1 + x)) for dynamic range.</li>
+</ol>
+<p>Result: a 2D array of shape (T, 80) where T is the number of time frames. For a 30-second clip at 100 Hz frame rate: (3000, 80).</p>
+<h3 id="whispers-encoder"><a class="anchor" href="#whispers-encoder">#</a> Whisper&#39;s encoder</h3>
+<p>Whisper&#39;s encoder is a 12-layer ViT-style transformer processing the log-Mel spectrogram as a sequence of time frames. Output: one hidden-state vector per time frame.</p>
+<p>For ASR, Whisper&#39;s decoder is a cross-attention transformer that generates text tokens conditioned on the encoder output. Standard encoder-decoder.</p>
+<p>For ALMs (audio-LLMs), you want the encoder output as input to a different LLM. The pattern: Whisper encoder frozen, Q-former trainable, LLM frozen or tuned.</p>
+<h3 id="beats-and-audio-specific-encoders"><a class="anchor" href="#beats-and-audio-specific-encoders">#</a> BEATs and audio-specific encoders</h3>
+<p>Whisper was trained on speech-dominant data. It is weaker for music and environmental audio.</p>
+<p>BEATs (Chen et al., 2022) is a self-supervised transformer trained on AudioSet. Captures music and environmental sounds better than Whisper at the same parameter count.</p>
+<p>AF-Whisper (Audio Flamingo 3&#39;s hybrid): concat Whisper + BEATs features as the audio input. Whisper carries linguistic signal, BEATs carries acoustic signal.</p>
+<h3 id="audio-q-former"><a class="anchor" href="#audio-q-former">#</a> Audio Q-former</h3>
+<p>Same pattern as BLIP-2&#39;s visual Q-former. A fixed number of learnable queries (often 32 or 64) cross-attend over the audio encoder&#39;s output frames. The queries become audio tokens consumed by the LLM.</p>
+<p>Training alignment stage: Q-former alone, contrastive + captioning losses on audio-text pairs (AudioCaps, Clotho). Instruction stage: end-to-end, unfreeze LLM, train on instruction data.</p>
+<h3 id="the-arc-salmonn-qwen-audio-af3"><a class="anchor" href="#the-arc-salmonn-qwen-audio-af3">#</a> The arc — SALMONN, Qwen-Audio, AF3</h3>
+<p>SALMONN (Tang et al., 2023): Whisper + BEATs + Q-former + LLaMA. The first open audio-LLM with serious reasoning ability. Benchmarks on MMAU show ~0.55 composite.</p>
+<p>Qwen-Audio (Chu et al., 2023): similar architecture, trained on a richer dataset, tuned for multi-turn dialogue. MMAU ~0.60.</p>
+<p>LTU — Listen, Think, Understand (Gong et al., 2023): explicit reasoning data, focus on chain-of-thought over audio clips. Smaller but more focused.</p>
+<p>Audio Flamingo 3 (Goel et al., July 2025): the current open SOTA. 8B LLM backbone (Qwen2 7B), Whisper-large encoder concat BEATs, 64-query Q-former, training on 1M+ audio-text instruction pairs. MMAU 0.72, matches proprietary frontier on some sub-tasks.</p>
+<p>AF3 also introduces on-demand chain-of-thought for audio: the model can optionally emit thinking tokens (&quot;let me identify the instruments first: ...&quot;) before the final answer. Accuracy on complex reasoning tasks lifts 3-5 points when thinking is enabled.</p>
+<h3 id="cascaded-vs-end-to-end"><a class="anchor" href="#cascaded-vs-end-to-end">#</a> Cascaded vs end-to-end</h3>
+<p>Cascaded pipeline:</p>
+<ol>
+<li>Whisper transcribes audio → text.</li>
+<li>LLM reasons over text.</li>
+</ol>
+<p>Works perfectly for &quot;summarize this podcast.&quot; Fails for:</p>
+<ul>
+<li>&quot;What&#39;s the mood of this song?&quot; — mood is in the sound, not words.</li>
+<li>&quot;Who is speaking, Alice or Bob?&quot; — requires speaker identification.</li>
+<li>&quot;At what second does the explosion happen?&quot; — temporal grounding lost in text.</li>
+<li>&quot;Is this real or generated audio?&quot; — deepfake detection needs acoustic features.</li>
+</ul>
+<p>End-to-end preserves acoustic signal. Qwen-Audio and AF3 handle music, environment, and emotion natively.</p>
+<h3 id="2026-production-recipe"><a class="anchor" href="#2026-production-recipe">#</a> 2026 production recipe</h3>
+<p>For a new audio-understanding product:</p>
+<ul>
+<li>Cascaded if: transcription is the goal, no music, no emotion inference.</li>
+<li>AF3 / Qwen-Audio-family if: music, emotion, multi-speaker, or complex audio reasoning.</li>
+</ul>
+<p>Cascaded is cheaper and simpler. End-to-end is more capable.</p>
+<h3 id="mmau-the-audio-reasoning-benchmark"><a class="anchor" href="#mmau-the-audio-reasoning-benchmark">#</a> MMAU — the audio reasoning benchmark</h3>
+<p>MMAU (Massive Multimodal Audio Understanding) is the 2024-2025 audio reasoning benchmark:</p>
+<ul>
+<li>10,000 audio-text QA pairs across speech, music, environmental sounds.</li>
+<li>Covers classification, temporal reasoning, causal reasoning, open-ended QA.</li>
+<li>Tests what cascaded pipelines systematically miss.</li>
+</ul>
+<p>Open SOTA (AF3) at 0.72; proprietary frontier ~0.78 (Gemini 2.5 Pro, Claude Opus 4.7). The gap is smaller than VideoMME&#39;s open-vs-closed delta, indicating audio-LLMs are maturing.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">audio-text-ctc</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code>:</p>
+<ul>
+<li>Implements log-Mel spectrogram computation in stdlib: windowing, naive DFT, Mel filter-bank.</li>
+<li>Audio Q-former skeleton: given encoder output frames, compute Q, K, V, attention, and emit N tokens.</li>
+<li>Cascaded-vs-end-to-end comparison on a toy task.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-audio-llm-pipeline-picker.md</code>. Given an audio task (transcription, music tagging, emotion inference, multi-speaker diarization, environment classification), it picks cascaded, end-to-end AF3, or a hybrid.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Compute the log-Mel spectrogram dimension for a 30-second clip at 16kHz, 25ms window, 10ms hop, 80 Mel bins. How does this change at 48kHz?</p>
+</li>
+<li><p>Why does Whisper underperform on music? What audio features does BEATs capture that Whisper does not?</p>
+</li>
+<li><p>Audio Q-former with 64 queries vs 32: at what task complexity does 64 pay off? 32 save compute for what?</p>
+</li>
+<li><p>Read AF3 Section 4 on on-demand thinking. Propose three audio tasks where chain-of-thought helps the most.</p>
+</li>
+<li><p>Implement a minimal diarization pipeline using AF3&#39;s output. How do you signal speaker changes?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Log-Mel spectrogram</td>
+<td>&quot;Mel features&quot;</td>
+<td>2D (time, frequency) array of log-magnitude values after Mel filter banks</td>
+</tr>
+<tr>
+<td>Audio Q-former</td>
+<td>&quot;Audio Perceiver&quot;</td>
+<td>Cross-attention bottleneck from audio encoder output to fixed-length queries feeding the LLM</td>
+</tr>
+<tr>
+<td>Cascaded</td>
+<td>&quot;ASR-then-LLM&quot;</td>
+<td>Pipeline where Whisper transcribes and a text LLM reasons; loses acoustic information</td>
+</tr>
+<tr>
+<td>End-to-end</td>
+<td>&quot;Audio-LLM&quot;</td>
+<td>Audio features enter the LLM directly via Q-former; preserves acoustic signal</td>
+</tr>
+<tr>
+<td>BEATs</td>
+<td>&quot;Audio AudioSet encoder&quot;</td>
+<td>SSL transformer trained on AudioSet; strong on music + environmental sounds</td>
+</tr>
+<tr>
+<td>MMAU</td>
+<td>&quot;Audio reasoning bench&quot;</td>
+<td>10k QA pairs across speech, music, environment; 2024 eval standard</td>
+</tr>
+<tr>
+<td>On-demand thinking</td>
+<td>&quot;Audio CoT&quot;</td>
+<td>Model can optionally emit reasoning tokens before final answer, lifts accuracy 3-5 pts</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.04356">Radford et al. — Whisper (arXiv:2212.04356)</a></li>
+<li><a href="https://arxiv.org/abs/2311.07919">Chu et al. — Qwen-Audio (arXiv:2311.07919)</a></li>
+<li><a href="https://arxiv.org/abs/2507.08128">Goel et al. — Audio Flamingo 3 (arXiv:2507.08128)</a></li>
+<li><a href="https://arxiv.org/abs/2310.13289">Tang et al. — SALMONN (arXiv:2310.13289)</a></li>
+<li><a href="https://arxiv.org/abs/2305.10790">Gong et al. — LTU (arXiv:2305.10790)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./18-long-video-million-token.html"><span>← Previous</span><b>long video million token</b></a>
+      <a class="next" href="./20-omni-models-thinker-talker.html"><span>Next →</span><b>omni models thinker talker</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3D Gaussian Splatting from Scratch — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/22-3d-gaussian-splatting/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">3D Gaussian Splatting from Scratch</h1>
+    <p class="lesson-sub">A scene is a cloud of millions of 3D Gaussians. Each one has a position, orientation, scale, opacity, and a colour that depends on viewing direction. Rasterise them, backprop through the rasterisation, done.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 13 (3D Vision &amp; NeRF), Phase 1 Lesson 12 (Tensor Operations), Phase 4 Lesson 10 (Diffusion basics optional)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 22">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="15.2" y="119.3" width="26.3" height="26.3" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(137 28.4 132.5)"/>
+        <circle cx="23.0" cy="127.6" r="12.5" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.5" cy="122.7" r="11.9" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">22</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">3D Gaussian</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Splatting from…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why 3D Gaussian Splatting replaced NeRF as the production default for photorealistic 3D reconstruction in 2026</li>
+<li>State the six per-Gaussian parameters (position, rotation quaternion, scale, opacity, spherical harmonics colour, optional feature) and how many floats each contributes</li>
+<li>Implement a 2D Gaussian splatting rasterizer from scratch using <code>alpha</code> compositing, then show how the 3D case projects to the same loop</li>
+<li>Use <code>nerfstudio</code>, <code>gsplat</code>, or <code>SuperSplat</code> to reconstruct a scene from 20-50 photos and export to the <code>KHR_gaussian_splatting</code> glTF extension or the OpenUSD 26.03 <code>UsdVolParticleField3DGaussianSplat</code> schema</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A NeRF stores a scene as the weights of an MLP. Every rendered pixel is hundreds of MLP queries along a ray. Training takes hours, rendering takes seconds, and the weights cannot be edited — if you want to move a chair inside a scene, you have to retrain.</p>
+<p>3D Gaussian Splatting (Kerbl, Kopanas, Leimkühler, Drettakis, SIGGRAPH 2023) replaced all of that. A scene is an explicit set of 3D Gaussians. Rendering is GPU rasterisation at 100+ fps. Training takes minutes. Editing is direct: translate a subset of Gaussians and you have moved the chair. By 2026 the Khronos Group has ratified a glTF extension for Gaussian splats, OpenUSD 26.03 ships a Gaussian splat schema, Zillow and Apartments.com render real estate with them, and most new research papers on 3D reconstruction are variants on the core 3DGS idea.</p>
+<p>The mental model is simple, the math has enough moving parts that most introductions start at rasterisation and skip past the projections and spherical harmonics. This lesson builds the whole thing — a 2D version first, then the 3D extension.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-a-gaussian-carries"><a class="anchor" href="#what-a-gaussian-carries">#</a> What a Gaussian carries</h3>
+<p>One 3D Gaussian is a parametric blob in space with these attributes:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">position         mu         (3,)    centre in world coordinates
+rotation         q          (4,)    unit quaternion encoding orientation
+scale            s          (3,)    log-scales per axis (exponentiated at render time)
+opacity          alpha      (1,)    post-sigmoid opacity [0, 1]
+SH coefficients  c_lm       (3 * (L+1)^2,)   view-dependent colour</code></pre>
+      </div>
+    <p>Rotation + scale build a 3x3 covariance: <code>Sigma = R S S^T R^T</code>. That is the shape of the Gaussian in 3D. Spherical harmonics let the colour change with viewing direction — specular highlights, subtle sheen, view-dependent glow — without storing per-view textures. With SH degree 3 you get 16 coefficients per colour channel, 48 floats per Gaussian for colour alone.</p>
+<p>A scene typically has 1-5 million Gaussians. Each stores roughly 60 floats (3 + 4 + 3 + 1 + 48 + misc). That is 240 MB for a five-million-Gaussian scene — far smaller than the equivalent point cloud with per-point texture, and an order of magnitude smaller than a NeRF&#39;s MLP weights re-rendered at high resolution.</p>
+<h3 id="rasterisation-not-ray-marching"><a class="anchor" href="#rasterisation-not-ray-marching">#</a> Rasterisation, not ray marching</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    SCENE[&quot;Millions of 3D Gaussians&lt;br/&gt;(position, rotation, scale,&lt;br/&gt;opacity, SH colour)&quot;] --&gt; PROJ[&quot;Project to 2D&lt;br/&gt;(camera extrinsics + intrinsics)&quot;]
+    PROJ --&gt; TILES[&quot;Assign to tiles&lt;br/&gt;(16x16 screen-space)&quot;]
+    TILES --&gt; SORT[&quot;Depth-sort&lt;br/&gt;per tile&quot;]
+    SORT --&gt; ALPHA[&quot;Alpha-composite&lt;br/&gt;front-to-back&quot;]
+    ALPHA --&gt; PIX[&quot;Pixel colour&quot;]
+
+    style SCENE fill:#dbeafe,stroke:#2563eb
+    style ALPHA fill:#fef3c7,stroke:#d97706
+    style PIX fill:#dcfce7,stroke:#16a34a</pre></div><p>Five steps, all GPU-friendly. No MLP query per pixel. A single RTX 3080 Ti renders 6 million splats at 147 fps.</p>
+<h3 id="the-projection-step"><a class="anchor" href="#the-projection-step">#</a> The projection step</h3>
+<p>The 3D Gaussian at world position <code>mu</code> with 3D covariance <code>Sigma</code> projects to a 2D Gaussian at screen position <code>mu&#39;</code> with 2D covariance <code>Sigma&#39;</code>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">mu&#39; = project(mu)
+Sigma&#39; = J W Sigma W^T J^T          (2 x 2)
+
+W = viewing transform (rotation + translation of camera)
+J = Jacobian of the perspective projection at mu&#39;</code></pre>
+      </div>
+    <p>The 2D Gaussian&#39;s footprint is an ellipse whose axes are the eigenvectors of <code>Sigma&#39;</code>. Every pixel inside that ellipse receives the Gaussian&#39;s contribution, weighted by <code>exp(-0.5 * (p - mu&#39;)^T Sigma&#39;^-1 (p - mu&#39;))</code>.</p>
+<h3 id="the-alpha-compositing-rule"><a class="anchor" href="#the-alpha-compositing-rule">#</a> The alpha-compositing rule</h3>
+<p>For one pixel, the Gaussians that cover it are sorted back-to-front (or equivalently front-to-back with inverted formula). Colour is composited with the same equation as every semi-transparent rasteriser since the 1980s:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">C_pixel = sum_i alpha_i * T_i * c_i
+
+T_i = prod_{j &lt; i} (1 - alpha_j)       transmittance up to i
+alpha_i = opacity_i * exp(-0.5 * d^T Sigma&#39;^-1 d)   local contribution
+c_i = eval_SH(SH_i, view_direction)    view-dependent colour</code></pre>
+      </div>
+    <p>This is <strong>the same equation as NeRF&#39;s volumetric render</strong>, just over an explicit sparse set of Gaussians instead of dense samples along a ray. That identity is why rendered quality matches NeRF — both are integrating the same radiance-field equation.</p>
+<h3 id="why-this-is-differentiable"><a class="anchor" href="#why-this-is-differentiable">#</a> Why this is differentiable</h3>
+<p>Every step — projection, tile assignment, alpha compositing, SH evaluation — is differentiable with respect to the Gaussian parameters. Given a ground-truth image, compute rendered pixel loss, backprop through the rasteriser, update all <code>(mu, q, s, alpha, c_lm)</code> by gradient descent. Over ~30,000 iterations the Gaussians find their right positions, scales, and colours.</p>
+<h3 id="densification-and-pruning"><a class="anchor" href="#densification-and-pruning">#</a> Densification and pruning</h3>
+<p>A fixed set of Gaussians cannot cover a complex scene. Training includes two adaptive mechanisms:</p>
+<ul>
+<li><strong>Clone</strong> a Gaussian at its current position when its gradient magnitude is high but its scale is small — the reconstruction needs more detail here.</li>
+<li><strong>Split</strong> a large-scale Gaussian into two smaller ones when its gradient is high — one big Gaussian is too smooth to fit the region.</li>
+<li><strong>Prune</strong> Gaussians whose opacity drops below a threshold — they are not contributing.</li>
+</ul>
+<p>Densification runs every N iterations. A scene typically grows from ~100k initial Gaussians (seeded from SfM points) to 1-5M at the end of training.</p>
+<h3 id="spherical-harmonics-in-one-paragraph"><a class="anchor" href="#spherical-harmonics-in-one-paragraph">#</a> Spherical harmonics in one paragraph</h3>
+<p>View-dependent colour is a function <code>c(direction)</code> on the unit sphere. Spherical harmonics are the sphere&#39;s Fourier basis. Truncate at degree <code>L</code> and you get <code>(L+1)^2</code> basis functions per channel. Evaluating the colour for a new view is a dot product between the learned SH coefficients and the basis evaluated at the viewing direction. Degree 0 = one coefficient = constant colour. Degree 3 = 16 coefficients = enough to capture Lambertian shading, specular, and mild reflection. SD Gaussian Splatting papers use degree 3 by default.</p>
+<h3 id="the-2026-production-stack"><a class="anchor" href="#the-2026-production-stack">#</a> The 2026 production stack</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Capture         smartphone / DJI drone / handheld scanner
+2. SfM / MVS       COLMAP or GLOMAP derives camera poses + sparse points
+3. Train 3DGS      nerfstudio / gsplat / inria official / PostShot (~10-30 min on RTX 4090)
+4. Edit            SuperSplat / SplatForge (clean floaters, segment)
+5. Export          .ply -&gt; glTF KHR_gaussian_splatting or .usd (OpenUSD 26.03)
+6. View            Cesium / Unreal / Babylon.js / Three.js / Vision Pro</code></pre>
+      </div>
+    <h3 id="4d-and-generative-variants"><a class="anchor" href="#4d-and-generative-variants">#</a> 4D and generative variants</h3>
+<ul>
+<li><strong>4D Gaussian Splatting</strong> — Gaussians are functions of time; used for volumetric video (Superman 2026, A$AP Rocky&#39;s &quot;Helicopter&quot;).</li>
+<li><strong>Generative splats</strong> — text-to-splat models (Marble by World Labs) that hallucinate entire scenes.</li>
+<li><strong>3D Gaussian Unscented Transform</strong> — NVIDIA NuRec&#39;s variant for autonomous driving simulation.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cv3-gaussian-splat</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-a-2d-gaussian"><a class="anchor" href="#step-1-a-2d-gaussian">#</a> Step 1: A 2D Gaussian</h3>
+<p>We first build a 2D rasteriser. The 3D case reduces to it after projection.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def eval_2d_gaussian(means, covs, points):
+    &quot;&quot;&quot;
+    means:  (G, 2)      centres
+    covs:   (G, 2, 2)   covariance matrices
+    points: (H, W, 2)   pixel coordinates
+    returns: (G, H, W)  density at every pixel for every Gaussian
+    &quot;&quot;&quot;
+    G = means.size(0)
+    H, W, _ = points.shape
+    flat = points.view(-1, 2)
+    inv = torch.linalg.inv(covs)
+    diff = flat[None, :, :] - means[:, None, :]
+    d = torch.einsum(&quot;gpi,gij,gpj-&gt;gp&quot;, diff, inv, diff)
+    density = torch.exp(-0.5 * d)
+    return density.view(G, H, W)</code></pre>
+      </div>
+    <p><code>einsum</code> does the quadratic form <code>diff^T Sigma^-1 diff</code> for every (Gaussian, pixel) pair.</p>
+<h3 id="step-2-2d-splatting-rasteriser"><a class="anchor" href="#step-2-2d-splatting-rasteriser">#</a> Step 2: 2D splatting rasteriser</h3>
+<p>Alpha-compositing front-to-back. Depth in 2D is meaningless, so we use a learned per-Gaussian scalar for order.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def rasterise_2d(means, covs, colours, opacities, depths, image_size):
+    &quot;&quot;&quot;
+    means:     (G, 2)
+    covs:      (G, 2, 2)
+    colours:   (G, 3)
+    opacities: (G,)     in [0, 1]
+    depths:    (G,)     per-Gaussian scalar used for ordering
+    image_size: (H, W)
+    returns:   (H, W, 3) rendered image
+    &quot;&quot;&quot;
+    H, W = image_size
+    yy, xx = torch.meshgrid(
+        torch.arange(H, dtype=torch.float32, device=means.device),
+        torch.arange(W, dtype=torch.float32, device=means.device),
+        indexing=&quot;ij&quot;,
+    )
+    points = torch.stack([xx, yy], dim=-1)
+
+    densities = eval_2d_gaussian(means, covs, points)
+    alphas = opacities[:, None, None] * densities
+    alphas = alphas.clamp(0.0, 0.99)
+
+    order = torch.argsort(depths)
+    alphas = alphas[order]
+    colours_sorted = colours[order]
+
+    T = torch.ones(H, W, device=means.device)
+    out = torch.zeros(H, W, 3, device=means.device)
+    for i in range(means.size(0)):
+        a = alphas[i]
+        out += (T * a)[..., None] * colours_sorted[i][None, None, :]
+        T = T * (1.0 - a)
+    return out</code></pre>
+      </div>
+    <p>Not fast — a real implementation uses tile-based CUDA kernels — but exactly the right math and fully differentiable.</p>
+<h3 id="step-3-a-trainable-2d-splat-scene"><a class="anchor" href="#step-3-a-trainable-2d-splat-scene">#</a> Step 3: A trainable 2D splat scene</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Splats2D(nn.Module):
+    def __init__(self, num_splats=128, image_size=64, seed=0):
+        super().__init__()
+        g = torch.Generator().manual_seed(seed)
+        H, W = image_size, image_size
+        self.means = nn.Parameter(torch.rand(num_splats, 2, generator=g) * torch.tensor([W, H]))
+        self.log_scale = nn.Parameter(torch.ones(num_splats, 2) * math.log(2.0))
+        self.rot = nn.Parameter(torch.zeros(num_splats))  # single angle in 2D
+        self.colour_logits = nn.Parameter(torch.randn(num_splats, 3, generator=g) * 0.5)
+        self.opacity_logit = nn.Parameter(torch.zeros(num_splats))
+        self.depth = nn.Parameter(torch.rand(num_splats, generator=g))
+
+    def covs(self):
+        s = torch.exp(self.log_scale)
+        c, si = torch.cos(self.rot), torch.sin(self.rot)
+        R = torch.stack([
+            torch.stack([c, -si], dim=-1),
+            torch.stack([si, c], dim=-1),
+        ], dim=-2)
+        S = torch.diag_embed(s ** 2)
+        return R @ S @ R.transpose(-1, -2)
+
+    def forward(self, image_size):
+        covs = self.covs()
+        colours = torch.sigmoid(self.colour_logits)
+        opacities = torch.sigmoid(self.opacity_logit)
+        return rasterise_2d(self.means, covs, colours, opacities, self.depth, image_size)</code></pre>
+      </div>
+    <p><code>log_scale</code>, <code>opacity_logit</code>, and <code>colour_logits</code> are all unconstrained parameters mapped through the right activation at render time. This is the standard pattern for every 3DGS implementation.</p>
+<h3 id="step-4-fit-2d-gaussians-to-a-target-image"><a class="anchor" href="#step-4-fit-2d-gaussians-to-a-target-image">#</a> Step 4: Fit 2D Gaussians to a target image</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+import numpy as np
+
+def make_target(size=64):
+    yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+    img = np.zeros((size, size, 3), dtype=np.float32)
+    # Red circle
+    mask = (xx - 20) ** 2 + (yy - 20) ** 2 &lt; 10 ** 2
+    img[mask] = [1.0, 0.2, 0.2]
+    # Blue square
+    mask = (np.abs(xx - 45) &lt; 8) &amp; (np.abs(yy - 40) &lt; 8)
+    img[mask] = [0.2, 0.3, 1.0]
+    return torch.from_numpy(img)
+
+
+target = make_target(64)
+model = Splats2D(num_splats=64, image_size=64)
+opt = torch.optim.Adam(model.parameters(), lr=0.05)
+
+for step in range(200):
+    pred = model((64, 64))
+    loss = F.mse_loss(pred, target)
+    opt.zero_grad(); loss.backward(); opt.step()
+    if step % 40 == 0:
+        print(f&quot;step {step:3d}  mse {loss.item():.4f}&quot;)</code></pre>
+      </div>
+    <p>Over 200 steps the 64 Gaussians settle into the two shapes. That is the entire idea — gradient-descent on explicit geometric primitives.</p>
+<h3 id="step-5-from-2d-to-3d"><a class="anchor" href="#step-5-from-2d-to-3d">#</a> Step 5: From 2D to 3D</h3>
+<p>The 3D extension keeps the same loop. The additions:</p>
+<ol>
+<li>Per-Gaussian rotation is a quaternion instead of a single angle.</li>
+<li>Covariance is <code>R S S^T R^T</code> with <code>R</code> built from the quaternion and <code>S = diag(exp(log_scale))</code>.</li>
+<li>Projection <code>(mu, Sigma) -&gt; (mu&#39;, Sigma&#39;)</code> uses the camera extrinsics and the Jacobian of the perspective projection at <code>mu</code>.</li>
+<li>Colour becomes a spherical-harmonics expansion; evaluate it at the viewing direction.</li>
+<li>Depth-sort is from actual camera-space z instead of a learned scalar.</li>
+</ol>
+<p>Every production implementation (<code>gsplat</code>, <code>inria/gaussian-splatting</code>, <code>nerfstudio</code>) does exactly this on the GPU with tile-based CUDA kernels.</p>
+<h3 id="step-6-spherical-harmonics-evaluation"><a class="anchor" href="#step-6-spherical-harmonics-evaluation">#</a> Step 6: Spherical harmonics evaluation</h3>
+<p>The SH basis up to degree 3 has 16 terms per channel. Evaluation:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def eval_sh_degree_3(sh_coeffs, dirs):
+    &quot;&quot;&quot;
+    sh_coeffs: (..., 16, 3)   last dim is RGB channels
+    dirs:      (..., 3)       unit vectors
+    returns:   (..., 3)
+    &quot;&quot;&quot;
+    C0 = 0.282094791773878
+    C1 = 0.488602511902920
+    C2 = [1.092548430592079, 1.092548430592079,
+          0.315391565252520, 1.092548430592079,
+          0.546274215296039]
+    x, y, z = dirs[..., 0], dirs[..., 1], dirs[..., 2]
+    x2, y2, z2 = x * x, y * y, z * z
+    xy, yz, xz = x * y, y * z, x * z
+
+    result = C0 * sh_coeffs[..., 0, :]
+    result = result - C1 * y[..., None] * sh_coeffs[..., 1, :]
+    result = result + C1 * z[..., None] * sh_coeffs[..., 2, :]
+    result = result - C1 * x[..., None] * sh_coeffs[..., 3, :]
+
+    result = result + C2[0] * xy[..., None] * sh_coeffs[..., 4, :]
+    result = result + C2[1] * yz[..., None] * sh_coeffs[..., 5, :]
+    result = result + C2[2] * (2.0 * z2 - x2 - y2)[..., None] * sh_coeffs[..., 6, :]
+    result = result + C2[3] * xz[..., None] * sh_coeffs[..., 7, :]
+    result = result + C2[4] * (x2 - y2)[..., None] * sh_coeffs[..., 8, :]
+
+    # degree 3 terms omitted here for brevity; full 16-coefficient version in the code file
+    return result</code></pre>
+      </div>
+    <p>Learned <code>sh_coeffs</code> store the &quot;colour in every direction&quot; for that Gaussian. At render time you evaluate against the current view direction and get a 3-vector RGB.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For real 3DGS work, use <code>gsplat</code> (Meta) or <code>nerfstudio</code>:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">pip install nerfstudio gsplat
+ns-download-data example
+ns-train splatfacto --data path/to/data</code></pre>
+      </div>
+    <p><code>splatfacto</code> is nerfstudio&#39;s 3DGS trainer. The run takes 10-30 minutes on an RTX 4090 for a typical scene.</p>
+<p>Export options that matter in 2026:</p>
+<ul>
+<li><code>.ply</code> — raw Gaussian cloud (portable, largest file).</li>
+<li><code>.splat</code> — PlayCanvas / SuperSplat quantised format.</li>
+<li>glTF <code>KHR_gaussian_splatting</code> — Khronos standard, portable across viewers (Feb 2026 RC).</li>
+<li>OpenUSD <code>UsdVolParticleField3DGaussianSplat</code> — USD-native, for NVIDIA Omniverse and Vision Pro pipelines.</li>
+</ul>
+<p>For 4D / dynamic scenes, <code>4DGS</code> and <code>Deformable-3DGS</code> extend the same machinery with time-varying means and opacities.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-3dgs-capture-planner.md</code> — a prompt that plans a capture session (number of photos, camera path, lighting) for a given scene type.</li>
+<li><code>outputs/skill-3dgs-export-router.md</code> — a skill that picks the right export format (<code>.ply</code> / <code>.splat</code> / glTF / USD) given the downstream viewer or engine.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Run the 2D splat trainer above on a different synthetic image. Vary <code>num_splats</code> in <code>[16, 64, 256]</code> and plot MSE vs step for each. Identify the point of diminishing returns.</li>
+<li><strong>(Medium)</strong> Extend the 2D rasteriser to support per-Gaussian RGB colours that depend on a scalar &quot;view angle&quot; through a degree-2 harmonic. Train on a pair of target images and verify the model reconstructs both.</li>
+<li><strong>(Hard)</strong> Clone <code>nerfstudio</code> and train <code>splatfacto</code> on a 20-photo capture of any scene you have (desk, plant, face, room). Export to glTF <code>KHR_gaussian_splatting</code> and open it in a viewer (Three.js <code>GaussianSplats3D</code>, SuperSplat, Babylon.js V9). Report training time, number of Gaussians, and rendered fps.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>3DGS</td>
+<td>&quot;Gaussian splats&quot;</td>
+<td>Explicit scene representation as millions of 3D Gaussians with per-Gaussian position, rotation, scale, opacity, SH colour</td>
+</tr>
+<tr>
+<td>Covariance</td>
+<td>&quot;Shape of the Gaussian&quot;</td>
+<td><code>Sigma = R S S^T R^T</code>; orientation and anisotropic scale of one Gaussian</td>
+</tr>
+<tr>
+<td>Alpha compositing</td>
+<td>&quot;Back-to-front blend&quot;</td>
+<td>Same equation as NeRF&#39;s volumetric render, now over an explicit sparse set</td>
+</tr>
+<tr>
+<td>Densification</td>
+<td>&quot;Clone and split&quot;</td>
+<td>Adaptive addition of new Gaussians where reconstruction is under-fit</td>
+</tr>
+<tr>
+<td>Pruning</td>
+<td>&quot;Delete low-opacity&quot;</td>
+<td>Remove Gaussians that have collapsed to near-zero opacity during training</td>
+</tr>
+<tr>
+<td>Spherical harmonics</td>
+<td>&quot;View-dependent colour&quot;</td>
+<td>Fourier basis on the sphere; stores colour as a function of viewing direction</td>
+</tr>
+<tr>
+<td>Splatfacto</td>
+<td>&quot;nerfstudio&#39;s 3DGS&quot;</td>
+<td>The easiest path to training 3DGS in 2026</td>
+</tr>
+<tr>
+<td><code>KHR_gaussian_splatting</code></td>
+<td>&quot;glTF standard&quot;</td>
+<td>Khronos 2026 extension that makes 3DGS portable across viewers and engines</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/">3D Gaussian Splatting for Real-Time Radiance Field Rendering (Kerbl et al., SIGGRAPH 2023)</a> — the original paper</li>
+<li><a href="https://github.com/nerfstudio-project/gsplat">gsplat (Meta/nerfstudio)</a> — production-quality CUDA rasteriser</li>
+<li><a href="https://docs.nerf.studio/nerfology/methods/splat.html">nerfstudio Splatfacto</a> — reference training recipe</li>
+<li><a href="https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_gaussian_splatting/README.md">Khronos KHR_gaussian_splatting extension</a> — the 2026 portable format</li>
+<li><a href="https://openusd.org/release/">OpenUSD 26.03 release notes</a> — <code>UsdVolParticleField3DGaussianSplat</code> schema</li>
+<li><a href="https://www.thefuture3d.com/blog-0/2026/4/4/state-of-gaussian-splatting-2026">THE FUTURE 3D State of Gaussian Splatting 2026</a> — industry overview</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./21-keypoint-pose.html"><span>← Previous</span><b>keypoint pose</b></a>
+      <a class="next" href="./23-diffusion-transformers-rectified-flow.html"><span>Next →</span><b>diffusion transformers rectified flow</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EAGLE-3 Speculative Decoding in Production — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/05-eagle3-speculative-decoding/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">EAGLE-3 Speculative Decoding in Production</h1>
+    <p class="lesson-sub">Speculative decoding pairs a fast draft model with the target model. The draft proposes K tokens; the target verifies in a single forward; accepted tokens are free. In 2026, EAGLE-3 is the production-grade variant — it trains a draft head on the target model&#39;s hidden states rather than on raw tokens, pushing acceptance rate alpha into the 0.6-0.8 band on general chat. The right question is not &quot;how fast is the draft&quot; but &quot;what is alpha on my traffic?&quot; If alpha drops below ~0.55, speculative decoding is net negative at high concurrency because every rejected draft costs a second target forward pass. This lesson teaches you to measure alpha first and flip the flag second.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, toy acceptance-rate simulator)</b></div><div><span>Prerequisites</span><b>Phase 17 · 04 (Serving Engine Internals), Phase 10 · 18 (Multi-Token Prediction)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="114.0" cy="110.3" r="10.3" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.5" cy="105.4" r="9.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.1" cy="100.5" r="9.0" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M89.3,100.5 L97.7,88.0 L106.1,100.5 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M84.5,95.2 L92.3,83.6 L100.0,95.2 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M79.8,89.9 L86.8,79.3 L93.9,89.9 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">EAGLE-3 Speculative</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Decoding in…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Name the three generations of speculative decoding and explain what EAGLE-3 changes from EAGLE-2 and from a classic draft model.</li>
+<li>Define acceptance rate alpha, compute expected speedup from alpha and K (draft length), and identify the break-even alpha for your target concurrency.</li>
+<li>Explain why speculative decoding is opt-in (not default) in vLLM 2026 and why turning it on without measuring alpha is a production anti-pattern.</li>
+<li>Write a measurement plan: which benchmark, which prompt distribution, which concurrency point, which metric to gate on.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Decode is memory-bound. On an H100 running Llama 3.3 70B FP8, each decoded token reads ~140 GB/s of weights and emits one token. The GPU compute is almost idle during decode — the bottleneck is HBM bandwidth, not matmul throughput.</p>
+<p>Speculative decoding exploits the gap. Generate K candidate tokens with a cheap draft model, then ask the target model to verify all K in a single forward pass. Each verified token is effectively free (amortized into a batch-of-K forward the target would have had to do anyway).</p>
+<p>The classic draft-model approach uses a smaller model of the same family (Llama 3.2 1B drafting for Llama 3.3 70B). It works but acceptance rate is mediocre — the smaller model distribution diverges from the target. EAGLE, then EAGLE-2, then EAGLE-3 train a light draft head directly on the target model&#39;s internal states, so the draft&#39;s distribution tracks the target much more closely. That is why alpha goes from 0.4 with draft-model to 0.6-0.8 with EAGLE-3.</p>
+<p>The catch: EAGLE-3 is opt-in in vLLM 2026. <code>speculative_config</code> must be set explicitly. No flag, no acceleration. Teams that flip it on without measuring alpha on their real traffic often see tail latency get worse, not better.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="what-speculative-decoding-actually-buys"><a class="anchor" href="#what-speculative-decoding-actually-buys">#</a> What speculative decoding actually buys</h3>
+<p>Without spec decode, per-token cost is one target forward. With spec decode at draft length K and acceptance alpha, expected tokens per target forward is <code>1 + K * alpha</code>. The speedup is <code>(1 + K * alpha) / (1 + epsilon)</code> where epsilon is draft-plus-verify overhead. For K=5, alpha=0.7: <code>(1 + 5*0.7) / (1 + 0.1) = 4.5 / 1.1 = 4.1x</code>. Real-world numbers cluster around 2-3x because alpha is rarely that high on production traffic and epsilon grows at high batch size.</p>
+<h3 id="why-alpha-is-the-only-metric-that-matters"><a class="anchor" href="#why-alpha-is-the-only-metric-that-matters">#</a> Why alpha is the only metric that matters</h3>
+<p>Rejected tokens do not disappear — they force a second target forward for the first rejected token. On a workload where alpha drops to 0.4, you pay draft overhead plus verification plus re-roll. At high concurrency (say 256 concurrent), the decode batch is already large enough that the memory-bandwidth gap between &quot;target alone&quot; and &quot;target with verify&quot; shrinks. Below alpha 0.55 on most 2026 hardware, spec decode is net negative.</p>
+<p>Alpha varies by workload. On ShareGPT-style general chat, EAGLE-3 trained on ShareGPT hits 0.6-0.8. On domain-specific traffic (code, medical, legal) the draft head trained on general data drops to 0.4-0.6. Training a domain-specific draft head recovers alpha — it is a light, quick training job compared to target finetuning.</p>
+<h3 id="eagle-generations-at-a-glance"><a class="anchor" href="#eagle-generations-at-a-glance">#</a> EAGLE generations at a glance</h3>
+<ul>
+<li><strong>Classic draft model</strong>: small model of same family. Alpha 0.3-0.5. Infrastructure simple — two models loaded, draft runs K forwards per target forward.</li>
+<li><strong>EAGLE-1 (2024)</strong>: single draft head trained on target hidden states (last layer). Alpha ~0.5-0.6. Small param overhead on top of target.</li>
+<li><strong>EAGLE-2 (2025)</strong>: adaptive draft length and tree-based drafts (verify multiple branches in one target pass). Alpha ~0.6-0.7. More complex draft scheduler.</li>
+<li><strong>EAGLE-3 (2025-2026)</strong>: draft head trained on multiple target layers (not just last), better alignment. Alpha ~0.6-0.8 on general chat.</li>
+</ul>
+<h3 id="the-2026-production-recipe"><a class="anchor" href="#the-2026-production-recipe">#</a> The 2026 production recipe</h3>
+<ol>
+<li>Ship target model plain. Measure baseline TTFT, ITL, throughput at target concurrency.</li>
+<li>Enable EAGLE-3 draft via vLLM <code>speculative_config</code>. Re-run the benchmark.</li>
+<li>Log acceptance rate alpha. vLLM V1 reports this as <code>spec_decode_metrics.accepted_tokens_per_request</code>. Divide by requested draft length to get alpha.</li>
+<li>If alpha &lt; 0.55 on production traffic distribution, disable spec decode or train a domain-specific EAGLE-3 draft.</li>
+<li>At production concurrency, re-run. Confirm P99 ITL did not get worse.</li>
+</ol>
+<h3 id="the-production-pitfall-p99-tail"><a class="anchor" href="#the-production-pitfall-p99-tail">#</a> The production pitfall: P99 tail</h3>
+<p>Mean ITL drops with spec decode. P99 can get worse if you do not tune. Rejected drafts trigger a two-pass sequence (draft + verify-fail + reroll). Under full batch, those two passes serialize. Watch P99 ITL, not P50.</p>
+<h3 id="where-eagle-3-is-already-deployed"><a class="anchor" href="#where-eagle-3-is-already-deployed">#</a> Where EAGLE-3 is already deployed</h3>
+<p>Google deployed speculative decoding in AI Overviews in 2025 (same quality, faster response). vLLM V1 ships <code>speculative_config</code> as the documented interface; N-gram GPU speculative decoding in V1 is the variant compatible with chunked prefill. SGLang supports EAGLE-3 as the recommended draft path for prefix-heavy workloads.</p>
+<h3 id="break-even-math-in-one-line"><a class="anchor" href="#break-even-math-in-one-line">#</a> Break-even math in one line</h3>
+<p>Expected speedup: <code>S(alpha, K) = (1 + K*alpha) / (1 + verify_overhead)</code>. Setting <code>S = 1</code> solves for alpha: <code>alpha_breakeven = verify_overhead / K</code>. For typical verify_overhead ~0.15 and K=5: <code>alpha_breakeven = 0.03</code>. But that is the raw decode math. At high concurrency the verify overhead rises and the decode batch already amortizes memory reads across sequences, so effective alpha_breakeven climbs to ~0.45-0.55 in practice.</p>
+<h3 id="when-not-to-use-speculative-decoding"><a class="anchor" href="#when-not-to-use-speculative-decoding">#</a> When not to use speculative decoding</h3>
+<ul>
+<li>Batch-1 offline generation where latency does not matter. Use plain target.</li>
+<li>Very short outputs (under 50 tokens). Draft overhead and verify cost dominate.</li>
+<li>Specialized domains without a domain-trained draft head. Alpha too low.</li>
+<li>vLLM v0.18.0 plus draft-model spec decode plus <code>--enable-chunked-prefill</code>. This combination does not compile. The documented exception is N-gram GPU spec decode in V1.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mx-speculative-tree</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> simulates a decode loop with and without speculative decoding across a range of alpha values and draft lengths K. It prints the break-even alpha, measured speedup, and tail behavior. Run it on several (alpha, K) combinations to see exactly where speculative decoding stops paying.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-eagle3-rollout.md</code>. Given a target model, traffic distribution description, and concurrency target, it produces a staged EAGLE-3 rollout plan — benchmark baseline, enable config, measure alpha, gate on alpha &gt;= 0.55, watch P99 ITL.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code>. At K=5, what alpha do you need for a 2x speedup? For a 3x speedup? How sensitive is that to verify_overhead?</li>
+<li>Imagine production traffic splits 70% general chat, 30% code. General chat hits alpha 0.7 with EAGLE-3 trained on ShareGPT; code hits alpha 0.4. What is blended alpha and is spec decode net-positive?</li>
+<li>Read the vLLM <code>speculative_config</code> documentation. Name the three modes (draft model, EAGLE, N-gram) and which one is compatible with chunked prefill.</li>
+<li>You see mean ITL drop 25% after enabling EAGLE-3 but P99 ITL went up 15%. Diagnose and propose a mitigation.</li>
+<li>Compute the memory cost of the EAGLE-3 draft head for Llama 3.3 70B. How does it compare to running Llama 3.2 1B as a classic draft?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Speculative decoding</td>
+<td>&quot;draft plus verify&quot;</td>
+<td>Propose K tokens with a cheap model, verify all K in one target forward</td>
+</tr>
+<tr>
+<td>Acceptance rate alpha</td>
+<td>&quot;spec accept rate&quot;</td>
+<td>Fraction of draft tokens accepted by the target; the only metric that matters</td>
+</tr>
+<tr>
+<td>Draft length K</td>
+<td>&quot;spec k&quot;</td>
+<td>How many tokens the draft proposes per target forward; typical 4-8</td>
+</tr>
+<tr>
+<td>Verify overhead epsilon</td>
+<td>&quot;spec overhead&quot;</td>
+<td>Extra cost to verify-and-reroll vs a plain target forward; grows with batch</td>
+</tr>
+<tr>
+<td>EAGLE-3</td>
+<td>&quot;latest EAGLE&quot;</td>
+<td>2025-2026 variant; trains draft head on multiple target layers; alpha 0.6-0.8 on general chat</td>
+</tr>
+<tr>
+<td><code>speculative_config</code></td>
+<td>&quot;vLLM spec config&quot;</td>
+<td>The explicit opt-in in vLLM V1; no default means no acceleration</td>
+</tr>
+<tr>
+<td>N-gram spec decode</td>
+<td>&quot;N-gram draft&quot;</td>
+<td>GPU-side draft using N-gram lookups in the prompt; chunked-prefill-compatible</td>
+</tr>
+<tr>
+<td>Break-even alpha</td>
+<td>&quot;no-op alpha&quot;</td>
+<td>Alpha at which spec decode gives zero speedup; watch this at production concurrency</td>
+</tr>
+<tr>
+<td>Rejected-draft two-pass</td>
+<td>&quot;reroll cost&quot;</td>
+<td>Two target forwards when drafts reject; drives P99 tail</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://docs.vllm.ai/en/latest/features/spec_decode/">vLLM — Speculative Decoding docs</a> — authoritative source on <code>speculative_config</code> and chunked-prefill compatibility in V1.</li>
+<li><a href="https://docs.vllm.ai/en/latest/api/vllm/config/speculative/">vLLM Speculative Config API</a> — the exact field set.</li>
+<li><a href="https://arxiv.org/abs/2401.15077">EAGLE paper (arXiv:2401.15077)</a> — original EAGLE draft-head formulation.</li>
+<li><a href="https://arxiv.org/abs/2406.16858">EAGLE-2 paper (arXiv:2406.16858)</a> — adaptive drafts and trees.</li>
+<li><a href="https://www2.eecs.berkeley.edu/Pubs/TechRpts/2025/EECS-2025-224.html">UC Berkeley EECS-2025-224</a> — efficient LLM system with speculative decoding.</li>
+<li><a href="https://bentoml.com/llm/inference-optimization/speculative-decoding">BentoML — Speculative Decoding</a> — production rollout checklist.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-vllm-serving-internals.html"><span>← Previous</span><b>vllm serving internals</b></a>
+      <a class="next" href="./06-sglang-radixattention.html"><span>Next →</span><b>sglang radixattention</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

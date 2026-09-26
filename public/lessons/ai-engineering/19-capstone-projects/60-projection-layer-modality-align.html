@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Projection Layer for Modality Alignment — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/60-projection-layer-modality-align/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#tests">Tests</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Projection Layer for Modality Alignment</h1>
+    <p class="lesson-sub">A vision encoder produces image tokens. A text decoder consumes text tokens. The two live in different vector spaces. A small two-layer MLP projects image tokens into the text embedding space, and a cosine alignment loss against a paired caption pulls the two spaces into agreement. That projection is the smallest piece of a vision-language model and the one that matters most for transfer.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30-37 (Track B foundations)</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 60">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.4" y="118.6" width="26.1" height="26.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(134 27.4 131.7)"/>
+        <circle cx="22.0" cy="126.7" r="12.4" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.6" cy="121.8" r="11.8" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">60</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Projection Layer for</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Modality Alignment</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Build a two-layer MLP projection that maps image features into the text embedding space.</li>
+<li>Construct a mock text embedding table (no pretrained tokenizer, no real corpus).</li>
+<li>Compute a cosine alignment loss between projected image tokens and a paired caption embedding.</li>
+<li>Train the projection alone with a frozen vision encoder and a frozen text table.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You have a vision encoder (lessons 58-59) producing tokens of dimension <code>vision_hidden = 768</code>. You have a text decoder you want to bolt on top with embedding dimension <code>text_hidden = 512</code> (any other number is just as plausible). The decoder expects text-shaped tokens. The image tokens are not text-shaped: they live in a basis the encoder learned during vision-only pretraining, with no relationship to the decoder&#39;s word vectors.</p>
+<p>Two-layer MLP projection (linear, GELU, linear) bridges the gap. It is small enough (about <code>768 * 1024 + 1024 * 512 = 1.3M</code> parameters) to train in minutes on a single GPU, and it is the only piece that has to learn during the alignment phase. The vision encoder stays frozen. The text embedding table stays frozen. Only the projection moves. This is the recipe LLaVA shipped in 2023, that BLIP-2 reframed as a Q-Former, and that every open-weight VLM since has adopted in some form.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart LR
+  Image[image fixture] --&gt; Enc[frozen ViT encoder]
+  Enc --&gt; Tok[image tokens B x N x 768]
+  Tok --&gt; Pool[CLS pool]
+  Pool --&gt; Proj[2-layer MLP projection]
+  Proj --&gt; Img[image embedding B x 512]
+  Caption[paired caption ids] --&gt; Tab[frozen text table]
+  Tab --&gt; Txt[text embedding B x 512]
+  Img --&gt; Loss[cosine alignment loss]
+  Txt --&gt; Loss</pre></div><h3 id="pooling-before-projection"><a class="anchor" href="#pooling-before-projection">#</a> Pooling before projection</h3>
+<p>The vision encoder emits 197 tokens. The text side has a single caption-level embedding. To align them you need one image-level vector per sample. CLS pooling is the simplest: take the first token from the encoder and project it. Mean pooling over all 197 tokens is another option and is what SigLIP uses. Either pools 197 vectors down to one.</p>
+<h3 id="why-two-layers-and-not-one"><a class="anchor" href="#why-two-layers-and-not-one">#</a> Why two layers and not one</h3>
+<p>A single linear projection can rotate and rescale but cannot fix the basis if the two spaces have curvature mismatches. GELU between two linear layers gives the projection one non-linear bend, which is empirically enough to align CLIP-style features to language model embeddings. Deeper projections (LLaVA-NeXT used GLU; Qwen-VL used a stack of attention layers) are extensions; two-layer MLP is the canonical baseline and is what BLIP-2&#39;s Q-Former projection head ships with under the hood.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Shape</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>fc1</td>
+<td><code>(vision_hidden, projection_hidden)</code></td>
+<td><code>768 * 1024 + 1024</code></td>
+</tr>
+<tr>
+<td>activation</td>
+<td>GELU</td>
+<td>0</td>
+</tr>
+<tr>
+<td>fc2</td>
+<td><code>(projection_hidden, text_hidden)</code></td>
+<td><code>1024 * 512 + 512</code></td>
+</tr>
+</tbody></table>
+<p>About 1.3M parameters for a <code>768 -&gt; 1024 -&gt; 512</code> head.</p>
+<h3 id="cosine-alignment-loss"><a class="anchor" href="#cosine-alignment-loss">#</a> Cosine alignment loss</h3>
+<p>Align does not mean <code>image_emb == text_emb</code>. Align means <code>image_emb</code> points in the same direction as <code>text_emb</code> in the joint space. The cosine loss is <code>1 - cos_sim(image, text)</code>, ranging from 0 (perfectly aligned) to 2 (opposite). Training drives this toward zero per pair. Lesson 62 generalizes to a contrastive batch (InfoNCE) where every image must be closer to its own caption than to any other caption in the batch; this lesson uses the per-pair version so the dynamics are visible.</p>
+<h3 id="frozen-encoder-is-the-trick"><a class="anchor" href="#frozen-encoder-is-the-trick">#</a> Frozen encoder is the trick</h3>
+<p>The vision encoder has 86M parameters. The text table has another few million. Training all of them from a mock corpus is a non-starter. Freezing both means the projection&#39;s 1.3M parameters are the only thing changing, and a few hundred steps on synthetic pairs is enough to drive the loss down. This is exactly the operational shape of every adapter-based VLM: the heavy parts stay frozen, the light bridge trains.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ch-projection-bridge</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>MLPProjector(in_dim, hidden_dim, out_dim)</code>, two-layer linear MLP with GELU activation.</li>
+<li><code>MockTextEmbedding(vocab_size, dim)</code>, a frozen embedding table with deterministic init from a seed.</li>
+<li><code>make_pair(seed, vocab_size)</code>, which synthesizes one paired (image, caption) sample. Captions are short id sequences; the caption embedding is mean-pooled over token embeddings.</li>
+<li><code>cosine_alignment_loss(image_emb, text_emb)</code>, the per-pair <code>1 - cos_sim</code> objective.</li>
+<li>A training loop that runs the projection for 200 steps over 32 synthetic pairs (cycled), with the vision encoder and text table frozen, and prints the loss every 25 steps.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: training reports drop from initial loss around 1.07 down to about 0.80 within 200 steps, demonstrating that the projection alone can pull image tokens toward the text space. The final cosine similarity per pair is also printed.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The same pattern shows up in every open-weight VLM:</p>
+<ul>
+<li><strong>LLaVA 1.5.</strong> Two-layer GELU MLP projection from CLIP-ViT-L hidden to LLaMA embedding dim. Frozen vision encoder, frozen LLM, train only the projection (then unfreeze the LLM in stage two).</li>
+<li><strong>BLIP-2.</strong> Q-Former takes 32 learned query tokens through cross-attention against image tokens, then projects to the LLM embedding dim. The projection head at the very end of Q-Former is the analog of this lesson&#39;s MLP.</li>
+<li><strong>MiniGPT-4.</strong> Single linear projection from BLIP-2 Q-Former output to Vicuna embedding dim.</li>
+<li><strong>Qwen-VL.</strong> Cross-attention adapter with several layers, but the final piece is again a projection to the LM embedding dim.</li>
+</ul>
+<p>The shape varies but the role is identical: pool image tokens, project to text embedding dim, train alone.</p>
+<h2 id="tests"><a class="anchor" href="#tests">#</a> Tests</h2>
+<p><code>code/test_main.py</code> covers:</p>
+<ul>
+<li>projector output shape matches the configured <code>out_dim</code></li>
+<li>frozen text embedding table has zero <code>requires_grad</code> parameters</li>
+<li>cosine loss is zero on identical vectors and is 2 on anti-parallel vectors</li>
+<li>projector gradient flows after one backward pass</li>
+<li>the training loop reduces loss between step 0 and step 200</li>
+</ul>
+<p>Run them:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 -m unittest code/test_main.py</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Replace CLS pooling with mean pooling over the 196 patch tokens and compare final loss after 200 steps. Mean pooling usually trains faster on synthetic data; CLS is more sample-efficient on natural images.</p>
+</li>
+<li><p>Add a learned scalar temperature to the cosine loss (<code>cos / tau</code>) and observe what happens when <code>tau</code> is too small (gradient noise) or too large (loss plateaus high).</p>
+</li>
+<li><p>Swap the two-layer MLP for a single linear layer and quantify the loss gap. The non-linearity matters more on natural image features and less on synthetic ones.</p>
+</li>
+<li><p>Add a small L2 penalty on the projector weights and watch how it interacts with cosine alignment (cosine is scale-invariant, so the penalty mostly shrinks unused directions).</p>
+</li>
+<li><p>Persist projector weights, then reload and run inference without the vision encoder backward pass to verify that only the projector is needed at deploy time.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Modality alignment</td>
+<td>The act of making image and text embeddings comparable in one shared space</td>
+</tr>
+<tr>
+<td>Projection head</td>
+<td>The small module that maps one space to another, usually a 2-layer MLP</td>
+</tr>
+<tr>
+<td>Cosine similarity</td>
+<td>Dot product divided by the product of L2 norms</td>
+</tr>
+<tr>
+<td>Frozen encoder</td>
+<td>The vision (or text) model has all parameters with <code>requires_grad=False</code></td>
+</tr>
+<tr>
+<td>Mock corpus</td>
+<td>Synthetic pairs used so training has no dataset download dependency</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>LLaVA paper for the two-stage train (project, then unfreeze LM).</li>
+<li>BLIP-2 paper for Q-Former as a learnable projection alternative.</li>
+<li>Qwen-VL technical report for cross-attention adapters as deeper projection heads.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./59-vit-transformer.html"><span>← Previous</span><b>vit transformer</b></a>
+      <a class="next" href="./61-cross-attention-fusion.html"><span>Next →</span><b>cross attention fusion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

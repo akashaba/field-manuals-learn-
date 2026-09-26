@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>InternVL3: Native Multimodal Pretraining — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/10-internvl3-native-multimodal/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">InternVL3: Native Multimodal Pretraining</h1>
+    <p class="lesson-sub">Every open VLM before InternVL3 followed the same three-step recipe: take a text LLM trained on trillions of text tokens, bolt on a vision encoder, then fine-tune the seams. This works but has alignment debt — the text LLM has spent its full pretraining budget on pure text and does not natively understand visual tokens. When you add vision post-hoc, the LLM has to re-learn how to relate visual input to its text reasoning without forgetting the text. InternVL3 (Zhu et al., April 2025) rejects the post-hoc approach: one pretraining run, text and multimodal interleaved from step one. The result matches Gemini 2.5 Pro on MMMU-Pro at 78B params open. This lesson reads the case for native pretraining and what changes when you make it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, training-corpus mixer)</b></div><div><span>Prerequisites</span><b>Phase 12 · 05, Phase 12 · 07 (recipes)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 10">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="22.8" cy="127.4" r="12.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.4" cy="122.5" r="11.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="122.0" cy="117.6" r="11.2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="116.5" cy="112.7" r="10.6" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="111.1" cy="107.7" r="10.0" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="105.7" cy="102.8" r="9.3" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">10</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">InternVL3: Native</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Multimodal…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why post-hoc VLM training accumulates alignment debt, citing the three measurable symptoms (catastrophic forgetting, answer drift, visual-text inconsistency).</li>
+<li>Describe InternVL3&#39;s native pretraining corpus mix and why the ratio of text : interleaved : caption matters.</li>
+<li>Compare V2PE (variable visual position encoding) to Qwen2-VL&#39;s M-RoPE.</li>
+<li>Name the Visual Resolution Router (ViR) and Decoupled Vision-Language (DvD) deployment optimizations.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Post-hoc VLM training is the default. LLaVA, BLIP-2, Qwen-VL, Idefics — all take an already-pretrained LLM (Llama, Vicuna, Qwen, Mistral) and add vision. The training stages typically look like:</p>
+<ol>
+<li>Frozen LLM + frozen vision encoder + trainable projector, trained on caption pairs to align embeddings.</li>
+<li>Unfreeze LLM, train on instruction data (LLaVA-Instruct, ShareGPT4V).</li>
+<li>Optional task-specific fine-tune.</li>
+</ol>
+<p>Three symptoms of alignment debt show up:</p>
+<ul>
+<li>Catastrophic forgetting. The post-hoc VLM forgets text-only skills. GSM8K scores drop 5-10 points. Hellaswag scores drop. Pure-text agents regress.</li>
+<li>Answer drift. Small phrasings of the same visual question get different answers. The vision encoder connects to the LLM with weaker bindings than the LLM&#39;s own tokens.</li>
+<li>Visual-text inconsistency. The VLM can describe an image correctly and then answer a question contradicting its own description. Visual tokens do not participate in the LLM&#39;s internal consistency checks the same way text does.</li>
+</ul>
+<p>These symptoms are well-documented. MM1.5 Section 4 quantifies them. LLaVA-OneVision&#39;s ablations hint at them. Native pretraining is the answer.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="native-multimodal-pretraining"><a class="anchor" href="#native-multimodal-pretraining">#</a> Native multimodal pretraining</h3>
+<p>InternVL3 trains from scratch on a corpus that is native multimodal from step one. The mix is:</p>
+<ul>
+<li>40% text-only data (FineWeb, Proof-Pile-2, etc.)</li>
+<li>35% interleaved image-text data (OBELICS, MMC4-style)</li>
+<li>20% paired image-caption data</li>
+<li>5% video-text data</li>
+</ul>
+<p>Vision tokens, text tokens, and cross-modal interactions all participate in the same loss from the first gradient step. No alignment pretraining, no projector freezing stage, no catastrophic forgetting to recover from.</p>
+<p>Training is a single stage for the base model. Instruction tuning follows, but the base model already understands visual tokens as first-class citizens.</p>
+<h3 id="v2pe-variable-visual-position-encoding"><a class="anchor" href="#v2pe-variable-visual-position-encoding">#</a> V2PE (variable visual position encoding)</h3>
+<p>Qwen2-VL uses M-RoPE with fixed axis allocation. InternVL3 introduces V2PE: the position encoding varies per modality type (text, image, video) with learnable scaling. In practice:</p>
+<ul>
+<li>Text tokens get 1D position (text index).</li>
+<li>Image patches get 2D position (row, col).</li>
+<li>Video frames get 3D position (time, row, col).</li>
+</ul>
+<p>The three share the same RoPE frequency base, but the hidden-dim allocation per band is a learned parameter rather than a fixed split. Freedom to trade off temporal vs spatial frequency resolution during pretraining.</p>
+<p>V2PE&#39;s ablation claim: 1-2 points on video benchmarks over M-RoPE at the same compute. Not a revolution, but cleaner.</p>
+<h3 id="visual-resolution-router-vir"><a class="anchor" href="#visual-resolution-router-vir">#</a> Visual Resolution Router (ViR)</h3>
+<p>Deployment optimization. Not all images need full-resolution encoding. A photo with one object at low detail wastes tokens when encoded at 1280px native. ViR is a small classifier that predicts the minimum resolution needed to answer the question, before encoding.</p>
+<p>The routing has three tiers: low-res (256 tokens), medium (576), high (2048+). For 60% of queries in production traffic, low or medium is sufficient. Net effect: 2-3x throughput at equal quality.</p>
+<h3 id="decoupled-vision-language-deployment-dvd"><a class="anchor" href="#decoupled-vision-language-deployment-dvd">#</a> Decoupled Vision-Language deployment (DvD)</h3>
+<p>When you serve a large VLM, the vision encoder runs once per image but the LLM runs autoregressively for every output token. The two components have different bottlenecks (vision = GPU memory bandwidth for conv + attention; LLM = KV cache). DvD splits them onto separate GPUs with streaming between.</p>
+<p>For an 8B + 400M encoder model, DvD roughly doubles per-node throughput vs co-located.</p>
+<h3 id="single-stage-vs-multi-stage-quality"><a class="anchor" href="#single-stage-vs-multi-stage-quality">#</a> Single-stage vs multi-stage quality</h3>
+<p>InternVL3&#39;s primary benchmark claim: at 78B params, match Gemini 2.5 Pro&#39;s MMMU-Pro. At 38B, match GPT-4o. At 8B, lead the open-8B leaderboard. All on a single-stage pretrain + instruction-tune recipe.</p>
+<p>The alignment-debt hypothesis is measurable: InternVL3-8B loses fewer text-benchmark points (MMLU, GSM8K) than Qwen2.5-VL-7B per unit of vision-benchmark gain. The model is more of a generalist because training was one piece, not two.</p>
+<h3 id="internvl35-and-internvl-u"><a class="anchor" href="#internvl35-and-internvl-u">#</a> InternVL3.5 and InternVL-U</h3>
+<p>InternVL3.5 (August 2025) scales the recipe. Same native-pretrain approach, more data, more params. MMMU improvements are incremental.</p>
+<p>InternVL-U (2026) adds unified generation — image output via MMDiT heads on top of the same backbone. The &quot;U&quot; stands for &quot;Understanding + generation,&quot; chasing Transfusion-style unified models (Lesson 12.13). The same native-pretrain backbone supports both understanding and generation heads.</p>
+<h3 id="trade-offs-of-native-pretraining"><a class="anchor" href="#trade-offs-of-native-pretraining">#</a> Trade-offs of native pretraining</h3>
+<p>Native pretraining is not free:</p>
+<ul>
+<li>Compute. Training a new VLM from scratch costs the same as training a text LLM — millions of GPU-hours. Post-hoc adaptation reuses existing LLM weights, saves most of the cost.</li>
+<li>Data. Interleaved image-text corpora at scale are rare. OBELICS is 141M documents; MMC4 is 571M. Text alone ships at 15T tokens. Multimodal pretraining data scarcity is a hard constraint.</li>
+<li>Base-LLM reuse. Native pretraining gives up the option to drop in a new LLM later. Post-hoc lets you swap Llama-3.1 for Llama-4 by retraining only the adapter.</li>
+</ul>
+<p>The bet InternVL3 makes: the alignment debt is worse than the reuse loss. The benchmarks back the claim. The cost-to-produce bars future labs from cheaply replicating. Post-hoc VLMs will keep existing because they remain cheaper for most projects.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-native-pretrain</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> is a training-corpus mixer and ViR router simulator. It:</p>
+<ul>
+<li>Takes a target corpus mix (%text, %interleaved, %caption, %video) and computes expected steps per modality.</li>
+<li>Simulates ViR routing on a batch of queries (distribution: 50% low-detail, 30% medium, 20% high-detail) and reports average token count.</li>
+<li>Reports DvD throughput estimates given encoder vs LLM FLOPs.</li>
+<li>Prints a side-by-side of post-hoc vs native pretraining in params, compute, data, and expected alignment-debt symptoms.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-native-vs-posthoc-auditor.md</code>. Given a proposed VLM training plan, it audits whether to go native or post-hoc, flags alignment-debt risk, and recommends a corpus mix. Use it when you are sizing a new open-VLM project and need to pick the training strategy.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Estimate the compute delta between InternVL3-8B (native pretrain) and LLaVA-OneVision-7B (post-hoc). Ratio of GPU-hours approximately? What explains the gap?</p>
+</li>
+<li><p>InternVL3 reports 40% text / 35% interleaved / 20% caption / 5% video. If your target task is video-heavy, propose a new ratio and argue why the base model still needs substantial text and caption data.</p>
+</li>
+<li><p>Read MM1.5 Section 4 on forgetting. Name the exact benchmark where post-hoc training showed the largest regression. How much did the regression cost?</p>
+</li>
+<li><p>ViR routes 60% of traffic to low-resolution encoding. What kinds of queries does it misroute (sends to low-res when high-res was needed)? Propose three router-failure modes.</p>
+</li>
+<li><p>DvD splits vision and LLM onto separate GPUs. Under what traffic pattern does DvD hurt throughput instead of helping?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Native multimodal pretraining</td>
+<td>&quot;From scratch together&quot;</td>
+<td>Text + image + video tokens participate in the loss from step 1, not bolted on later</td>
+</tr>
+<tr>
+<td>Alignment debt</td>
+<td>&quot;Post-hoc penalty&quot;</td>
+<td>Measurable regression in text skills and answer consistency that comes from bolting vision onto a frozen LLM</td>
+</tr>
+<tr>
+<td>V2PE</td>
+<td>&quot;Variable visual pos encoding&quot;</td>
+<td>Per-modality learnable position encoding allocation; InternVL3&#39;s M-RoPE successor</td>
+</tr>
+<tr>
+<td>ViR</td>
+<td>&quot;Resolution router&quot;</td>
+<td>Small classifier that picks minimum resolution needed per query before encoding, saving inference tokens</td>
+</tr>
+<tr>
+<td>DvD</td>
+<td>&quot;Decoupled deployment&quot;</td>
+<td>Vision encoder on one GPU, LLM on another, with stream handoff; doubles throughput for large VLMs</td>
+</tr>
+<tr>
+<td>InternVL-U</td>
+<td>&quot;Unified understanding + generation&quot;</td>
+<td>2026 follow-up that adds image-generation heads to the native-pretrain backbone</td>
+</tr>
+<tr>
+<td>Interleaved corpus</td>
+<td>&quot;OBELICS / MMC4&quot;</td>
+<td>Documents with text and images in natural reading order; the raw material for native pretraining</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2312.14238">Chen et al. — InternVL 1 (arXiv:2312.14238)</a></li>
+<li><a href="https://arxiv.org/abs/2504.10479">Zhu et al. — InternVL3 (arXiv:2504.10479)</a></li>
+<li><a href="https://arxiv.org/abs/2508.18265">InternVL3.5 (arXiv:2508.18265)</a></li>
+<li><a href="https://arxiv.org/abs/2603.09877">InternVL-U (arXiv:2603.09877)</a></li>
+<li><a href="https://arxiv.org/abs/2409.20566">Zhang et al. — MM1.5 (arXiv:2409.20566)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./09-qwen-vl-family-dynamic-fps.html"><span>← Previous</span><b>qwen vl family dynamic fps</b></a>
+      <a class="next" href="./11-chameleon-early-fusion-tokens.html"><span>Next →</span><b>chameleon early fusion tokens</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

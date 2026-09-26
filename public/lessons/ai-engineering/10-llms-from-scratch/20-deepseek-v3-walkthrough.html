@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DeepSeek-V3 Architecture Walkthrough — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/20-deepseek-v3-walkthrough/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">DeepSeek-V3 Architecture Walkthrough</h1>
+    <p class="lesson-sub">Phase 10 · Lesson 14 named the six architectural knobs every open model turns. DeepSeek-V3 (December 2024, 671B parameters total, 37B active) turns all six and adds four more: Multi-Head Latent Attention, auxiliary-loss-free load balancing, Multi-Token Prediction, and DualPipe training. This lesson reads DeepSeek-V3&#39;s architecture top to bottom and derives every parameter count from the published config. By the end you can explain why the 671B/37B ratio is the right bet and why MLA + MoE together beat either alone at the frontier.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, parameter calculator)</b></div><div><span>Prerequisites</span><b>Phase 10 · 14 (open-model walkthroughs), Phase 10 · 17 (NSA), Phase 10 · 18 (MTP), Phase 10 · 19 (DualPipe)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 20">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="115.4" cy="111.6" r="10.5" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.9" cy="106.7" r="9.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.5" cy="101.7" r="9.2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="99.1" cy="96.8" r="8.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M85.8,96.6 L93.7,84.8 L101.6,96.6 Z" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55"/>
+        <path d="M81.0,91.3 L88.3,80.4 L95.5,91.3 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#55503f" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#55503f" letter-spacing="-2">20</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">DeepSeek-V3</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Architecture…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Read the DeepSeek-V3 config top to bottom and explain each field in terms of the six GPT-2 knobs plus four DeepSeek-specific additions.</li>
+<li>Derive the total parameter count (671B), active parameter count (37B), and the components that contribute to each.</li>
+<li>Compute the KV cache footprint of MLA at 128k context and compare to what a same-active-param dense model with GQA would pay.</li>
+<li>State the four DeepSeek-specific innovations (MLA, MTP, auxiliary-loss-free routing, DualPipe) and name which part of the architecture/training stack each one targets.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>DeepSeek-V3 is the first frontier open model whose architecture is meaningfully different from the Llama family. Llama 3 405B is &quot;GPT-2 with six knobs turned.&quot; DeepSeek-V3 is GPT-2 with all six knobs plus four more. Reading the Llama 3 config is a warmup for reading the DeepSeek config, but the deep structure — the shape of the attention block, the routing logic, the training-time objective — is different enough that you need a separate walkthrough.</p>
+<p>The payoff of learning it: DeepSeek-V3&#39;s open-weights release shifted what &quot;frontier capability&quot; means in open models. The architecture is the blueprint many 2026 training runs are copying. Understanding it is table stakes for any role that touches frontier LLM training or inference.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-invariant-core-again"><a class="anchor" href="#the-invariant-core-again">#</a> The invariant core, again</h3>
+<p>DeepSeek-V3 is still autoregressive. It still stacks decoder blocks. Each block still has attention plus MLP plus two RMSNorms. It still uses SwiGLU in the MLP. It still uses RoPE. Pre-norm. Weight-tied embeddings. Same baseline as every Llama or Mistral.</p>
+<h3 id="the-twist-mla-instead-of-gqa"><a class="anchor" href="#the-twist-mla-instead-of-gqa">#</a> The twist: MLA instead of GQA</h3>
+<p>From Phase 10 · 14 you know GQA shrinks the KV cache by sharing K and V across groups of Q heads. Multi-Head Latent Attention (MLA) goes further: K and V are compressed into a shared low-rank latent representation (the <code>kv_lora_rank</code>), then decompressed per head on the fly. The KV cache stores only the latent — typically 512 floats per token per layer, not 8 x 128 = 1024 floats.</p>
+<p>At 128k context, DeepSeek-V3 with MLA (one shared latent <code>c^{KV}</code> per token per layer; K and V are both derived from this latent via up-projections that can be absorbed into the subsequent matmul):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">kv_cache = num_layers * kv_lora_rank * max_seq_len * bytes_per_element
+         = 61 * 512 * 131072 * 2
+         = 7.6 GB</code></pre>
+      </div>
+    <p>A hypothetical GQA baseline (Llama 3 70B shape, 8 KV heads, head dim 128) would pay:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">kv_cache = 2 * 61 * 8 * 128 * 131072 * 2
+         = 30.5 GB</code></pre>
+      </div>
+    <p>MLA is 4x smaller than a Llama-3-70B-style GQA cache at 128k context.</p>
+<p>The tradeoff: MLA adds a decompression step per attention computation (per head). The extra compute is small compared to the bandwidth saved. Net win for long-context inference.</p>
+<h3 id="the-routing-auxiliary-loss-free-load-balancing"><a class="anchor" href="#the-routing-auxiliary-loss-free-load-balancing">#</a> The routing: auxiliary-loss-free load balancing</h3>
+<p>MoE routers decide which top-k experts process each token. A naive router concentrates too much work on a few experts, leaving others idle. Standard fix: add an auxiliary loss term that penalizes load imbalance. This works but slightly degrades main-task performance.</p>
+<p>DeepSeek-V3 introduces an auxiliary-loss-free scheme. Per-expert bias terms are added to the router logits, adjusted during training by a simple rule: if expert <code>e</code> is overloaded, decrease <code>bias_e</code>; if underloaded, increase it. No extra loss term. Training stays clean. Expert load stays balanced.</p>
+<p>Effect on the main loss: none measurable. Effect on the MoE architecture: cleaner, no auxiliary-loss hyperparameter to tune.</p>
+<h3 id="the-mtp-denser-training-free-draft"><a class="anchor" href="#the-mtp-denser-training-free-draft">#</a> The MTP: denser training + free draft</h3>
+<p>From Phase 10 · 18 you know DeepSeek-V3 adds D=1 MTP module that predicts the token two positions ahead. At inference, the trained module is repurposed as a speculative-decoding draft with 80%+ acceptance. At training, each hidden state is supervised on D+1 = 2 targets, providing a denser signal.</p>
+<p>Parameters: 14B on top of the 671B main. Overhead: 2.1%.</p>
+<h3 id="the-training-dualpipe"><a class="anchor" href="#the-training-dualpipe">#</a> The training: DualPipe</h3>
+<p>From Phase 10 · 19 you know DualPipe is a bidirectional pipeline that overlaps forward and backward chunks with cross-node all-to-all comms. At DeepSeek-V3&#39;s 2,048-H800 scale, it recovers roughly 245k GPU-hours that 1F1B would have lost to pipeline bubbles.</p>
+<h3 id="the-config-field-by-field"><a class="anchor" href="#the-config-field-by-field">#</a> The config, field by field</h3>
+<p>Here is the DeepSeek-V3 config (simplified):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">hidden_size: 7168
+intermediate_size: 18432   (dense MLP hidden size, used on first few layers)
+moe_intermediate_size: 2048 (expert MLP hidden size)
+num_hidden_layers: 61
+first_k_dense_layers: 3    (first 3 layers use dense MLP)
+num_attention_heads: 128
+num_key_value_heads: 128   (formally equal to num_heads under MLA, but
+                           the real compression is in kv_lora_rank)
+kv_lora_rank: 512          (MLA latent dimension)
+num_experts: 256            (MoE expert count per block)
+num_experts_per_tok: 8      (top-8 routing)
+shared_experts: 1           (always-on shared expert per block)
+max_position_embeddings: 163840
+rope_theta: 10000.0
+vocab_size: 129280
+mtp_module: 1               (1 MTP module at depth 1)</code></pre>
+      </div>
+    <p>Parse it:</p>
+<ul>
+<li><code>hidden_size=7168</code>: embedding dimension.</li>
+<li><code>num_hidden_layers=61</code>: total block depth.</li>
+<li><code>first_k_dense_layers=3</code>: the first 3 blocks use a dense MLP of size 18432. The remaining 58 use MoE.</li>
+<li><code>num_attention_heads=128</code>: 128 query heads.</li>
+<li><code>kv_lora_rank=512</code>: K and V are compressed to this latent dimension and decompressed per head.</li>
+<li><code>num_experts=256, num_experts_per_tok=8</code>: each MoE block has 256 experts, routes top-8.</li>
+<li><code>shared_experts=1</code>: on top of the 256 routed experts, 1 always-on expert contributes to every token. Think of it as a &quot;dense floor&quot; that ensures every token gets something reliable.</li>
+<li><code>moe_intermediate_size=2048</code>: each expert&#39;s MLP hidden size. Smaller than the dense MLP because there are 256 of them.</li>
+</ul>
+<h3 id="parameter-accounting"><a class="anchor" href="#parameter-accounting">#</a> Parameter accounting</h3>
+<p>The full calculation lives in <code>code/main.py</code>. The headline:</p>
+<ul>
+<li>Embedding: <code>vocab * hidden = 129280 * 7168 = ~0.93B</code>.</li>
+<li>First 3 dense blocks: attention with MLA (<del>144M per block) + dense MLP (</del>260M per block) + norms. About 1.2B total.</li>
+<li>58 MoE blocks: attention with MLA (~144M) + 256 experts each (30M apiece) + 1 shared expert (30M) + norm. Total ~7.95B per block, including all experts. 461B total for the 58 MoE blocks.</li>
+<li>MTP module: 14B.</li>
+</ul>
+<p>Grand total: ~476B for core architecture + 14B MTP + distinctly the published 671B number accounts for additional structural parameters (bias tensors, expert-specific components, shared expert scaling, etc.). The number we reproduce in the calculator is within 3-5% of published — the delta comes from fine-grained accounting DeepSeek&#39;s report documents in its Section 2 appendix.</p>
+<p>Active parameters per forward:</p>
+<ul>
+<li>Attention: 144M per layer * 61 = 8.8B (all layers fire).</li>
+<li>MLP active: first 3 layers dense (3 * 260M = 780M), 58 MoE layers each active with 8 routed + 1 shared + routing overhead. Per layer active MLP: ~260M. Total: 3 * 260M + 58 * 260M = ~15.9B.</li>
+<li>Embedding + norms: 1.2B.</li>
+<li>Total active: roughly 26B core + 14B MTP (trained but not always run at inference) ≈ 37B.</li>
+</ul>
+<h3 id="the-671b-37b-ratio"><a class="anchor" href="#the-671b-37b-ratio">#</a> The 671B / 37B ratio</h3>
+<p>18x sparsity ratio (active params are 5.5% of total). DeepSeek-V3 is the sparsest frontier MoE model that has shipped open weights. Mixtral 8x7B at ratio 13/47 (28%) is much denser. Llama 4 Maverick at ratio 17B/400B (4.25%) is comparable. The DeepSeek bet: at frontier scale, more experts with lower activation ratio produces better quality per active-FLOP.</p>
+<h3 id="where-deepseek-v3-sits"><a class="anchor" href="#where-deepseek-v3-sits">#</a> Where DeepSeek-V3 sits</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Total</th>
+<th>Active</th>
+<th>Ratio</th>
+<th>Attention</th>
+<th>Novel ideas</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Llama 3 70B</td>
+<td>70B</td>
+<td>70B</td>
+<td>100%</td>
+<td>GQA 64/8</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Llama 4 Maverick</td>
+<td>400B</td>
+<td>17B</td>
+<td>4.25%</td>
+<td>GQA</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Mixtral 8x22B</td>
+<td>141B</td>
+<td>39B</td>
+<td>27%</td>
+<td>GQA</td>
+<td>—</td>
+</tr>
+<tr>
+<td>DeepSeek V3</td>
+<td>671B</td>
+<td>37B</td>
+<td>5.5%</td>
+<td>MLA 512</td>
+<td>MLA + MTP + aux-free + DualPipe</td>
+</tr>
+<tr>
+<td>Qwen 2.5 72B</td>
+<td>72B</td>
+<td>72B</td>
+<td>100%</td>
+<td>GQA 64/8</td>
+<td>YaRN extension</td>
+</tr>
+</tbody></table>
+<h3 id="the-follow-on-r1-v4"><a class="anchor" href="#the-follow-on-r1-v4">#</a> The follow-on: R1, V4</h3>
+<p>DeepSeek-R1 (2025) is a reasoning-training run on the V3 backbone. R1 uses the same architecture. What changed is the post-training recipe (large-scale RL on verifiable tasks), not the pretraining architecture.</p>
+<p>DeepSeek-V4 (if it ships) is expected to keep MLA + MoE + MTP and add DSA (DeepSeek Sparse Attention), the successor to NSA from Phase 10 · 17. The lineage is stable: architecture-level innovations accumulate; each version turns additional knobs.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">moe-routing</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> is the parameter calculator specialized to DeepSeek-V3&#39;s shape. Run it, compare its output to the paper&#39;s numbers, and use it on hypothetical variants (256 experts vs 512, top-8 vs top-16, MLA rank 512 vs 1024).</p>
+<p>What to look at:</p>
+<ul>
+<li>Total parameter count vs published 671B.</li>
+<li>Active parameter count vs published 37B.</li>
+<li>KV cache at 128k context — the MLA vs GQA comparison.</li>
+<li>Per-layer breakdown to see where the parameter budget actually goes.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-deepseek-v3-reader.md</code>. Given a DeepSeek-family model (V3, R1, or any future variant), it produces a component-by-component architecture reading that names each field of the config, derives parameter counts by component, and identifies which of the four DeepSeek-specific innovations the model uses.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code>. Compare the calculator&#39;s total-parameter estimate to the published 671B and identify where the delta comes from. The paper&#39;s Section 2 has the full itemization.</p>
+</li>
+<li><p>Modify the config to use MLA rank 256 instead of 512. Compute the resulting KV cache size at 128k context. What percentage reduction does it buy, and at what cost to the per-head expressiveness?</p>
+</li>
+<li><p>Compare DeepSeek-V3&#39;s (256 experts, top-8) routing to a hypothetical (512 experts, top-8) variant. Total parameters grow; active parameters stay the same. What does the extra expert capacity buy in theory, and what does it cost at inference?</p>
+</li>
+<li><p>Read Section 2.1 of the DeepSeek-V3 technical report (arXiv:2412.19437) on MLA. Explain in three sentences why the K and V decompression matrices can be &quot;absorbed&quot; into the subsequent matmul for inference-time efficiency.</p>
+</li>
+<li><p>DeepSeek-V3 uses FP8 training for most operations. Compute the memory savings of FP8 vs BF16 for storing the 671B weights. How does this intersect with the 14.8T-token training budget?</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MLA</td>
+<td>&quot;Multi-Head Latent Attention&quot;</td>
+<td>Compress K and V into a shared low-rank latent (kv_lora_rank, typically 512), decompress per head on-the-fly; KV cache stores only the latent</td>
+</tr>
+<tr>
+<td>kv_lora_rank</td>
+<td>&quot;MLA compression dim&quot;</td>
+<td>The size of the shared latent for K and V; DeepSeek-V3 uses 512</td>
+</tr>
+<tr>
+<td>First k dense layers</td>
+<td>&quot;Early layers stay dense&quot;</td>
+<td>The first few MoE-model layers skip the MoE router and run a dense MLP for stability</td>
+</tr>
+<tr>
+<td>num_experts_per_tok</td>
+<td>&quot;Top-k routing&quot;</td>
+<td>How many routed experts fire per token; DeepSeek-V3 uses 8</td>
+</tr>
+<tr>
+<td>Shared experts</td>
+<td>&quot;Always-on experts&quot;</td>
+<td>Experts that process every token regardless of routing; DeepSeek-V3 uses 1</td>
+</tr>
+<tr>
+<td>Auxiliary-loss-free routing</td>
+<td>&quot;Bias-adjusted load balance&quot;</td>
+<td>Per-expert bias terms adjusted during training to keep expert load balanced without adding a loss term</td>
+</tr>
+<tr>
+<td>MTP module</td>
+<td>&quot;Extra prediction head&quot;</td>
+<td>Transformer block predicting t+2 from h^(1) and E(t+1); denser training, free speculative-decoding draft</td>
+</tr>
+<tr>
+<td>DualPipe</td>
+<td>&quot;Bidirectional pipeline&quot;</td>
+<td>Training schedule that overlaps forward/backward compute with cross-node all-to-all</td>
+</tr>
+<tr>
+<td>Active parameter ratio</td>
+<td>&quot;Sparsity&quot;</td>
+<td>active_params / total_params; DeepSeek-V3 hits 5.5%</td>
+</tr>
+<tr>
+<td>FP8 training</td>
+<td>&quot;8-bit training&quot;</td>
+<td>Training storage and many compute ops in FP8; roughly halves memory vs BF16 at a small quality cost</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI — DeepSeek-V3 Technical Report (arXiv:2412.19437)</a> — the full architecture, training, and results document</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V3">DeepSeek-V3 model card on Hugging Face</a> — config files and deployment notes</li>
+<li><a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2 paper (arXiv:2405.04434)</a> — the predecessor that introduced MLA</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1 paper (arXiv:2501.12948)</a> — the reasoning-training successor on V3&#39;s architecture</li>
+<li><a href="https://arxiv.org/abs/2502.11089">Native Sparse Attention (arXiv:2502.11089)</a> — the future direction for DeepSeek-family attention</li>
+<li><a href="https://github.com/deepseek-ai/DualPipe">DualPipe repository</a> — the training-schedule reference</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./19-dualpipe-parallelism.html"><span>← Previous</span><b>dualpipe parallelism</b></a>
+      <a class="next" href="./21-jamba-hybrid-ssm-transformer.html"><span>Next →</span><b>jamba hybrid ssm transformer</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

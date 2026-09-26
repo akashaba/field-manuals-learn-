@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>01.01 — Transformers &amp; Attention — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/01.%20LLM%20Fundamentals/01-01-transformers-attention.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Fundamentals</div>
+    <ol class="toc"><li><a href="#1-the-modern-decoder-only-block-what-actually-ships">1. The Modern Decoder-Only Block (what actually ships)</a></li><li><a href="#2-scaled-dot-product-attention-the-math-you-must-own">2. Scaled Dot-Product Attention — The Math You Must Own</a></li><li><a href="#3-multi-head-multi-query-grouped-query-and-latent-attention">3. Multi-Head, Multi-Query, Grouped-Query, and Latent Attention</a></li><li><a href="#4-positional-information">4. Positional Information</a></li><li><a href="#5-normalization-and-the-ffn">5. Normalization and the FFN</a></li><li><a href="#6-mixture-of-experts-moe">6. Mixture-of-Experts (MoE)</a></li><li><a href="#7-reference-implementation-pytorch">7. Reference Implementation (PyTorch)</a></li><li><a href="#8-production-challenges-how-to-solve-them">8. Production Challenges &amp; How to Solve Them</a></li><li><a href="#9-hands-on-projects">9. Hands-On Projects</a></li><li><a href="#10-foundational-papers-exact-titles">10. Foundational Papers (exact titles)</a></li><li><a href="#11-essential-tooling">11. Essential Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · LLM Fundamentals</div>
+    <h1 class="lesson-title">01.01 — Transformers &amp; Attention</h1>
+    <p class="lesson-sub">**Module 1: LLM Fundamentals** · Subtopic 1 of 4</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — LLM Fundamentals 01">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M70.0,79.0 L75.7,70.4 L81.5,79.0 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M65.2,73.7 L70.3,66.0 L75.5,73.7 Z" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <path d="M47.4,76.2 L64.9,50.0 L82.4,76.2 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <rect x="42.6" y="43.9" width="33.7" height="33.7" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(239 59.5 60.8)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">01</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM FUNDAMENTALS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">01.01 — Transformers</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">&amp; Attention</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> linear algebra (matrix products, projections), softmax and cross-entropy, backprop, PyTorch tensors.
+<strong>Outcome:</strong> you can derive, implement, profile, and debug a modern decoder-only transformer (Llama/Qwen/Mistral-class). You can also reason about its memory and FLOP budget at the level of a serving capacity plan.</p>
+</blockquote>
+<hr>
+<h2 id="1-the-modern-decoder-only-block-what-actually-ships"><a class="anchor" href="#1-the-modern-decoder-only-block-what-actually-ships">#</a> 1. The Modern Decoder-Only Block (what actually ships)</h2>
+<p>The 2017 transformer was an encoder-decoder with post-norm, learned or sinusoidal positions, ReLU FFN, and full multi-head attention. Almost every production LLM today is a <strong>decoder-only, pre-norm, RoPE, RMSNorm, SwiGLU, GQA</strong> stack. Many also use <strong>MoE</strong> FFNs.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">                 token ids (B, T)
+                       │
+               ┌───────▼────────┐
+               │ Embedding  E   │  (V × d)
+               └───────┬────────┘
+                       │  h⁰
+      ┌────────────────▼─────────────────┐   × L layers
+      │  ┌──────────┐                     │
+      │  │ RMSNorm  │                     │
+      │  └────┬─────┘                     │
+      │       ▼                           │
+      │  Q = xW_Q   K = xW_K   V = xW_V   │  Q: n_h heads, K/V: n_kv heads (GQA)
+      │       │ RoPE(Q), RoPE(K)          │
+      │       ▼                           │
+      │  softmax(QKᵀ/√d_h + M_causal) V   │  ← KV cache lives here
+      │       │  W_O                      │
+      │  h ← h + Attn(·)   (residual)     │
+      │  ┌──────────┐                     │
+      │  │ RMSNorm  │                     │
+      │  └────┬─────┘                     │
+      │       ▼                           │
+      │  SwiGLU FFN  (or MoE: router→top-k experts)
+      │  h ← h + FFN(·)    (residual)     │
+      └────────────────┬─────────────────┘
+                       ▼
+               ┌────────────────┐
+               │ Final RMSNorm  │
+               │ LM head  (d×V) │  often tied to Eᵀ in small models
+               └───────┬────────┘
+                       ▼
+                 logits (B, T, V)</code></pre>
+      </div>
+    <p>The <strong>residual stream</strong> is the central abstraction. Every sublayer <em>reads</em> from it (after normalization) and <em>writes</em> an additive update. Interpretability work (Elhage et al., 2021) treats it as a shared communication bus. Attention heads move information <em>between positions</em>. MLPs transform information <em>within a position</em>.</p>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/Ultimate-AI-Engineering/main/01.%20LLM%20Fundamentals/01.%2520LLM%2520Fundamentals/images/IMG-CAP10-01.jpg" alt="IMG-CAP10-01" loading="lazy" /></figure></p>
+<hr>
+<h2 id="2-scaled-dot-product-attention-the-math-you-must-own"><a class="anchor" href="#2-scaled-dot-product-attention-the-math-you-must-own">#</a> 2. Scaled Dot-Product Attention — The Math You Must Own</h2>
+<h3 id="21-definition"><a class="anchor" href="#21-definition">#</a> 2.1 Definition</h3>
+<p>For queries $Q \in \mathbb{R}^{T_q \times d_k}$, keys $K \in \mathbb{R}^{T_k \times d_k}$, values $V \in \mathbb{R}^{T_k \times d_v}$:</p>
+<p>$$
+\mathrm{Attention}(Q,K,V) = \mathrm{softmax}!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right)V,
+\qquad
+M_{ij} = \begin{cases} 0 &amp; j \le i + (T_k - T_q) \ -\infty &amp; \text{otherwise} \end{cases}
+$$</p>
+<p>The mask $M$ above is the <strong>bottom-right-aligned causal mask</strong>. It is the correct one whenever $T_q \neq T_k$, which covers decode with a KV cache, chunked prefill, and speculative verification. Many bugs come from using a top-left-aligned mask here (see §8).</p>
+<h3 id="22-why-sqrtd_k"><a class="anchor" href="#22-why-sqrtd_k">#</a> 2.2 Why $\sqrt{d_k}$?</h3>
+<p>Assume the components of $q$ and $k$ are i.i.d. with mean $0$ and variance $1$. Then</p>
+<p>$$
+\mathbb{E}[q\cdot k] = 0, \qquad \mathrm{Var}(q\cdot k) = \sum_{i=1}^{d_k}\mathrm{Var}(q_i k_i) = d_k .
+$$</p>
+<p>Without scaling, logits have standard deviation $\sqrt{d_k}$ (≈ 11 for $d_k=128$). Softmax then saturates toward one-hot, and its Jacobian $\mathrm{diag}(p) - pp^\top$ collapses toward zero, which gives vanishing gradients. Dividing by $\sqrt{d_k}$ restores unit variance at initialization. Some architectures replace this with a learned or fixed scale plus <strong>QK-norm</strong> (RMSNorm on $q$ and $k$), which bounds logits by construction.</p>
+<h3 id="23-softmax-numerics"><a class="anchor" href="#23-softmax-numerics">#</a> 2.3 Softmax numerics</h3>
+<p>Always compute $\mathrm{softmax}(s)_j = \dfrac{e^{s_j - m}}{\sum_k e^{s_k - m}}$ with $m=\max_k s_k$. In fp16, $e^{x}$ overflows for $x &gt; 11.09$. bf16 has fp32&#39;s exponent range but only 8 bits of mantissa. Accumulate softmax denominators and the $PV$ product in <strong>fp32</strong> even when inputs are bf16.</p>
+<h3 id="24-online-softmax-the-core-of-flashattention"><a class="anchor" href="#24-online-softmax-the-core-of-flashattention">#</a> 2.4 Online softmax (the core of FlashAttention)</h3>
+<p>Suppose you process keys in blocks and want the exact result without ever materialising the full $T\times T$ matrix. Keep a running max $m$, normaliser $\ell$, and unnormalised output $o$. For each new block of scores $s^{(b)}$ with values $V^{(b)}$:</p>
+<p>$$
+\begin{aligned}
+m&#39; &amp;= \max\big(m,\ \max_j s^{(b)}_j\big) \
+\ell&#39; &amp;= e^{m - m&#39;},\ell + \sum_j e^{s^{(b)}_j - m&#39;} \
+o&#39; &amp;= e^{m - m&#39;},o + \sum_j e^{s^{(b)}<em>j - m&#39;}, V^{(b)}<em>j
+\end{aligned}
+\qquad\Longrightarrow\qquad \text{output} = o</em>{\text{final}} / \ell</em>{\text{final}}
+$$</p>
+<p>This recurrence (Milakov &amp; Gimelshein, 2018) is exact. FlashAttention tiles $Q$, $K$, and $V$ into on-chip SRAM, runs the recurrence per tile, and writes only $O$ (plus the log-sum-exp for backward) to HBM. Attention memory drops from $O(T^2)$ to $O(T)$. Wall-clock time also falls, because naive attention is <strong>memory-bandwidth-bound</strong>, not FLOP-bound.</p>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/Ultimate-AI-Engineering/main/01.%20LLM%20Fundamentals/01.%2520LLM%2520Fundamentals/images/LLM-02.jpg" alt="LLM-02" loading="lazy" /></figure></p>
+<hr>
+<h2 id="3-multi-head-multi-query-grouped-query-and-latent-attention"><a class="anchor" href="#3-multi-head-multi-query-grouped-query-and-latent-attention">#</a> 3. Multi-Head, Multi-Query, Grouped-Query, and Latent Attention</h2>
+<h3 id="31-multi-head-attention-mha"><a class="anchor" href="#31-multi-head-attention-mha">#</a> 3.1 Multi-head attention (MHA)</h3>
+<p>$$
+\mathrm{head}_i = \mathrm{Attention}(XW_Q^{(i)}, XW_K^{(i)}, XW_V^{(i)}),\qquad
+\mathrm{MHA}(X) = [\mathrm{head}<em>1;\dots;\mathrm{head}</em>{n_h}],W_O
+$$</p>
+<p>Each head has $d_h = d/n_h$. Heads specialise: previous-token heads, induction heads, syntactic heads, and so on.</p>
+<h3 id="32-the-kv-cache-is-the-real-cost"><a class="anchor" href="#32-the-kv-cache-is-the-real-cost">#</a> 3.2 The KV cache is the real cost</h3>
+<p>During autoregressive decode you cache $K$ and $V$ for every past token, in every layer and every KV head:</p>
+<p>$$
+\boxed{\ \text{KV bytes} = 2 \cdot L \cdot n_{kv} \cdot d_h \cdot b_{\text{dtype}} \cdot T \cdot B\ }
+$$</p>
+<p><strong>Worked example</strong> (a 70B-class config: $L=80$, $n_h=64$, $n_{kv}=8$, $d_h=128$, bf16):</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Per-token KV</th>
+<th>128k-token context (1 seq)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MHA ($n_{kv}=64$)</td>
+<td>$2\cdot80\cdot64\cdot128\cdot2 = 2.62$ MB</td>
+<td><strong>~320 GiB</strong></td>
+</tr>
+<tr>
+<td>GQA ($n_{kv}=8$)</td>
+<td>$327{,}680$ B ≈ 320 KiB</td>
+<td><strong>~40 GiB</strong></td>
+</tr>
+<tr>
+<td>MQA ($n_{kv}=1$)</td>
+<td>40 KiB</td>
+<td>~5 GiB</td>
+</tr>
+</tbody></table>
+<p>This single table explains why GQA is the default. At long context or high batch, the KV cache, not the weights, sets how many requests fit on a GPU.</p>
+<h3 id="33-mqa-and-gqa"><a class="anchor" href="#33-mqa-and-gqa">#</a> 3.3 MQA and GQA</h3>
+<ul>
+<li><strong>MQA</strong> (Shazeer, 2019): all query heads share one K/V head. Maximum savings, but a measurable quality loss and some training instability.</li>
+<li><strong>GQA</strong> (Ainslie et al., 2023): $n_h$ query heads are divided into $g = n_{kv}$ groups, and each group shares a K/V head. Quality is close to MHA. You can <strong>uptrain</strong> an MHA checkpoint to GQA by mean-pooling K/V heads within each group, then continuing training on about 5% of the original compute.</li>
+</ul>
+<h3 id="34-multi-head-latent-attention-mla-deepseek-v2v3"><a class="anchor" href="#34-multi-head-latent-attention-mla-deepseek-v2v3">#</a> 3.4 Multi-head Latent Attention (MLA, DeepSeek-V2/V3)</h3>
+<p>MLA compresses K and V into a shared low-rank latent vector $c_t = W_{DKV},h_t \in \mathbb{R}^{d_c}$, and caches only $c_t$ plus a small decoupled RoPE key. Keys and values are reconstructed as $k = W_{UK}c$ and $v = W_{UV}c$. At inference, $W_{UK}$ can be <strong>absorbed</strong> into $W_Q$ (and $W_{UV}$ into $W_O$), so attention runs directly against the latent vectors. RoPE is not linear-absorbable, which is why a separate RoPE sub-key is kept. The result is a KV footprint below GQA with MHA-level quality. The cost is more complex kernels.</p>
+<hr>
+<h2 id="4-positional-information"><a class="anchor" href="#4-positional-information">#</a> 4. Positional Information</h2>
+<p>Attention is <strong>permutation-equivariant</strong>, so position has to be injected somehow.</p>
+<h3 id="41-sinusoidal-original"><a class="anchor" href="#41-sinusoidal-original">#</a> 4.1 Sinusoidal (original)</h3>
+<p>$PE_{(p,2i)} = \sin(p/10000^{2i/d})$ and $PE_{(p,2i+1)} = \cos(p/10000^{2i/d})$, added to the embeddings. Extrapolation is poor in practice.</p>
+<h3 id="42-rope-rotary-position-embedding"><a class="anchor" href="#42-rope-rotary-position-embedding">#</a> 4.2 RoPE (Rotary Position Embedding)</h3>
+<p>Split $q$ and $k$ into 2-D pairs and rotate pair $i$ at position $m$ by angle $m\theta_i$, with $\theta_i = b^{-2i/d_h}$ (usually $b = 10^4$ or larger):</p>
+<p>$$
+R_{m}^{(i)} = \begin{pmatrix}\cos m\theta_i &amp; -\sin m\theta_i \ \sin m\theta_i &amp; \cos m\theta_i\end{pmatrix},
+\qquad
+\langle R_m q,; R_n k\rangle = \langle q,; R_{n-m},k\rangle .
+$$</p>
+<p>The dot product depends only on the <strong>relative offset</strong> $n-m$, even though the rotation is applied to absolute positions. Low-$i$ pairs rotate fast (local, high-frequency signal). High-$i$ pairs rotate slowly (long-range signal). Context-extension methods (PI, NTK, YaRN; see §01.04) all work by manipulating the $\theta_i$.</p>
+<blockquote>
+<p>⚠️ <strong>Convention trap:</strong> the original RoPE pairs dimensions <em>(0,1), (2,3), …</em> (interleaved). HF Llama pairs <em>(i, i + d/2)</em> using <code>rotate_half</code>. The two are equivalent only if weights were permuted to match. Loading Meta weights into an interleaved implementation without the permutation produces a model that runs but outputs garbage.</p>
+</blockquote>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/akashaba/Ultimate-AI-Engineering/main/01.%20LLM%20Fundamentals/01.%2520LLM%2520Fundamentals/images/LLM-03.jpg" alt="LLM-03" loading="lazy" /></figure></p>
+<h3 id="43-alibi"><a class="anchor" href="#43-alibi">#</a> 4.3 ALiBi</h3>
+<p>ALiBi adds no embedding. Instead it adds a head-specific linear bias $-m_h\cdot(i-j)$ to the attention logits, with slopes $m_h$ forming a geometric sequence. It extrapolates reasonably well, but RoPE plus scaling has won in practice.</p>
+<hr>
+<h2 id="5-normalization-and-the-ffn"><a class="anchor" href="#5-normalization-and-the-ffn">#</a> 5. Normalization and the FFN</h2>
+<h3 id="51-rmsnorm-vs-layernorm"><a class="anchor" href="#51-rmsnorm-vs-layernorm">#</a> 5.1 RMSNorm vs LayerNorm</h3>
+<p>$$
+\mathrm{LN}(x) = \gamma\odot\frac{x-\mu}{\sqrt{\sigma^2+\epsilon}}+\beta,
+\qquad
+\mathrm{RMSNorm}(x) = \gamma\odot\frac{x}{\sqrt{\tfrac{1}{d}\sum_i x_i^2+\epsilon}}
+$$</p>
+<p>RMSNorm drops mean-centering and bias. It is cheaper and empirically just as good.</p>
+<h3 id="52-pre-norm-vs-post-norm"><a class="anchor" href="#52-pre-norm-vs-post-norm">#</a> 5.2 Pre-norm vs post-norm</h3>
+<p><strong>Post-norm</strong> computes $x + f(x)$ and then normalizes. <strong>Pre-norm</strong> computes $x + f(\mathrm{Norm}(x))$. With post-norm, gradients near the output are large at initialization (Xiong et al., 2020), so it needs learning-rate warmup and becomes unstable in deep stacks. Pre-norm keeps an identity path through the residual stream and trains stably without careful warmup. The trade-off is that the residual-stream norm grows with depth, which is one reason for the final norm before the LM head.</p>
+<h3 id="53-swiglu-ffn"><a class="anchor" href="#53-swiglu-ffn">#</a> 5.3 SwiGLU FFN</h3>
+<p>$$
+\mathrm{FFN}_{\text{SwiGLU}}(x) = \big(\mathrm{SiLU}(xW_1)\odot xW_3\big)W_2,
+\qquad \mathrm{SiLU}(z)=z,\sigma(z)
+$$</p>
+<p>This uses three matrices instead of two. To keep parameters equal to a $4d$ ReLU FFN, set $d_{ff}\approx \tfrac{8}{3}d$, rounded to a hardware-friendly multiple (e.g. 256).</p>
+<h3 id="54-parameter-and-flop-accounting"><a class="anchor" href="#54-parameter-and-flop-accounting">#</a> 5.4 Parameter and FLOP accounting</h3>
+<p>Per layer, ignoring norms:</p>
+<p>$$
+P_{\text{attn}} = d,(n_h d_h) + 2,d,(n_{kv} d_h) + (n_h d_h),d, \qquad
+P_{\text{ffn}} = 3,d,d_{ff}
+$$</p>
+<p>For forward FLOPs per token (Kaplan et al., 2020), with $N$ the non-embedding parameter count:</p>
+<p>$$
+C_{\text{fwd}} \approx 2N + 2,L,T_{\text{ctx}},d_{\text{attn}},\qquad C_{\text{train}} \approx 6N \text{ per token}
+$$</p>
+<p>The second term is attention over context. It is small at short context and dominant at long context (derivation in §01.04).</p>
+<hr>
+<h2 id="6-mixture-of-experts-moe"><a class="anchor" href="#6-mixture-of-experts-moe">#</a> 6. Mixture-of-Experts (MoE)</h2>
+<p>Replace the dense FFN with $E$ expert FFNs and a router $g(x) = \mathrm{softmax}(xW_r)$. Each token is sent to its top-$k$ experts:</p>
+<p>$$
+y = \sum_{e \in \mathrm{TopK}(g(x),k)} \tilde g_e(x),\mathrm{FFN}_e(x)
+$$</p>
+<p>Here $\tilde g$ is the gate renormalised over the selected experts. The design gives <strong>total</strong> parameters of roughly $E$× the FFN, but <strong>active</strong> parameters per token of only $k$×.</p>
+<p><strong>Load balancing.</strong> A router left alone collapses onto a few experts. The Switch Transformer auxiliary loss is</p>
+<p>$$
+\mathcal{L}<em>{\text{aux}} = \alpha \cdot E \cdot \sum</em>{i=1}^{E} f_i, P_i
+$$</p>
+<p>where $f_i$ is the fraction of tokens dispatched to expert $i$ and $P_i$ is the mean router probability for expert $i$. Newer designs (DeepSeek-V3) use <strong>auxiliary-loss-free</strong> balancing: a per-expert bias is added to routing scores and adjusted online. They also use fine-grained experts plus always-on shared experts.</p>
+<p><strong>Production realities.</strong> Serving an MoE is limited by memory (all experts must be resident) and communication (expert-parallel all-to-all). The kernels are grouped GEMMs. Batch composition changes routing, which affects determinism (see §01.02).</p>
+<hr>
+<h2 id="7-reference-implementation-pytorch"><a class="anchor" href="#7-reference-implementation-pytorch">#</a> 7. Reference Implementation (PyTorch)</h2>
+<p>A GQA attention layer with RoPE and a preallocated KV cache. It handles prefill, single-token decode, and <strong>chunked prefill</strong>, which is where most hand-rolled implementations fail.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def rope_cache(max_len: int, head_dim: int, base: float = 10_000.0, device=None):
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(max_len, device=device).float()
+    freqs = torch.outer(t, inv_freq)                 # (T, D/2)
+    return freqs.cos(), freqs.sin()
+
+
+def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -&gt; torch.Tensor:
+    &quot;&quot;&quot;Interleaved-pair convention. x: (B, H, T, D); cos/sin: (T, D/2).&quot;&quot;&quot;
+    x1, x2 = x[..., ::2].float(), x[..., 1::2].float()
+    cos, sin = cos[None, None], sin[None, None]
+    out = torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1)
+    return out.flatten(-2).type_as(x)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps, self.weight = eps, nn.Parameter(torch.ones(d))
+
+    def forward(self, x):
+        xf = x.float()
+        return (xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + self.eps)).type_as(x) * self.weight
+
+
+class GQAttention(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, n_kv_heads: int):
+        super().__init__()
+        assert d_model % n_heads == 0 and n_heads % n_kv_heads == 0
+        self.h, self.kv_h, self.hd = n_heads, n_kv_heads, d_model // n_heads
+        self.wq = nn.Linear(d_model, n_heads * self.hd, bias=False)
+        self.wk = nn.Linear(d_model, n_kv_heads * self.hd, bias=False)
+        self.wv = nn.Linear(d_model, n_kv_heads * self.hd, bias=False)
+        self.wo = nn.Linear(n_heads * self.hd, d_model, bias=False)
+
+    def forward(self, x, cos, sin, kv_cache=None, start_pos: int = 0):
+        B, T, _ = x.shape
+        q = self.wq(x).view(B, T, self.h, self.hd).transpose(1, 2)
+        k = self.wk(x).view(B, T, self.kv_h, self.hd).transpose(1, 2)
+        v = self.wv(x).view(B, T, self.kv_h, self.hd).transpose(1, 2)
+
+        pos_cos, pos_sin = cos[start_pos:start_pos + T], sin[start_pos:start_pos + T]
+        q, k = apply_rope(q, pos_cos, pos_sin), apply_rope(k, pos_cos, pos_sin)
+
+        if kv_cache is not None:                      # preallocated (B, kv_h, T_max, hd)
+            k_cache, v_cache = kv_cache
+            k_cache[:, :, start_pos:start_pos + T] = k
+            v_cache[:, :, start_pos:start_pos + T] = v
+            k, v = k_cache[:, :, :start_pos + T], v_cache[:, :, :start_pos + T]
+
+        S = k.shape[2]
+        # Bottom-right-aligned causal mask: query i may see keys j &lt;= start_pos + i.
+        mask = torch.ones(T, S, dtype=torch.bool, device=x.device).tril(diagonal=S - T)
+
+        rep = self.h // self.kv_h                     # broadcast KV heads to query groups
+        k, v = k.repeat_interleave(rep, dim=1), v.repeat_interleave(rep, dim=1)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        return self.wo(y.transpose(1, 2).reshape(B, T, self.h * self.hd))
+
+
+def naive_attention(q, k, v, mask):
+    &quot;&quot;&quot;Reference for testing: materialises the full score matrix.&quot;&quot;&quot;
+    s = (q @ k.transpose(-2, -1)) / math.sqrt(q.shape[-1])
+    s = s.masked_fill(~mask, float(&quot;-inf&quot;))
+    return torch.softmax(s.float(), dim=-1).type_as(q) @ v
+
+
+class SwiGLU(nn.Module):
+    def __init__(self, d: int, d_ff: int):
+        super().__init__()
+        self.w1 = nn.Linear(d, d_ff, bias=False)
+        self.w3 = nn.Linear(d, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d, bias=False)
+
+    def forward(self, x):
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+
+class Block(nn.Module):
+    def __init__(self, d, n_heads, n_kv_heads, d_ff):
+        super().__init__()
+        self.n1, self.attn = RMSNorm(d), GQAttention(d, n_heads, n_kv_heads)
+        self.n2, self.ffn = RMSNorm(d), SwiGLU(d, d_ff)
+
+    def forward(self, x, cos, sin, kv_cache=None, start_pos=0):
+        x = x + self.attn(self.n1(x), cos, sin, kv_cache, start_pos)
+        return x + self.ffn(self.n2(x))</code></pre>
+      </div>
+    <p><strong>Notes that matter in production:</strong></p>
+<ul>
+<li><code>repeat_interleave</code> materialises the expanded K/V. Real kernels (FlashAttention, <code>scaled_dot_product_attention(..., enable_gqa=True)</code> in recent PyTorch, vLLM/SGLang kernels) index the shared head instead of copying it.</li>
+<li>Passing an explicit boolean mask can force SDPA off the FlashAttention backend onto the slower &quot;efficient&quot; or math backend. Use <code>is_causal=True</code> for square prefill, and handle the offset case in a kernel that supports bottom-right causal alignment (FlashAttention does; so does PyTorch <strong>FlexAttention</strong> via a <code>mask_mod</code>).</li>
+<li>Always test against a naive reference, and assert <strong>cached decode == uncached full forward</strong> logits within tolerance.</li>
+</ul>
+<hr>
+<h2 id="8-production-challenges-how-to-solve-them"><a class="anchor" href="#8-production-challenges-how-to-solve-them">#</a> 8. Production Challenges &amp; How to Solve Them</h2>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Symptom</th>
+<th>Root cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Wrong causal alignment</strong></td>
+<td>Correct output on prefill, degraded output on decode or chunked prefill</td>
+<td>Top-left mask when $T_q \ne T_k$</td>
+<td>Bottom-right mask (§2.1). Add a unit test: chunked prefill equals single-pass prefill.</td>
+</tr>
+<tr>
+<td><strong>RoPE convention mismatch</strong></td>
+<td>Model loads, output is fluent nonsense</td>
+<td>Interleaved vs half-split pairing</td>
+<td>Match the checkpoint&#39;s convention or permute $W_Q$/$W_K$ rows. Compare layer-0 attention outputs against the reference implementation.</td>
+</tr>
+<tr>
+<td><strong>fp16 overflow / NaNs</strong></td>
+<td>NaN loss spikes, <code>inf</code> in logits</td>
+<td>Large activations, softmax in fp16</td>
+<td>bf16 training, fp32 softmax accumulation, QK-norm, z-loss $\lambda(\log Z)^2$, <strong>logit soft-capping</strong> $c\cdot\tanh(z/c)$</td>
+</tr>
+<tr>
+<td><strong>Loss spikes at scale</strong></td>
+<td>Divergence mid-run</td>
+<td>Attention-logit growth, outlier features</td>
+<td>QK-norm, lower β₂, gradient clipping, skip bad batches, restart from a checkpoint with data reordered</td>
+</tr>
+<tr>
+<td><strong>Attention sinks</strong></td>
+<td>Model dumps attention mass on token 0; evicting it breaks generation</td>
+<td>Softmax must sum to 1, so &quot;no-op&quot; heads park mass on the first tokens</td>
+<td>Never evict the first few tokens (StreamingLLM), or train with a learned sink or gated attention</td>
+</tr>
+<tr>
+<td><strong>Quadratic prefill</strong></td>
+<td>TTFT grows superlinearly with prompt length</td>
+<td>$O(T^2)$ attention</td>
+<td>FlashAttention kernels, chunked prefill, prefix caching, context-parallelism (§01.04)</td>
+</tr>
+<tr>
+<td><strong>KV memory ceiling</strong></td>
+<td>Low max batch, OOM at long context</td>
+<td>§3.2 formula</td>
+<td>GQA/MLA models, KV quantization (FP8/INT4), paged allocation (§01.02)</td>
+</tr>
+<tr>
+<td><strong>Outlier activations</strong></td>
+<td>INT8 quantization destroys quality</td>
+<td>A few massive channels in the residual stream</td>
+<td>Mixed precision for outlier channels (LLM.int8()), SmoothQuant migration, FP8 with per-channel scales</td>
+</tr>
+<tr>
+<td><strong>MoE imbalance</strong></td>
+<td>Expert OOM, low utilisation, token dropping</td>
+<td>Router collapse, skewed batches</td>
+<td>Aux or bias-based balancing, capacity factor, expert replication for hot experts</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="9-hands-on-projects"><a class="anchor" href="#9-hands-on-projects">#</a> 9. Hands-On Projects</h2>
+<h3 id="project-1-build-and-verify-a-llama-style-decoder-from-scratch"><a class="anchor" href="#project-1-build-and-verify-a-llama-style-decoder-from-scratch">#</a> Project 1 — Build and Verify a Llama-Style Decoder from Scratch</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML engineer</em>, I want a minimal decoder (GQA + RoPE + RMSNorm + SwiGLU) that I fully understand, so that I can debug production models by analogy.</li>
+<li><em>As a reviewer</em>, I want tests proving that cached and uncached inference agree, so that I trust the implementation.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Model config is parametrised by <code>(L, d, n_h, n_kv, d_ff, vocab, max_len)</code>. Setting <code>n_kv = n_h</code> reproduces MHA exactly, and <code>n_kv = 1</code> gives MQA.</li>
+<li>A unit test proves the RoPE relative property: $\langle R_m q, R_n k\rangle = \langle R_{m+c} q, R_{n+c} k\rangle$ to within 1e-5 (fp32).</li>
+<li>Greedy generation with the KV cache produces <strong>identical tokens</strong> to generation without it for 200 tokens. Logits match within 1e-4 in fp32.</li>
+<li>Chunked prefill (chunks of 64) matches single-pass prefill logits within 1e-4.</li>
+<li>Trains on TinyStories (or a similar small corpus) at ≤ 30M parameters, with a monotonic validation-loss curve and samples that are coherent short stories.</li>
+<li>A parameter-count function matches <code>sum(p.numel())</code> exactly, and a FLOP estimator matches <code>torch.utils.flop_counter</code> within 5%.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li><strong>Scaffold.</strong> Create <code>model.py</code> with the §7 modules, an <code>Embedding</code>, a final <code>RMSNorm</code>, and an LM head (optionally tied).</li>
+<li><strong>Data.</strong> Tokenize TinyStories with an existing tokenizer (e.g. GPT-2 BPE via <code>tiktoken</code>). Pack into a contiguous <code>uint16</code> memmap and sample random windows of length <code>T</code>.</li>
+<li><strong>Training loop.</strong> Use AdamW (β = 0.9, 0.95; wd = 0.1), cosine LR with warmup, bf16 autocast, grad-clip 1.0, and <code>torch.compile</code>. Log train and validation loss every N steps.</li>
+<li><strong>Tests.</strong> Write <code>pytest</code> cases for criteria 1–4. Use fp32 and <code>torch.manual_seed</code>.</li>
+<li><strong>KV cache.</strong> Preallocate per-layer <code>(B, n_kv, T_max, d_h)</code> tensors and thread <code>start_pos</code> through <code>forward</code>.</li>
+<li><strong>Accounting.</strong> Implement <code>count_params(config)</code> from §5.4 and compare it to the real count. Profile a forward pass with <code>torch.profiler</code> and identify which ops dominate at T=256 vs T=4096.</li>
+<li><strong>Report.</strong> Write a README covering the loss curve, samples, a KV-memory table for your config, and one bug you hit and how the tests caught it.</li>
+</ol>
+<hr>
+<h3 id="project-2-attention-kernel-benchmark-tiled-online-softmax-implementation"><a class="anchor" href="#project-2-attention-kernel-benchmark-tiled-online-softmax-implementation">#</a> Project 2 — Attention Kernel Benchmark &amp; Tiled Online-Softmax Implementation</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As a performance engineer</em>, I want measured latency and memory curves for naive attention, PyTorch SDPA backends, and FlashAttention across sequence lengths, so that I can choose kernels on evidence.</li>
+<li><em>As a learner</em>, I want to implement tiled online-softmax attention myself, so that I understand why FlashAttention is fast.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Benchmarks sequence lengths {512, 1k, 2k, 4k, 8k, 16k, 32k} with a fixed batch and head config, in bf16 on one GPU. Runs forward-only and forward+backward.</li>
+<li>Reports median latency (CUDA events, warmup excluded) and peak memory (<code>torch.cuda.max_memory_allocated</code>). Naive attention is shown hitting OOM or exploding quadratically in memory.</li>
+<li>Includes a custom <strong>Triton</strong> (or blocked pure-PyTorch) kernel implementing the §2.4 recurrence. It matches the SDPA output within <code>atol=2e-2</code> in bf16 (fp32 accumulators) and supports causal masking.</li>
+<li>A written analysis computes the arithmetic intensity (FLOPs / HBM bytes) of naive vs tiled attention and relates the measured speedup to your GPU&#39;s roofline.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Write <code>bench.py</code> with a harness: <code>torch.cuda.synchronize()</code>, 10 warmup iterations, then 50 timed with <code>torch.cuda.Event</code>. Report the median.</li>
+<li>Implement the variants: <code>naive_attention</code>, SDPA with forced backends (<code>torch.nn.attention.sdpa_kernel</code>), and <code>flash_attn_func</code> from the <code>flash-attn</code> package.</li>
+<li>Write a blocked PyTorch reference first: loop over K/V blocks and keep <code>m</code>, <code>l</code>, <code>o</code> per query row. Validate it against naive at small T.</li>
+<li>Port the reference to Triton. Assign one program per (batch·head, Q-block), loop over K/V blocks, use <code>tl.dot</code>, and keep the online-softmax state in registers. Start from the official Triton fused-attention tutorial <em>structure</em>, but write the kernel yourself.</li>
+<li>Plot latency and memory vs T on log-log axes and annotate slopes: 2 for quadratic, 1 for linear.</li>
+<li>Profile with Nsight Compute on one configuration. Compare achieved bandwidth and FLOP/s against peak.</li>
+</ol>
+<hr>
+<h3 id="project-3-find-and-ablate-induction-heads-mechanistic-interpretability"><a class="anchor" href="#project-3-find-and-ablate-induction-heads-mechanistic-interpretability">#</a> Project 3 — Find and Ablate Induction Heads (Mechanistic Interpretability)</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an AI engineer</em>, I want to locate the attention heads that implement in-context copying, so that I understand the mechanism behind in-context learning and long-context retrieval failures.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ol>
+<li>Using GPT-2 small (or Pythia-160M), computes an <strong>induction score</strong> for every (layer, head) on sequences of random tokens repeated twice (e.g. 2 × 50 tokens). The score is the mean attention from position $t$ in the second copy to position $t - 50 + 1$.</li>
+<li>Produces a layer × head heatmap and identifies the top-k heads (induction heads usually appear in middle layers).</li>
+<li><strong>Zero- or mean-ablating</strong> the top-k induction heads raises loss on the repeated half by a margin much larger than ablating k random heads (report the mean ± std over 20 random draws).</li>
+<li>Shows at least one head&#39;s attention pattern visualised on a real sentence with repeated names.</li>
+</ol>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li><code>pip install transformer_lens</code> and load <code>HookedTransformer.from_pretrained(&quot;gpt2&quot;)</code>.</li>
+<li>Generate <code>rep = torch.cat([bos, r, r], dim=1)</code> with random token ids <code>r</code>.</li>
+<li>Run <code>model.run_with_cache(rep)</code> and read <code>cache[&quot;pattern&quot;, layer]</code> with shape <code>(B, H, T, T)</code>.</li>
+<li>Compute the induction score as the mean of <code>pattern[..., 50+i, i+1]</code> along the offset diagonal.</li>
+<li>Ablate with a hook on <code>hook_z</code> (per-head output) that zeroes the selected heads. Compare per-token loss on the second half.</li>
+<li>Write up how the previous-token-head → induction-head circuit works (the K-composition described by Olsson et al., 2022).</li>
+</ol>
+<hr>
+<h2 id="10-foundational-papers-exact-titles"><a class="anchor" href="#10-foundational-papers-exact-titles">#</a> 10. Foundational Papers (exact titles)</h2>
+<p><strong>Core architecture</strong></p>
+<ul>
+<li>Vaswani et al., 2017 — <em>Attention Is All You Need</em></li>
+<li>Radford et al., 2019 — <em>Language Models are Unsupervised Multitask Learners</em></li>
+<li>Xiong et al., 2020 — <em>On Layer Normalization in the Transformer Architecture</em></li>
+<li>Zhang &amp; Sennrich, 2019 — <em>Root Mean Square Layer Normalization</em></li>
+<li>Shazeer, 2020 — <em>GLU Variants Improve Transformer</em></li>
+<li>Touvron et al., 2023 — <em>LLaMA: Open and Efficient Foundation Language Models</em></li>
+<li>Grattafiori et al. (Llama Team), 2024 — <em>The Llama 3 Herd of Models</em></li>
+</ul>
+<p><strong>Attention variants and positions</strong></p>
+<ul>
+<li>Shazeer, 2019 — <em>Fast Transformer Decoding: One Write-Head is All You Need</em></li>
+<li>Ainslie et al., 2023 — <em>GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</em></li>
+<li>DeepSeek-AI, 2024 — <em>DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model</em></li>
+<li>Su et al., 2021 — <em>RoFormer: Enhanced Transformer with Rotary Position Embedding</em></li>
+<li>Press et al., 2021 — <em>Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation</em></li>
+</ul>
+<p><strong>Efficient kernels</strong></p>
+<ul>
+<li>Milakov &amp; Gimelshein, 2018 — <em>Online normalizer calculation for softmax</em></li>
+<li>Dao et al., 2022 — <em>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</em></li>
+<li>Dao, 2023 — <em>FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning</em></li>
+<li>Shah et al., 2024 — <em>FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision</em></li>
+</ul>
+<p><strong>Mixture-of-Experts</strong></p>
+<ul>
+<li>Shazeer et al., 2017 — <em>Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer</em></li>
+<li>Fedus et al., 2021 — <em>Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity</em></li>
+<li>DeepSeek-AI, 2024 — <em>DeepSeek-V3 Technical Report</em></li>
+</ul>
+<p><strong>Scaling and stability</strong></p>
+<ul>
+<li>Kaplan et al., 2020 — <em>Scaling Laws for Neural Language Models</em></li>
+<li>Hoffmann et al., 2022 — <em>Training Compute-Optimal Large Language Models</em></li>
+<li>Dehghani et al., 2023 — <em>Scaling Vision Transformers to 22 Billion Parameters</em> (QK-norm for stability)</li>
+<li>Xiao et al., 2023 — <em>Efficient Streaming Language Models with Attention Sinks</em></li>
+</ul>
+<p><strong>Interpretability</strong></p>
+<ul>
+<li>Elhage et al., 2021 — <em>A Mathematical Framework for Transformer Circuits</em></li>
+<li>Olsson et al., 2022 — <em>In-context Learning and Induction Heads</em></li>
+</ul>
+<h2 id="11-essential-tooling"><a class="anchor" href="#11-essential-tooling">#</a> 11. Essential Tooling</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PyTorch</strong> (<code>scaled_dot_product_attention</code>, <strong>FlexAttention</strong>, <code>torch.compile</code>, <code>torch.profiler</code>)</td>
+<td>Reference implementations, custom masks without writing kernels</td>
+</tr>
+<tr>
+<td><strong>flash-attn</strong></td>
+<td>Production attention kernels, varlen/packed sequences</td>
+</tr>
+<tr>
+<td><strong>Triton</strong></td>
+<td>Writing your own fused GPU kernels in Python</td>
+</tr>
+<tr>
+<td><strong>nanoGPT / llm.c</strong> (Karpathy)</td>
+<td>Minimal, readable training references</td>
+</tr>
+<tr>
+<td><strong>Hugging Face <code>transformers</code></strong> (<code>modeling_llama.py</code>)</td>
+<td>Canonical source for weight layouts and conventions</td>
+</tr>
+<tr>
+<td><strong>TransformerLens</strong></td>
+<td>Hooks, caching, and ablation for interpretability</td>
+</tr>
+<tr>
+<td><strong>Nsight Systems / Nsight Compute</strong></td>
+<td>Timeline and kernel-level GPU profiling</td>
+</tr>
+<tr>
+<td><strong>Weights &amp; Biases / TensorBoard</strong></td>
+<td>Experiment tracking</td>
+</tr>
+</tbody></table>
+
+
+    <nav class="paginate">
+      <span></span>
+      <a class="next" href="./01-02-inference-decoding.html"><span>Next →</span><b>02 inference decoding</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

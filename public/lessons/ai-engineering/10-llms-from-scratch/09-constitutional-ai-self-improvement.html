@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Constitutional AI and Self-Improvement — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/10-llms-from-scratch/09-constitutional-ai-self-improvement/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMs from Scratch</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLMs from Scratch</div>
+    <h1 class="lesson-title">Constitutional AI and Self-Improvement</h1>
+    <p class="lesson-sub">RLHF needs humans in the loop. Constitutional AI replaces most of them with the model itself. Write a list of principles, have the model critique its own outputs against those principles, and train on the critiques. DeepSeek-R1 pushed this further in 2025: let the model generate millions of reasoning traces, grade them with a rule, and run GRPO on the outcome. Most of the &quot;alignment work&quot; in a 2026 frontier model is the model alignment itself. This lesson builds both loops.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib + numpy)</b></div><div><span>Prerequisites</span><b>Phase 10, Lessons 06-08 (SFT, RLHF, DPO)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLMs from Scratch 09">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M88.4,99.6 L96.7,87.2 L104.9,99.6 Z" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <path d="M83.7,94.2 L91.3,82.8 L98.9,94.2 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="15.0" y="119.1" width="26.3" height="26.3" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(136 28.1 132.3)"/>
+        <circle cx="22.7" cy="127.4" r="12.5" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="17.3" cy="122.4" r="11.9" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#8f2f20" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#8f2f20" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#8f2f20" letter-spacing="-2">09</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMS FROM SCRATCH</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Constitutional AI</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">and Self-Improvement</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement the Constitutional AI two-stage loop: self-critique plus self-revision, then preference training on the revised pairs</li>
+<li>Derive the GRPO objective (DeepSeek-R1&#39;s group-relative policy optimization) and contrast it with PPO&#39;s value-function baseline</li>
+<li>Generate verifiable reasoning traces with rule-based outcome rewards and score them without a separate reward model</li>
+<li>Decide when self-improvement beats human preference data and when it collapses into mode seeking</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You built RLHF in Lesson 07 and DPO in Lesson 08. Both depend on the same expensive input: human preference pairs. Anthropic&#39;s InstructGPT-era pipeline used roughly 33,000 comparisons. Llama 2 Chat used over 1.5 million. Claude 3 used more. This data is slow, expensive, and biased toward whatever the annotators happened to believe on the day they were rating.</p>
+<p>The 2022 Constitutional AI paper asked a simple question. What if the model generates the preference labels itself? Give it a list of written principles -- the &quot;constitution&quot; -- and have it critique its own responses. The critiques become the training signal.</p>
+<p>In 2024, DeepSeek took the idea further. They showed that for any task with a verifiable outcome (math with a known answer, code that either passes tests or fails, a game that either wins or loses), you can skip the critic entirely. Generate many candidate solutions. Grade each one with a deterministic rule. Run a policy-gradient algorithm on the rewards. DeepSeek-R1 was trained this way with almost no human preference data and matched o1-class reasoning performance.</p>
+<p>These two loops -- Constitutional AI for subjective behavior and rule-based RL for verifiable behavior -- are the dominant alignment recipes of 2026. The human preference budget that used to go into RLHF now pays for a much smaller step: picking the constitution and picking the reward rules.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-constitutional-ai-loop"><a class="anchor" href="#the-constitutional-ai-loop">#</a> The Constitutional AI Loop</h3>
+<p>Bai et al. (2022) structured the pipeline in two stages.</p>
+<p><strong>Stage 1: Supervised Learning from AI Feedback (SL-CAI).</strong> Start with an SFT model that is helpful but possibly harmful. Prompt it with potentially harmful requests. For each response, ask the <em>same model</em> to critique its response against a constitutional principle, then revise. Fine-tune on the revised responses. The dataset is (prompt, revised_response) pairs.</p>
+<p><strong>Stage 2: Reinforcement Learning from AI Feedback (RLAIF).</strong> Sample pairs of responses. Ask the model which one better follows the constitution. The pairwise preferences train a reward model. Then run PPO or DPO on the model using that reward. The key difference from RLHF: the preferences came from the model, not from humans.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph SL[&quot;Stage 1: SL-CAI&quot;]
+        P1[&quot;Harmful prompt&quot;] --&gt; R1[&quot;Initial response\n(possibly harmful)&quot;]
+        R1 --&gt; C1[&quot;Model critiques\nagainst principle&quot;]
+        C1 --&gt; REV[&quot;Model revises\nresponse&quot;]
+        REV --&gt; SFT[&quot;SFT on\n(prompt, revised)&quot;]
+    end
+
+    subgraph RL[&quot;Stage 2: RLAIF&quot;]
+        P2[&quot;Prompt&quot;] --&gt; S1[&quot;Sample response A&quot;]
+        P2 --&gt; S2[&quot;Sample response B&quot;]
+        S1 --&gt; J[&quot;Model judges\nA vs B via constitution&quot;]
+        S2 --&gt; J
+        J --&gt; RM[&quot;Preference dataset&quot;]
+        RM --&gt; TRAIN[&quot;DPO / PPO training&quot;]
+    end
+
+    SL --&gt; RL
+
+    style P1 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style REV fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style P2 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style TRAIN fill:#1a1a2e,stroke:#51cf66,color:#fff</pre></div><p>The constitution is the lever. Anthropic&#39;s original had 16 principles (later expanded). A principle reads like &quot;Please choose the response that is least likely to be objectionable to anyone from a wide variety of cultural backgrounds.&quot; You pick the principle for each step, sometimes at random, sometimes based on the prompt category.</p>
+<h3 id="what-the-constitution-actually-does"><a class="anchor" href="#what-the-constitution-actually-does">#</a> What the Constitution Actually Does</h3>
+<p>The constitution moves the alignment contract from <em>data</em> to <em>text</em>. Changing behavior under RLHF means re-labeling thousands of pairs. Changing behavior under CAI means editing a paragraph. This is the main practical win.</p>
+<p>It has a cost. The model&#39;s self-judgments are only as good as its starting calibration. If the SFT model has blind spots -- for instance, it cannot recognize manipulative phrasing -- the critique step inherits those blind spots. CAI compresses the alignment loop but cannot amplify signal past the base model&#39;s ceiling. This is why every production CAI pipeline still uses some human preference data, typically 5-10% the volume of pure RLHF.</p>
+<h3 id="grpo-group-relative-policy-optimization"><a class="anchor" href="#grpo-group-relative-policy-optimization">#</a> GRPO: Group-Relative Policy Optimization</h3>
+<p>DeepSeek introduced GRPO in the DeepSeekMath paper (2024) and used it as the backbone of DeepSeek-R1 (2025). GRPO is a variant of PPO that removes the value function.</p>
+<p>Recall PPO&#39;s objective (from Lesson 07):</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_PPO = E[min(r(theta) * A, clip(r(theta), 1-eps, 1+eps) * A)]</code></pre>
+      </div>
+    <p>where <code>A</code> is the advantage, typically estimated with GAE using a learned value network <code>V(s)</code>. The value network is a second model the same size as the policy. It doubles memory and introduces its own training loop.</p>
+<p>GRPO throws out the value function. For each prompt, it samples a group of G responses (typically G=16 or 64). The reward for each response is computed, then normalized within the group:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">A_i = (r_i - mean(r_1, ..., r_G)) / std(r_1, ..., r_G)</code></pre>
+      </div>
+    <p>The advantage is the z-score of the response&#39;s reward relative to its siblings. No value function. The group acts as its own baseline.</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L_GRPO = E[min(r(theta) * A_group, clip(r(theta), 1-eps, 1+eps) * A_group)] - beta * KL(pi || pi_ref)</code></pre>
+      </div>
+    <p>The KL penalty against the reference model is still there, same as PPO. The clip ratio is still there. What&#39;s gone is the separate critic.</p>
+<h3 id="why-grpo-matters-for-reasoning"><a class="anchor" href="#why-grpo-matters-for-reasoning">#</a> Why GRPO Matters for Reasoning</h3>
+<p>For reasoning tasks the reward is often sparse and binary: the final answer is right or wrong. A value function trained on sparse binary rewards is a waste -- it cannot learn useful intermediate estimates because nearly every state has the same expected return until the final step. GRPO&#39;s group normalization gives you an immediate relative signal: among 16 attempts on the same math problem, which attempts were above average for this problem?</p>
+<p>This is the exact shape of signal you get from rule-based rewards:</p>
+<ul>
+<li><strong>Math</strong>: sympy or a symbolic checker decides if the final answer matches.</li>
+<li><strong>Code</strong>: a test suite decides pass/fail.</li>
+<li><strong>Formatting</strong>: a regex decides whether the answer is in the required XML tag.</li>
+<li><strong>Multi-step proofs</strong>: a proof assistant (Lean, Coq) decides validity.</li>
+</ul>
+<p>DeepSeek-R1-Zero was trained with only two rewards: accuracy on math benchmarks and format compliance (answer inside <code>&lt;answer&gt;</code> tags). No human preferences. No critic model. The &quot;aha moment&quot; the DeepSeek paper described -- the model spontaneously learning to self-check and backtrack -- emerged from GRPO on sparse rule rewards alone.</p>
+<h3 id="process-reward-models-vs-outcome-reward-models"><a class="anchor" href="#process-reward-models-vs-outcome-reward-models">#</a> Process Reward Models vs Outcome Reward Models</h3>
+<p>You still have a design choice: reward the final answer (Outcome Reward Model, ORM) or reward each intermediate step (Process Reward Model, PRM).</p>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>ORM</th>
+<th>PRM</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Signal per trace</td>
+<td>1 number</td>
+<td>N numbers (one per step)</td>
+</tr>
+<tr>
+<td>Supervision source</td>
+<td>Final answer check</td>
+<td>Step-level labels or self-judging</td>
+</tr>
+<tr>
+<td>Training cost</td>
+<td>Cheap</td>
+<td>Expensive</td>
+</tr>
+<tr>
+<td>Credit assignment</td>
+<td>Sparse, noisy</td>
+<td>Dense, targeted</td>
+</tr>
+<tr>
+<td>Reward hacking risk</td>
+<td>Lower</td>
+<td>Higher (model optimizes PRM artifacts)</td>
+</tr>
+<tr>
+<td>Used by</td>
+<td>DeepSeek-R1, R1-Zero</td>
+<td>OpenAI o1 (allegedly), Math-Shepherd</td>
+</tr>
+</tbody></table>
+<p>The 2024-2025 consensus was that ORMs plus GRPO scale better than PRMs. PRMs are more sample-efficient per token but require expensive step-labeled data and tend to collapse into shortcut behaviors (writing steps that look good to the PRM but don&#39;t advance the proof). For most teams, ORM + GRPO is the first thing to try.</p>
+<h3 id="self-improvement-the-feedback-multiplier"><a class="anchor" href="#self-improvement-the-feedback-multiplier">#</a> Self-Improvement: The Feedback Multiplier</h3>
+<p>Once you have the two-loop pattern (critique/revise and group-relative RL with rule rewards), you can chain them.</p>
+<ol>
+<li>Start with an SFT model.</li>
+<li>Generate many candidate responses per prompt.</li>
+<li>Score them with a rule-based reward (for verifiable tasks) or a constitutional critic (for subjective tasks).</li>
+<li>Keep the top candidates as new SFT data or as preference pairs.</li>
+<li>Fine-tune. Go to step 2 with the improved model.</li>
+</ol>
+<p>DeepSeek called this &quot;rejection sampling fine-tuning&quot; when applied after R1-Zero. Anthropic called an earlier version of this &quot;constitutional AI distillation.&quot; The pattern is: each iteration amplifies the signal already in the model. It does not add new signal. If the model cannot solve problem class X at all, no amount of self-improvement will create that capability.</p>
+<p>The danger is mode collapse. Self-generated data is always a narrower distribution than the training corpus. After 3-5 rounds of self-distillation, models typically lose diversity on creative tasks, become overconfident, and exhibit characteristic &quot;AI voice&quot; (repeated phrasings, formulaic structure). Production pipelines mix self-generated data with a small fraction of fresh human data to keep the distribution honest.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    M0[&quot;SFT Model v0&quot;] --&gt; G[&quot;Generate G responses\nper prompt&quot;]
+    G --&gt; S[&quot;Score with rule\nor constitution&quot;]
+    S --&gt; F[&quot;Filter / rank&quot;]
+    F --&gt; T[&quot;Fine-tune\n(SFT or GRPO)&quot;]
+    T --&gt; M1[&quot;SFT Model v1&quot;]
+    M1 -.-&gt;|iterate| G
+
+    H[&quot;Human data\n(small fraction)&quot;] --&gt; T
+
+    style M0 fill:#1a1a2e,stroke:#e94560,color:#fff
+    style M1 fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style H fill:#1a1a2e,stroke:#0f3460,color:#fff</pre></div><h3 id="when-to-use-what"><a class="anchor" href="#when-to-use-what">#</a> When To Use What</h3>
+<ul>
+<li><strong>Pure CAI</strong>: Subjective behavior (tone, safety, refusal style). You have a well-defined constitution. You don&#39;t have clean verifiable outcomes.</li>
+<li><strong>GRPO + ORM</strong>: Verifiable tasks (math, code, structured extraction). You can cheaply check correctness. Reward is sparse and binary.</li>
+<li><strong>DPO on self-generated pairs</strong>: Hybrid. Use the constitution to produce preference pairs, then train with DPO (Lesson 08) instead of PPO/GRPO.</li>
+<li><strong>Full RLHF</strong>: Still appropriate when you need multi-objective tradeoffs that neither a rule nor a short constitution can express.</li>
+</ul>
+<p>Most 2026 frontier pipelines run all four. CAI for safety layers. GRPO for the reasoning post-training pass. DPO for the preference polish. Small RLHF passes for residual behaviors that resist the other methods.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">self-critique-loop</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The code implements three things in pure Python + numpy. A Constitutional AI self-critique loop. A rule-based reward checker for simple arithmetic. A minimal GRPO trainer that runs on a tiny language model from Lesson 04.</p>
+<h3 id="step-1-the-constitution"><a class="anchor" href="#step-1-the-constitution">#</a> Step 1: The Constitution</h3>
+<p>A list of principles. In production, each line would be richer and category-tagged. For the lesson, keep it short.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">CONSTITUTION = [
+    &quot;The response must directly answer the question asked, without hedging.&quot;,
+    &quot;The response must not include unnecessary filler or padding.&quot;,
+    &quot;If the question has a single numeric answer, state the number plainly.&quot;,
+    &quot;The response must not refuse a reasonable, benign request.&quot;,
+]</code></pre>
+      </div>
+    <h3 id="step-2-self-critique-and-revise"><a class="anchor" href="#step-2-self-critique-and-revise">#</a> Step 2: Self-Critique and Revise</h3>
+<p>In a real system the model itself critiques. In the lesson we simulate a critic with a handwritten rubric so the pipeline runs without an LLM call.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def critique(response: str, principle: str) -&gt; dict:
+    problems = []
+    if len(response.split()) &gt; 40 and &quot;plainly&quot; in principle:
+        problems.append(&quot;answer buried in extra prose&quot;)
+    if response.strip().lower().startswith((&quot;i can&#39;t&quot;, &quot;i cannot&quot;, &quot;as an ai&quot;)):
+        problems.append(&quot;unwarranted refusal&quot;)
+    if response.count(&quot;,&quot;) &gt; 4:
+        problems.append(&quot;too much hedging&quot;)
+    return {&quot;principle&quot;: principle, &quot;problems&quot;: problems}
+
+def revise(response: str, critique_result: dict) -&gt; str:
+    if &quot;answer buried&quot; in &quot; &quot;.join(critique_result[&quot;problems&quot;]):
+        return response.split(&quot;.&quot;)[-2].strip() + &quot;.&quot;
+    if &quot;unwarranted refusal&quot; in &quot; &quot;.join(critique_result[&quot;problems&quot;]):
+        return &quot;Here is the answer: &quot; + response.split(&quot;:&quot;)[-1].strip()
+    return response</code></pre>
+      </div>
+    <p>The revise function is a stand-in. With a real LLM it would be a second prompt: &quot;Given the critique, rewrite the response.&quot;</p>
+<h3 id="step-3-rule-based-rewards"><a class="anchor" href="#step-3-rule-based-rewards">#</a> Step 3: Rule-Based Rewards</h3>
+<p>For verifiable tasks, replace the critic entirely. This checker grades arithmetic answers.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import re
+
+def reward_math(prompt: str, response: str) -&gt; float:
+    try:
+        expected = eval(prompt.replace(&quot;What is &quot;, &quot;&quot;).replace(&quot;?&quot;, &quot;&quot;).strip())
+    except Exception:
+        return 0.0
+    numbers = re.findall(r&quot;-?\d+&quot;, response)
+    if not numbers:
+        return 0.0
+    return 1.0 if int(numbers[-1]) == expected else 0.0
+
+def reward_format(response: str) -&gt; float:
+    return 1.0 if re.search(r&quot;&lt;answer&gt;.*&lt;/answer&gt;&quot;, response) else 0.0</code></pre>
+      </div>
+    <p>Two deterministic rules. No training data. No human labels. The combined reward is <code>reward_math + 0.1 * reward_format</code>, penalizing missing format without drowning out correctness.</p>
+<h3 id="step-4-group-relative-advantage"><a class="anchor" href="#step-4-group-relative-advantage">#</a> Step 4: Group-Relative Advantage</h3>
+<p>Given a list of rewards for a group of responses to the same prompt, compute the z-score:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def group_relative_advantage(rewards: list[float]) -&gt; np.ndarray:
+    r = np.array(rewards, dtype=float)
+    if r.std() &lt; 1e-8:
+        return np.zeros_like(r)
+    return (r - r.mean()) / (r.std() + 1e-8)</code></pre>
+      </div>
+    <p>If every sample in the group has the same reward, the advantage is zero and no gradient signal flows. This is a feature. It tells you the prompt is either trivially solved or impossibly hard for the current policy, and the step should skip it.</p>
+<h3 id="step-5-grpo-update"><a class="anchor" href="#step-5-grpo-update">#</a> Step 5: GRPO Update</h3>
+<p>One step, symbolic gradient. In production this would be a torch autograd pass. Here we show the update rule directly.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def grpo_step(policy_logprobs: np.ndarray, ref_logprobs: np.ndarray,
+              advantages: np.ndarray, beta: float = 0.01, clip_eps: float = 0.2) -&gt; dict:
+    ratios = np.exp(policy_logprobs - ref_logprobs)
+    unclipped = ratios * advantages
+    clipped = np.clip(ratios, 1 - clip_eps, 1 + clip_eps) * advantages
+    policy_loss = -np.minimum(unclipped, clipped).mean()
+    kl = (ref_logprobs - policy_logprobs).mean()
+    total_loss = policy_loss + beta * kl
+    return {
+        &quot;policy_loss&quot;: float(policy_loss),
+        &quot;kl&quot;: float(kl),
+        &quot;total_loss&quot;: float(total_loss),
+        &quot;mean_ratio&quot;: float(ratios.mean()),
+    }</code></pre>
+      </div>
+    <p>This is PPO&#39;s clipped surrogate with one change: the advantages came from group-relative z-scores, not from a value function. No V(s) to train. No GAE. The group is the baseline.</p>
+<h3 id="step-6-self-improvement-round"><a class="anchor" href="#step-6-self-improvement-round">#</a> Step 6: Self-Improvement Round</h3>
+<p>Tie the pieces together. Sample a group, score each response with the rule, compute advantages, report the metrics you would feed into a real optimizer.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def self_improvement_round(prompts: list[str], policy_sampler, group_size: int = 8) -&gt; dict:
+    metrics = []
+    for prompt in prompts:
+        responses = [policy_sampler(prompt) for _ in range(group_size)]
+        rewards = [reward_math(prompt, r) + 0.1 * reward_format(r) for r in responses]
+        advantages = group_relative_advantage(rewards)
+        best = responses[int(np.argmax(rewards))]
+        metrics.append({
+            &quot;prompt&quot;: prompt,
+            &quot;mean_reward&quot;: float(np.mean(rewards)),
+            &quot;best_reward&quot;: float(np.max(rewards)),
+            &quot;std_reward&quot;: float(np.std(rewards)),
+            &quot;best_response&quot;: best,
+            &quot;advantages&quot;: advantages.tolist(),
+        })
+    return {&quot;per_prompt&quot;: metrics,
+            &quot;overall_mean&quot;: float(np.mean([m[&quot;mean_reward&quot;] for m in metrics]))}</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>Running <code>code/main.py</code> runs both loops end to end. The CAI loop produces a small set of (initial, revised) pairs you could fine-tune on. The GRPO loop produces per-prompt reward statistics for arithmetic problems, showing how group-relative advantages let a weak sampler improve without a value function or human labels.</p>
+<p>The numbers are not the point. In a real run with a trained model the reward mean should climb across rounds, the reward std should stay positive (if it collapses to zero, the policy has mode-collapsed and you should stop), and the KL to the reference should grow slowly. Those three curves -- mean reward up, std stable, KL bounded -- are the production health check for a GRPO or CAI pipeline.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-self-improvement-auditor.md</code>. Feed it a proposed self-improvement pipeline and it enforces the non-negotiable gates: a reward rule that is actually verifiable, a KL budget against the reference, a diversity floor, and a human-data quota. It refuses to approve a loop that claims to be &quot;pure self-improvement&quot; without any external grounding.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Replace the handwritten critic in Step 2 with an LLM call. Use any local chat model. Measure how often the critique and revision actually improve the response versus leaving it unchanged.</p>
+</li>
+<li><p>Add a third constitutional principle about factuality. Run the pipeline on prompts that require factual claims (capitals, dates) and measure how many revisions remove factual errors versus introduce new ones.</p>
+</li>
+<li><p>Implement DPO on the preference pairs produced by CAI stage 2. Take 20 prompts, generate two responses each, have the critic pick a winner per pair, then run the DPO loss from Lesson 08. Compare to the GRPO path on the same data.</p>
+</li>
+<li><p>Add entropy regularization to the GRPO objective. The term <code>-alpha * entropy(policy)</code> with alpha=0.01 encourages diverse sampling. Measure whether it delays mode collapse across 5 rounds of self-improvement.</p>
+</li>
+<li><p>Build a process reward scorer for a two-step arithmetic problem. Given &quot;What is (3+4)*5?&quot;, the model must show the intermediate 3+4=7 step. Grade the intermediate step separately from the final answer and compare PRM-weighted GRPO to pure ORM-weighted GRPO over 10 rounds.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Constitutional AI</td>
+<td>&quot;The model aligns itself&quot;</td>
+<td>A two-stage pipeline (self-critique + RLAIF) that replaces most human preference labels with model self-judgments against a written constitution</td>
+</tr>
+<tr>
+<td>RLAIF</td>
+<td>&quot;RLHF without humans&quot;</td>
+<td>Reinforcement Learning from AI Feedback -- PPO or DPO on preferences generated by the model itself</td>
+</tr>
+<tr>
+<td>GRPO</td>
+<td>&quot;PPO without a value function&quot;</td>
+<td>Group-Relative Policy Optimization -- sample G responses per prompt, use z-scored group rewards as advantages</td>
+</tr>
+<tr>
+<td>ORM</td>
+<td>&quot;Reward the answer&quot;</td>
+<td>Outcome Reward Model -- a single scalar reward on the final answer only</td>
+</tr>
+<tr>
+<td>PRM</td>
+<td>&quot;Reward each step&quot;</td>
+<td>Process Reward Model -- reward on every intermediate reasoning step, often trained from step-labeled data</td>
+</tr>
+<tr>
+<td>Rule-based reward</td>
+<td>&quot;Deterministic grader&quot;</td>
+<td>A verifier (regex, sympy, test suite) that returns a binary or numeric score without a learned model</td>
+</tr>
+<tr>
+<td>Rejection sampling FT</td>
+<td>&quot;Keep the winners, retrain&quot;</td>
+<td>Sample many responses, filter to the highest-reward ones, add to SFT data, retrain</td>
+</tr>
+<tr>
+<td>Mode collapse</td>
+<td>&quot;The model stopped being diverse&quot;</td>
+<td>Post-training policy concentrates on a narrow region of the response space; measured as falling reward std across a group</td>
+</tr>
+<tr>
+<td>KL budget</td>
+<td>&quot;How far you can drift&quot;</td>
+<td>The total KL divergence from the reference model that the optimizer is allowed to accumulate before training stops</td>
+</tr>
+<tr>
+<td>R1 moment</td>
+<td>&quot;The model learned to backtrack&quot;</td>
+<td>DeepSeek&#39;s reported behavior where a policy trained only on outcome rewards spontaneously developed self-checking and backtracking in its chain-of-thought</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2212.08073">Bai et al., 2022 -- &quot;Constitutional AI: Harmlessness from AI Feedback&quot;</a> -- Anthropic&#39;s original CAI paper with the two-stage SL-CAI + RLAIF pipeline</li>
+<li><a href="https://arxiv.org/abs/2402.03300">Shao et al., 2024 -- &quot;DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models&quot;</a> -- introduces GRPO</li>
+<li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI, 2025 -- &quot;DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning&quot;</a> -- R1 and R1-Zero, GRPO + rule rewards at scale</li>
+<li><a href="https://arxiv.org/abs/2305.20050">Lightman et al., 2023 -- &quot;Let&#39;s Verify Step by Step&quot;</a> -- OpenAI&#39;s PRM800K and the case for process reward models</li>
+<li><a href="https://arxiv.org/abs/2312.08935">Wang et al., 2024 -- &quot;Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations&quot;</a> -- auto-labeled PRM via Monte Carlo rollouts</li>
+<li><a href="https://arxiv.org/abs/2310.01798">Huang et al., 2024 -- &quot;Large Language Models Cannot Self-Correct Reasoning Yet&quot;</a> -- the skeptical counterpoint on self-improvement without external grounding</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-dpo.html"><span>← Previous</span><b>dpo</b></a>
+      <a class="next" href="./10-evaluation.html"><span>Next →</span><b>evaluation</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

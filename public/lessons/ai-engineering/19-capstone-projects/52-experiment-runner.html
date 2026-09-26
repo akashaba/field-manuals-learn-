@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Experiment Runner — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/52-experiment-runner/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#why-a-subprocess">Why a subprocess</a></li><li><a href="#the-experimentspec-shape">The ExperimentSpec shape</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#why-a-soft-memory-cap">Why a soft memory cap</a></li><li><a href="#capturing-stdout-and-stderr">Capturing stdout and stderr</a></li><li><a href="#ablation-table">Ablation table</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#the-mock-experiment-script">The mock experiment script</a></li><li><a href="#result-shape">Result shape</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#where-this-slots-in">Where this slots in</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Experiment Runner</h1>
+    <p class="lesson-sub">The loop is only as honest as its measurements. Build the runner that takes a spec, executes it in a sandboxed subprocess, and emits a json metrics blob the evaluator can trust.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 Track A lessons 20-29</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 52">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="21.3" cy="126.1" r="12.3" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="15.9" cy="121.2" r="11.7" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="120.5" cy="116.2" r="11.1" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="115.0" cy="111.3" r="10.4" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="109.6" cy="106.4" r="9.8" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="104.2" cy="101.5" r="9.1" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">52</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Experiment Runner</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Encode an experiment as a typed spec the runner can serialise to a subprocess.</li>
+<li>Launch a subprocess with a hard wall clock timeout and a soft memory cap, and surface both as terminal conditions.</li>
+<li>Capture stdout, stderr, and the structured metrics blob into a single result record.</li>
+<li>Build an ablation table that sweeps one configuration knob at a time over a fixed base spec.</li>
+<li>Keep every result deterministic given a seed so the evaluator sees the same numbers across runs.</li>
+</ul>
+<h2 id="why-a-subprocess"><a class="anchor" href="#why-a-subprocess">#</a> Why a subprocess</h2>
+<p>A research loop runs untrusted code. The hypothesis came from a sampler, the experiment script came from the same path; treating either as safe in-process is asking for a crash that takes the orchestrator down. Subprocesses are the simplest isolation the language ships: a separate process, an independent address space, a signal handle on the parent side.</p>
+<p>The runner here does not implement full sandboxing. There is no cgroup, no seccomp filter, no namespace remapping. What it does have is a wall clock timeout, a polling loop for memory growth, and a kill path that terminates the process on either limit. That is the runtime contract every more elaborate sandbox extends. The lesson keeps the contract small enough to read in one sitting.</p>
+<h2 id="the-experimentspec-shape"><a class="anchor" href="#the-experimentspec-shape">#</a> The ExperimentSpec shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">ExperimentSpec
+  spec_id        : str            (stable id, &quot;exp_001&quot;)
+  hypothesis_id  : int            (link back to the queue from lesson 50)
+  script_path    : str            (path to the python script to run)
+  config         : dict           (passed to the script as one json arg)
+  seed           : int            (deterministic seed for the experiment)
+  wall_timeout_s : float          (hard timeout, killed on exceed)
+  memory_cap_mb  : int            (soft cap, polled; killed on exceed)
+  metric_keys    : list[str]      (which fields the evaluator will read)</code></pre>
+      </div>
+    <p>The script lives on disk; the runner writes the config to a temp file path that the script reads. The script is expected to print a single json line on stdout whose keys are a superset of <code>metric_keys</code>. Anything else on stdout is captured but ignored by the metrics parser.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cg-runner-limits</code></pre>
+      </div>
+    <h2 id="architecture"><a class="anchor" href="#architecture">#</a> Architecture</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    A[ExperimentSpec] --&gt; B[serialise config to temp file]
+    B --&gt; C[spawn subprocess]
+    C --&gt; D[stdout / stderr pipes]
+    C --&gt; E[wall clock timer]
+    C --&gt; F[memory poller]
+    E -- exceeded --&gt; K[kill process]
+    F -- exceeded --&gt; K
+    D --&gt; P[parse final json line]
+    K --&gt; R[result with terminal=timeout or oom]
+    P --&gt; R[result with metrics]
+    R --&gt; O[ExperimentResult]</pre></div><p>The runner is one class with one main method. The poller is a small thread that wakes once every poll interval and reads the subprocess <code>psutil</code> equivalent from the proc filesystem when available, falling back to no op when the platform does not expose it.</p>
+<h2 id="why-a-soft-memory-cap"><a class="anchor" href="#why-a-soft-memory-cap">#</a> Why a soft memory cap</h2>
+<p>Hard memory caps need <code>resource.setrlimit</code> and only work on POSIX. The lesson ships a portable approach: poll the resident set size from the platform and kill the subprocess if it exceeds the cap. The cap is soft because the poller has a non zero interval; a process can spike above the cap between polls and then drop back. The runner records the maximum observed RSS so the evaluator can see how close the run came to the limit.</p>
+<p>On systems without process inspection support, the poller logs a one time warning and disables itself. The wall clock timeout still applies. The lesson tests cover both paths.</p>
+<h2 id="capturing-stdout-and-stderr"><a class="anchor" href="#capturing-stdout-and-stderr">#</a> Capturing stdout and stderr</h2>
+<p>The runner reads both pipes drained on completion. Stdout is scanned line by line; the last line that parses as json with all required <code>metric_keys</code> is taken as the metrics blob. Earlier json lines are kept in the result as <code>intermediate_metrics</code>; the evaluator can use these for learning curves.</p>
+<p>Stderr is captured verbatim into the result. The runner never raises on a non zero exit code; instead it records the code in the result. Any non zero exit is labelled <code>&quot;crash&quot;</code> even when the script printed metrics, so the evaluator treats partial runs as failures by default.</p>
+<h2 id="ablation-table"><a class="anchor" href="#ablation-table">#</a> Ablation table</h2>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def ablate(base: ExperimentSpec, knob: str, values: list[Any]) -&gt; list[ExperimentSpec]:
+    ...</code></pre>
+      </div>
+    <p>Given a base spec and a knob name, the helper returns one spec per value with <code>config[knob]</code> overridden. Each spec gets a derived <code>spec_id</code> (<code>f&quot;{base.spec_id}_{knob}_{value}&quot;</code>). The runner ships an <code>AblationRunner</code> that runs them in order and returns an <code>AblationTable</code> keyed by knob value.</p>
+<p>Why one knob at a time. Full factorial sweeps blow up exponentially and produce results the evaluator cannot interpret. One knob at a time produces a clean axis the evaluator can plot. The lesson supports multi knob sweeps only as repeated single knob ablations, composed by the caller.</p>
+<h2 id="determinism"><a class="anchor" href="#determinism">#</a> Determinism</h2>
+<p>Every spec carries a seed. The runner forwards the seed to the script via the config dict (<code>config[&quot;__seed&quot;] = spec.seed</code>). The mock experiment scripts in <code>code/experiments/</code> honour the seed and produce identical metrics across runs. The evaluator in lesson fifty-three depends on this; without determinism a &quot;regression&quot; might be a different random initialisation.</p>
+<h2 id="the-mock-experiment-script"><a class="anchor" href="#the-mock-experiment-script">#</a> The mock experiment script</h2>
+<p>The lesson ships one experiment script: <code>code/experiments/sparsity_experiment.py</code>. It is a real script that reads its config file, simulates a small training run with a numpy random pass, and prints a json metrics blob. The script honours a <code>sleep_s</code> knob for testing timeouts and an <code>allocate_mb</code> knob for testing the memory poller.</p>
+<p>The simulation is not training anything real. It is a numerical computation that mimics the shape of a training loop: a loss curve, a final perplexity, a wall time. The point of the lesson is the runner, not the simulation. A real experiment script would import a model.</p>
+<h2 id="result-shape"><a class="anchor" href="#result-shape">#</a> Result shape</h2>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">ExperimentResult
+  spec_id              : str
+  hypothesis_id        : int
+  exit_code            : int
+  terminal             : &quot;ok&quot; | &quot;timeout&quot; | &quot;oom&quot; | &quot;crash&quot;
+  wall_time_s          : float
+  peak_rss_mb          : float | None
+  metrics              : dict
+  intermediate_metrics : list[dict]
+  stdout_tail          : str
+  stderr_tail          : str</code></pre>
+      </div>
+    <p>The evaluator reads <code>metrics</code> and <code>terminal</code> first. If terminal is anything other than <code>&quot;ok&quot;</code> the experiment counts as a failed run and the evaluator&#39;s verdict is automatic. Otherwise the metrics are passed through the significance test.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>ExperimentSpec</code>, <code>ExperimentResult</code>, <code>ExperimentRunner</code>, <code>AblationRunner</code>, and a deterministic demo. The subprocess management is one class. The memory poller is a small thread. The ablation helper is a single function.</p>
+<p><code>code/experiments/sparsity_experiment.py</code> is the mock experiment used in tests. It reads its config file path from argv and writes a single json metrics line on completion.</p>
+<p><code>code/tests/test_runner.py</code> covers the success path, the timeout path, the crash path, the ablation table, and the determinism check across two runs.</p>
+<h2 id="where-this-slots-in"><a class="anchor" href="#where-this-slots-in">#</a> Where this slots in</h2>
+<p>Lesson fifty generates the hypothesis. Lesson fifty-one filters out anything the literature already settled. Lesson fifty-two runs the experiment for what is left. Lesson fifty-three reads the result, runs the significance test, and writes the verdict the orchestrator stores against the hypothesis id.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./51-literature-retrieval.html"><span>← Previous</span><b>literature retrieval</b></a>
+      <a class="next" href="./53-result-evaluator.html"><span>Next →</span><b>result evaluator</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

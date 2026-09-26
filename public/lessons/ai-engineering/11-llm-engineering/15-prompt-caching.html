@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prompt Caching and Context Caching — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/15-prompt-caching/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls-that-still-ship-in-2026">Pitfalls that still ship in 2026</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Prompt Caching and Context Caching</h1>
+    <p class="lesson-sub">Your system prompt is 4,000 tokens. Your RAG context is 20,000 tokens. You send both with every request. You also pay for both — every time. Prompt caching lets the provider keep that prefix warm on their side and bill you 10% of the normal rate on reuse. Used correctly, it cuts inference cost by 50–90% and first-token latency by 40–85%.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 11 · 01 (Prompt Engineering), Phase 11 · 05 (Context Engineering), Phase 11 · 11 (Caching and Cost)</b></div><div><span>Time</span><b>~60 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 15">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="39.4" y="41.0" width="32.8" height="32.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(227 55.8 57.4)"/>
+        <rect x="34.6" y="36.7" width="31.5" height="31.5" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(209 50.4 52.5)"/>
+        <rect x="29.8" y="32.5" width="30.3" height="30.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(191 45.0 47.6)"/>
+        <rect x="25.0" y="128.2" width="29.0" height="29.0" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(174 39.5 142.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">15</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Prompt Caching and</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Context Caching</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A coding agent sends the same 15,000-token system prompt to Claude on every turn of a conversation. Twenty turns at $3/M input tokens is $0.90 in input cost alone — before any of the user&#39;s actual messages. Multiply by 10,000 daily conversations and the bill hits $9,000/day for text that never changes.</p>
+<p>You cannot shrink the prompt without hurting quality. You cannot avoid sending it — the model needs it on every turn. The only move is to stop paying full price for a prefix the provider has already seen.</p>
+<p>That move is prompt caching. Anthropic shipped it in August 2024 (with a 1-hour extended-TTL variant in 2025), OpenAI automated it later that year, Google shipped explicit context caching alongside Gemini 1.5, and all three now offer it as a first-class feature on their frontier models.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/11-llm-engineering/15-prompt-caching/assets/prompt-caching.svg" alt="Prompt caching: write once, read cheap" loading="lazy" /></figure></p>
+<p><strong>The mechanic.</strong> When a request&#39;s prefix matches one from a recent request, the provider serves the KV-cache from the previous run instead of re-encoding the tokens. You pay a small write premium the first time and a large read discount every time after.</p>
+<p><strong>Three provider flavors in 2026.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>API style</th>
+<th>Hit discount</th>
+<th>Write premium</th>
+<th>Default TTL</th>
+<th>Min cacheable</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Anthropic</td>
+<td>Explicit <code>cache_control</code> markers on content blocks</td>
+<td>90% off input</td>
+<td>25% surcharge</td>
+<td>5 min (extendable to 1 hour)</td>
+<td>1,024 tokens (Sonnet/Opus), 2,048 (Haiku)</td>
+</tr>
+<tr>
+<td>OpenAI</td>
+<td>Automatic prefix detection</td>
+<td>50% off input</td>
+<td>none</td>
+<td>Up to 1 hour (best-effort)</td>
+<td>1,024 tokens</td>
+</tr>
+<tr>
+<td>Google (Gemini)</td>
+<td>Explicit <code>CachedContent</code> API</td>
+<td>Storage-billed; read at ~25% of normal</td>
+<td>Storage fee per token·hour</td>
+<td>User-set (default 1 hour)</td>
+<td>4,096 tokens (Flash), 32,768 (Pro)</td>
+</tr>
+</tbody></table>
+<p><strong>The invariant.</strong> All three cache prefixes only. If any token differs between requests, everything after the first differing token is a miss. Put the <em>stable</em> parts at the top, the <em>variable</em> parts at the bottom.</p>
+<h3 id="the-cache-friendly-layout"><a class="anchor" href="#the-cache-friendly-layout">#</a> The cache-friendly layout</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">[system prompt]          &lt;-- cache this
+[tool definitions]       &lt;-- cache this
+[few-shot examples]      &lt;-- cache this
+[retrieved documents]    &lt;-- cache if reused, else don&#39;t
+[conversation history]   &lt;-- cache up to last turn
+[current user message]   &lt;-- never cache (different every time)</code></pre>
+      </div>
+    <p>Violate the order — put the user message above the system prompt, interleave dynamic retrievals between few-shots — and the cache never hits.</p>
+<h3 id="the-break-even-calculation"><a class="anchor" href="#the-break-even-calculation">#</a> The break-even calculation</h3>
+<p>Anthropic&#39;s 25% write premium means a cached block has to be read at least twice to net-save money. 1 write + 1 read averages 0.675x cost per request (saves 32%); 1 write + 10 reads averages 0.205x (saves 80%). Rule of thumb: cache anything you expect to reuse at least 3 times within the TTL.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">prompt-cache-hit</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-anthropic-prompt-caching-with-explicit-markers"><a class="anchor" href="#step-1-anthropic-prompt-caching-with-explicit-markers">#</a> Step 1: Anthropic prompt caching with explicit markers</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import anthropic
+
+client = anthropic.Anthropic()
+
+SYSTEM = [
+    {
+        &quot;type&quot;: &quot;text&quot;,
+        &quot;text&quot;: &quot;You are a senior Python reviewer. Follow the rubric exactly.\n\n&quot; + RUBRIC_15K_TOKENS,
+        &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;},
+    }
+]
+
+def review(code: str):
+    return client.messages.create(
+        model=&quot;claude-opus-4-7&quot;,
+        max_tokens=1024,
+        system=SYSTEM,
+        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: code}],
+    )</code></pre>
+      </div>
+    <p>The <code>cache_control</code> marker tells Anthropic to store the block for 5 minutes. Reuse within that window hits; reuse after expires and writes again.</p>
+<p><strong>Response usage fields:</strong></p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">response = review(code_a)
+response.usage
+# InputTokensUsage(
+#     input_tokens=120,
+#     cache_creation_input_tokens=15023,   # paid at 1.25x
+#     cache_read_input_tokens=0,
+#     output_tokens=340,
+# )
+
+response_b = review(code_b)
+response_b.usage
+# cache_creation_input_tokens=0
+# cache_read_input_tokens=15023           # paid at 0.1x</code></pre>
+      </div>
+    <p>Check both fields in CI — if <code>cache_read_input_tokens</code> stays at zero across requests, your cache keys are drifting.</p>
+<h3 id="step-2-one-hour-extended-ttl"><a class="anchor" href="#step-2-one-hour-extended-ttl">#</a> Step 2: one-hour extended TTL</h3>
+<p>For long-running batch jobs, the 5-minute default expires between jobs. Set <code>ttl</code>:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: RUBRIC, &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;, &quot;ttl&quot;: &quot;1h&quot;}}</code></pre>
+      </div>
+    <p>1-hour TTL costs 2x the write premium (50% over baseline instead of 25%) but pays back fast on any batch reusing the prefix more than 5 times.</p>
+<h3 id="step-3-openai-automatic-caching"><a class="anchor" href="#step-3-openai-automatic-caching">#</a> Step 3: OpenAI automatic caching</h3>
+<p>OpenAI gives you nothing to configure. Any prefix over 1,024 tokens that matches a recent request gets a 50% discount automatically.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from openai import OpenAI
+client = OpenAI()
+
+resp = client.chat.completions.create(
+    model=&quot;gpt-5&quot;,
+    messages=[
+        {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: SYSTEM_PROMPT},   # long and stable
+        {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: user_msg},
+    ],
+)
+resp.usage.prompt_tokens_details.cached_tokens  # the discounted portion</code></pre>
+      </div>
+    <p>Same cache-friendly layout rule applies. Two things kill OpenAI&#39;s cache that don&#39;t kill Anthropic&#39;s: changing the <code>user</code> field (used as a cache key component) and reordering tools.</p>
+<h3 id="step-4-gemini-explicit-context-caching"><a class="anchor" href="#step-4-gemini-explicit-context-caching">#</a> Step 4: Gemini explicit context caching</h3>
+<p>Gemini treats the cache as a first-class object you create and name:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from google import genai
+from google.genai import types
+
+client = genai.Client()
+
+cache = client.caches.create(
+    model=&quot;gemini-3-pro&quot;,
+    config=types.CreateCachedContentConfig(
+        display_name=&quot;rubric-v3&quot;,
+        system_instruction=RUBRIC,
+        contents=[FEW_SHOT_EXAMPLES],
+        ttl=&quot;3600s&quot;,
+    ),
+)
+
+resp = client.models.generate_content(
+    model=&quot;gemini-3-pro&quot;,
+    contents=[&quot;Review this code:\n&quot; + code],
+    config=types.GenerateContentConfig(cached_content=cache.name),
+)</code></pre>
+      </div>
+    <p>Gemini charges storage per token·hour for as long as the cache lives, and reads at ~25% of normal input rate. This is the right shape when you reuse the same giant prompt across many sessions over days.</p>
+<h3 id="step-5-measuring-hit-rate-in-production"><a class="anchor" href="#step-5-measuring-hit-rate-in-production">#</a> Step 5: measuring hit rate in production</h3>
+<p>See <code>code/main.py</code> for a simulated three-provider accountant that tracks write/read/miss counts and computes blended cost per 1K requests. Gate deploys on a target hit rate — most production Anthropic setups should see &gt;80% read fraction after warmup.</p>
+<h2 id="pitfalls-that-still-ship-in-2026"><a class="anchor" href="#pitfalls-that-still-ship-in-2026">#</a> Pitfalls that still ship in 2026</h2>
+<ul>
+<li><strong>Dynamic timestamps at the top.</strong> <code>&quot;Current time: 2026-04-22 15:30:02&quot;</code> at the top of the system prompt. Every request misses. Move timestamps below the cache breakpoint.</li>
+<li><strong>Tool reordering.</strong> Serialize tools in a stable order — a dict reshuffle between deploys breaks every hit.</li>
+<li><strong>Free-text near-duplicates.</strong> &quot;You are helpful.&quot; vs &quot;You are a helpful assistant.&quot; — one byte difference = full miss.</li>
+<li><strong>Too-small blocks.</strong> Anthropic enforces a 1,024-token floor (2,048 for Haiku). Smaller blocks silently do not cache.</li>
+<li><strong>Blind cost dashboards.</strong> Split &quot;input tokens&quot; into cached vs uncached. Otherwise a traffic drop looks like a cache win.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 caching stack:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Pick</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent with stable 10k+ system prompt, many turns</td>
+<td>Anthropic <code>cache_control</code> with 5-min TTL</td>
+</tr>
+<tr>
+<td>Batch job reusing a prefix for 30+ minutes</td>
+<td>Anthropic with <code>ttl: &quot;1h&quot;</code></td>
+</tr>
+<tr>
+<td>Serverless endpoints on GPT-5, no custom infra</td>
+<td>OpenAI automatic (just make your prefix stable and long)</td>
+</tr>
+<tr>
+<td>Multi-day reuse of a giant code/doc corpus</td>
+<td>Gemini explicit <code>CachedContent</code></td>
+</tr>
+<tr>
+<td>Cross-provider fallback</td>
+<td>Keep the cacheable prefix layout identical across providers so any hit works</td>
+</tr>
+</tbody></table>
+<p>Combine with semantic caching (Phase 11 · 11) for the user-message layer: prompt caching handles <em>token-identical</em> reuse, semantic caching handles <em>meaning-identical</em> reuse.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save <code>outputs/skill-prompt-caching-planner.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: prompt-caching-planner
+description: Design a cache-friendly prompt layout and pick the right provider caching mode.
+version: 1.0.0
+phase: 11
+lesson: 15
+tags: [llm-engineering, caching, cost]
+---
+
+Given a prompt (system + tools + few-shot + retrieval + history + user) and a usage profile (requests per hour, TTL needed, provider), output:
+
+1. Layout. Reordered sections with a single cache breakpoint marked; explain which sections are stable, which are volatile.
+2. Provider mode. Anthropic cache_control, OpenAI automatic, or Gemini CachedContent. Justify from TTL and reuse pattern.
+3. Break-even. Expected reads per write within TTL; net cost vs no-cache with math.
+4. Verification plan. CI assertion that cache_read_input_tokens &gt; 0 on the second identical request; dashboard split by cached vs uncached tokens.
+5. Failure modes. List the three most likely reasons the cache will miss in this setup (dynamic timestamp, tool reorder, near-duplicate text) and how you will prevent each.
+
+Refuse to ship a cache plan that places a dynamic field above the breakpoint. Refuse to enable 1h TTL without a reuse count that makes the 2x write premium pay back.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Take a 10-turn conversation with a 5,000-token system prompt against Claude. Run it without <code>cache_control</code> and then with. Report the input-token bill for each.</li>
+<li><strong>Medium.</strong> Write a test harness that, given a prompt template and a request log, computes the expected hit rate and dollar savings per provider (Anthropic 5m, Anthropic 1h, OpenAI automatic, Gemini explicit).</li>
+<li><strong>Hard.</strong> Build a layout optimizer: given a prompt and a list of fields marked <code>stable=True/False</code>, rewrite the prompt to put a single cache breakpoint at the maximum cache-friendly position without losing information. Verify on a real Anthropic endpoint.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Prompt caching</td>
+<td>&quot;Makes long prompts cheap&quot;</td>
+<td>Reusing a provider-side KV-cache for matching prefixes; 50-90% discount on repeated input tokens.</td>
+</tr>
+<tr>
+<td><code>cache_control</code></td>
+<td>&quot;The Anthropic marker&quot;</td>
+<td>Content-block attribute that declares &quot;everything up to here is cacheable&quot;; <code>{&quot;type&quot;: &quot;ephemeral&quot;}</code>.</td>
+</tr>
+<tr>
+<td>Cache write</td>
+<td>&quot;Paying the premium&quot;</td>
+<td>The first request that populates the cache; billed at ~1.25x input rate on Anthropic, free on OpenAI.</td>
+</tr>
+<tr>
+<td>Cache read</td>
+<td>&quot;The discount&quot;</td>
+<td>Subsequent requests matching the prefix; billed at 10% (Anthropic), 50% (OpenAI), ~25% (Gemini).</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>&quot;How long it lives&quot;</td>
+<td>Seconds the cache stays warm; Anthropic 5m default (extendable 1h), OpenAI best-effort up to 1h, Gemini user-set.</td>
+</tr>
+<tr>
+<td>Extended TTL</td>
+<td>&quot;1-hour Anthropic cache&quot;</td>
+<td><code>{&quot;type&quot;: &quot;ephemeral&quot;, &quot;ttl&quot;: &quot;1h&quot;}</code>; 2x write premium but worth it for batch reuse.</td>
+</tr>
+<tr>
+<td>Prefix match</td>
+<td>&quot;Why my cache missed&quot;</td>
+<td>Caches only hit when every token from the start up to the breakpoint is byte-identical.</td>
+</tr>
+<tr>
+<td>Context caching (Gemini)</td>
+<td>&quot;The explicit one&quot;</td>
+<td>Google&#39;s named, storage-billed cache object; best for multi-day reuse of large corpora.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching">Anthropic — Prompt caching</a> — <code>cache_control</code>, 1h TTL, break-even tables.</li>
+<li><a href="https://platform.openai.com/docs/guides/prompt-caching">OpenAI — Prompt caching</a> — automatic prefix matching.</li>
+<li><a href="https://ai.google.dev/gemini-api/docs/caching">Google — Context caching</a> — <code>CachedContent</code> API and storage pricing.</li>
+<li><a href="https://www.anthropic.com/news/prompt-caching">Anthropic engineering — Prompt caching for long-context workloads</a> — original launch post with latency numbers.</li>
+<li>Phase 11 · 05 (Context Engineering) — where to slice the prompt so the cache can land.</li>
+<li>Phase 11 · 11 (Caching and Cost) — pair prompt caching with a semantic cache on user messages.</li>
+<li><a href="https://arxiv.org/abs/2211.05102">Pope et al., &quot;Efficiently Scaling Transformer Inference&quot; (2022)</a> — the KV-cache memory model that prompt caching exposes to users; explains why a cached prefix is ~10× cheaper to reread than to recompute.</li>
+<li><a href="https://arxiv.org/abs/2308.16369">Agrawal et al., &quot;SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills&quot; (2023)</a> — prefill is the phase prompt caching shortcuts; this paper explains why TTFT drops dramatically on cache hit while TPOT is unaffected.</li>
+<li><a href="https://arxiv.org/abs/2211.17192">Leviathan et al., &quot;Fast Inference from Transformers via Speculative Decoding&quot; (2023)</a> — prompt caching sits alongside speculative decoding, Flash Attention, and MQA/GQA as levers that bend the inference cost curve; read this for the other three.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./14-model-context-protocol.html"><span>← Previous</span><b>model context protocol</b></a>
+      <a class="next" href="./16-langgraph-state-machines.html"><span>Next →</span><b>langgraph state machines</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

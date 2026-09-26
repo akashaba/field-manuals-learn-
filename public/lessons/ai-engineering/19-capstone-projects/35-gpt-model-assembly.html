@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPT Model Assembly — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/35-gpt-model-assembly/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#stack">Stack</a></li><li><a href="#production-patterns-in-the-wild">Production patterns in the wild</a></li><li><a href="#use-it">Use It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">GPT Model Assembly</h1>
+    <p class="lesson-sub">Twelve blocks stacked, a token embedding, a learned position embedding, a final LayerNorm, and a tied language model head. That is the entire 124 million parameter GPT model. This lesson assembles those pieces into a working class, counts the parameters to confirm the model matches the reference 124M shape, and generates text with multinomial sampling, temperature, and top-k.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 19 lessons 30 to 34</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 35">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="20.1" cy="125.0" r="12.2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.7" cy="120.1" r="11.6" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="119.2" cy="115.1" r="10.9" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="113.8" cy="110.2" r="10.3" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="108.4" cy="105.3" r="9.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="103.0" cy="100.3" r="9.0" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">35</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="90" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">GPT Model Assembly</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Assemble the transformer block from lesson 34 into a full GPT model: token embedding, position embedding, N blocks, final LayerNorm, language model head.</li>
+<li>Reproduce the 124 million parameter configuration: vocab 50257, context 1024, embedding 768, twelve heads, twelve layers.</li>
+<li>Tie the language model head weights to the token embedding and explain why that saves ~38 million parameters at this scale.</li>
+<li>Generate text from a prompt with multinomial sampling, temperature scaling, and top-k truncation, holding context length with a sliding window.</li>
+<li>Measure parameter count and forward pass cost against the 124M target.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A transformer block does nothing on its own. You need to turn token ids into vectors, mix in positional information, run them through the stack, and project back to vocabulary logits. Forget any one of those four steps and the model either fails to forward, drifts in position information, or cannot speak.</p>
+<p>The shape of the model also matters. The reference GPT-2 small is 124 million parameters at exactly the configuration above. The numbers are not magic. Vocab 50257 times embedding 768 is the token table. Position 1024 times 768 is the position table. Twelve blocks at roughly 7 million parameters each is 84 million. The final head reuses the token table by weight tying. Sum the pieces and you land on 124 million. Building a model whose parameter count does not match the reference is a sign you wired something wrong.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<div class="fig"><pre class="mermaid">flowchart TB
+  T[Token ids&lt;br/&gt;shape B, T] --&gt; E[Token embedding&lt;br/&gt;50257, 768]
+  T --&gt; P[Position lookup&lt;br/&gt;0 to T-1]
+  P --&gt; PE[Position embedding&lt;br/&gt;1024, 768]
+  E --&gt; A[Add]
+  PE --&gt; A
+  A --&gt; D[Embedding dropout]
+  D --&gt; B1[Block 1]
+  B1 --&gt; B2[Block 2]
+  B2 --&gt; Bk[...]
+  Bk --&gt; B12[Block 12]
+  B12 --&gt; L[Final LayerNorm]
+  L --&gt; H[LM head&lt;br/&gt;tied to token embedding]
+  H --&gt; O[Logits&lt;br/&gt;shape B, T, 50257]</pre></div><p>Token ids become token vectors. Position ids become position vectors. The two are added and sent through the stack. The final LayerNorm is the one piece outside the blocks that survives every modern variant. The LM head reuses the token embedding matrix, which is what weight tying means.</p>
+<h3 id="weight-tying"><a class="anchor" href="#weight-tying">#</a> Weight tying</h3>
+<p>The token embedding has shape <code>(vocab, d_model)</code>. The language model head needs to project from <code>d_model</code> back to <code>vocab</code>. Those are transposes of each other. Tying the two means literally the same parameter tensor, used twice. At vocab 50257 and d_model 768, the matrix is 38 million parameters. Untied, you pay for it twice. Tied, you pay for it once and you also get a slightly cleaner gradient signal because the embedding and head update together.</p>
+<h3 id="position-embedding-is-learned-not-sinusoidal"><a class="anchor" href="#position-embedding-is-learned-not-sinusoidal">#</a> Position embedding is learned, not sinusoidal</h3>
+<p>GPT-2 ships a learned position embedding. The position table is one parameter tensor of shape <code>(1024, 768)</code>. The model looks up position 0 through T-1 at every forward and adds the lookup to the token embedding. This is the simplest of the position schemes (RoPE, ALiBi, T5 relative bias are the alternatives) and it is what the 124M reference uses.</p>
+<h3 id="generation-temperature-top-k-multinomial"><a class="anchor" href="#generation-temperature-top-k-multinomial">#</a> Generation: temperature, top-k, multinomial</h3>
+<p>Generation is autoregressive. At every step, the model returns logits over the full vocabulary at every position. You take the last position only, divide by temperature, optionally mask all but the top k logits to negative infinity, softmax to get probabilities, and sample one token from the resulting distribution.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+  P[Prompt tokens] --&gt; M[Model forward]
+  M --&gt; Last[Take last position logits]
+  Last --&gt; T[Divide by temperature]
+  T --&gt; K[Mask to top k]
+  K --&gt; S[Softmax]
+  S --&gt; MN[Multinomial sample]
+  MN --&gt; A[Append to context]
+  A --&gt; Slide[Slide context if &gt; ctx_len]
+  Slide --&gt; M</pre></div><p>Three knobs, three different behaviors. Temperature near zero collapses to greedy. Temperature one matches the model&#39;s natural distribution. Top-k one is greedy. Top-k forty filters the long tail. The combinations matter; the next lesson on training uses generation as a qualitative eval signal.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cc-gpt-assembly</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements:</p>
+<ul>
+<li><code>class GPTConfig</code> dataclass with the 124M defaults: <code>vocab_size=50257</code>, <code>context_length=1024</code>, <code>d_model=768</code>, <code>num_heads=12</code>, <code>num_layers=12</code>, <code>mlp_expansion=4</code>, <code>dropout=0.1</code>, <code>use_bias=True</code>, <code>weight_tying=True</code>.</li>
+<li><code>class GPTModel</code> with token embedding, position embedding, embedding dropout, twelve <code>TransformerBlock</code>s, final LayerNorm, and an <code>lm_head</code> that ties to the token embedding when the flag is set.</li>
+<li>A <code>count_parameters</code> helper that returns the unique parameter count (so weight tying is honored in the count).</li>
+<li>A <code>generate</code> function that does temperature, top-k, multinomial, and sliding window context.</li>
+<li>A demo that builds the model, prints the parameter count next to the reference 124M, and generates a short sequence from a fixed prompt to show the pipeline ends to end.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="bash">
+        <span class="cb-label">bash</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-bash hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>Output: parameter count alongside the 124M reference, generated token ids from a random prompt, and a confirmation that the LM head and token embedding share storage when tying is on.</p>
+<p>To keep the demo fast, the script also runs a tiny config (<code>d_model=64</code>, <code>num_layers=2</code>) end to end and prints the generated token sequence inline. The 124M config is built but only its parameter count and one forward pass are exercised.</p>
+<h2 id="stack"><a class="anchor" href="#stack">#</a> Stack</h2>
+<ul>
+<li><code>torch</code> for the tensor math, autograd, and module plumbing.</li>
+<li><code>code/main.py</code> reimplements the same block pattern from lesson 34 locally.</li>
+</ul>
+<h2 id="production-patterns-in-the-wild"><a class="anchor" href="#production-patterns-in-the-wild">#</a> Production patterns in the wild</h2>
+<p>Three patterns make the difference between a model that runs and a model that ships.</p>
+<p><strong>Initialize the residual projections small.</strong> The output projection of attention and the second linear of the MLP both feed directly into a residual add. Initializing those with the same standard deviation as every other linear gives a residual stream that grows with depth and pushes the final LayerNorm into a hot regime. Scale the std by <code>1 / sqrt(2 * num_layers)</code> for those two projections; the residual stream stays in a sane range through twelve layers.</p>
+<p><strong>Cache the position id tensor, do not recompute.</strong> <code>torch.arange(T)</code> allocates fresh memory at every forward. Allocate once in <code>__init__</code> for the maximum context, slice the first T entries per call, and skip the allocator round trip.</p>
+<p><strong>Tie weights at parameter level, not just by copying.</strong> Setting <code>lm_head.weight = token_embedding.weight</code> shares the tensor; copying does not. The optimizer needs to update one parameter and the autograd graph needs one accumulation. If you copy, the head drifts away from the embedding and weight tying buys you nothing.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li>The model class in this lesson is the same shape as the one the next lesson trains.</li>
+<li>Replacing the learned position embedding with RoPE gets you the LLaMA family without touching the block or the head.</li>
+<li>Replacing the GELU with SiLU and the LayerNorm with RMSNorm gets you the rest of the LLaMA family changes.</li>
+<li>The generation function works with any logits source, not only this model. You can pull logits from a pretrained GPT-2 file in lesson 37 and reuse the same generation loop.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Untie the LM head from the token embedding and recount parameters. Verify the delta is 50257 times 768 = 38 million.</li>
+<li>Replace the learned position embedding with a sinusoidal table computed at construction time. Confirm the model still forwards and the parameter count drops by 786,432.</li>
+<li>Add a <code>greedy=True</code> flag to generation that skips sampling and picks argmax. Confirm the sequence is deterministic across runs.</li>
+<li>Add a <code>repetition_penalty</code> knob that divides the logit of any token in the prompt or generated history by a constant before softmax. Show on a fixed prompt that values above one reduce repeat counts in the output.</li>
+<li>Add <code>top_p</code> (nucleus) sampling next to <code>top_k</code>. Two-line check that the sum of probabilities of the kept tokens exceeds <code>top_p</code>.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Weight tying</td>
+<td>&quot;Tied embeddings&quot;</td>
+<td>The LM head and the token embedding share the same parameter tensor; saves vocab times d_model parameters and matches the GPT-2 reference</td>
+</tr>
+<tr>
+<td>Position embedding</td>
+<td>&quot;Learned positions&quot;</td>
+<td>A separate table of shape (context length, d_model) added to token vectors; learned end to end</td>
+</tr>
+<tr>
+<td>Sliding window context</td>
+<td>&quot;Context cap&quot;</td>
+<td>When the prompt plus generated tokens exceed the context length, drop the oldest tokens so the active window fits</td>
+</tr>
+<tr>
+<td>Top-k sampling</td>
+<td>&quot;K truncation&quot;</td>
+<td>Keep the K logits with the highest values, mask the rest to negative infinity, softmax over the remainder</td>
+</tr>
+<tr>
+<td>Temperature</td>
+<td>&quot;Sampling temperature&quot;</td>
+<td>Divide logits by T before softmax; T less than 1 sharpens, T equal to 1 keeps the natural distribution, T greater than 1 flattens</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li>Phase 19 lesson 34 for the block this model stacks.</li>
+<li>Phase 19 lesson 36 for the training loop that drives this model with cross entropy loss.</li>
+<li>Phase 19 lesson 37 for loading pretrained GPT-2 weights into this exact architecture.</li>
+<li>Phase 7 lesson 07 (GPT causal language modeling) for the math of next token prediction.</li>
+<li>Phase 10 lesson 04 (pre training mini GPT) for the original training procedure on the same architecture.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./34-transformer-block.html"><span>← Previous</span><b>transformer block</b></a>
+      <a class="next" href="./36-training-loop-eval.html"><span>Next →</span><b>training loop eval</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

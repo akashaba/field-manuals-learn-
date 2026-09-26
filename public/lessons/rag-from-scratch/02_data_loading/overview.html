@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conceptual Guide: Document Loading for RAG Systems — RAG from Scratch</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#c05621;--accent-2:#8a3d17;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/rag-from-scratch"><b>RAG from Scratch</b></a>
+  <nav>
+    <a href="/rag-from-scratch">Index</a>
+    <a href="https://github.com/pguso/rag-from-scratch/blob/main/examples/02_data_loading/CONCEPT.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/rag-from-scratch">RAG from Scratch</a>
+    </div>
+    <div class="phase-label">Data Loading</div>
+    <ol class="toc"><li><a href="#table-of-contents">Table of Contents</a></li><li><a href="#introduction-to-document-loading">Introduction to Document Loading</a></li><li><a href="#the-rag-pipeline-context">The RAG Pipeline Context</a></li><li><a href="#core-concepts">Core Concepts</a></li><li><a href="#document-structure">Document Structure</a></li><li><a href="#text-extraction-strategies">Text Extraction Strategies</a></li><li><a href="#text-preprocessing-philosophy">Text Preprocessing Philosophy</a></li><li><a href="#page-splitting-vs-full-document">Page Splitting vs. Full Document</a></li><li><a href="#comparison-with-langchainjs">Comparison with LangChain.js</a></li><li><a href="#conclusion">Conclusion</a></li><li><a href="#code-walkthrough">Code walkthrough</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">RAG from Scratch · Data Loading</div>
+    <h1 class="lesson-title">Conceptual Guide: Document Loading for RAG Systems</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RAG from Scratch — Data Loading ov">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M66.0,74.6 L71.2,66.8 L76.5,74.6 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M48.2,77.1 L65.8,50.7 L83.4,77.1 Z" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.4" y="44.7" width="33.9" height="33.9" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(242 60.4 61.6)"/>
+        <rect x="38.6" y="40.4" width="32.6" height="32.6" rx="2" fill="none" stroke="#c05621" stroke-width="1.1" opacity="0.55" transform="rotate(224 55.0 56.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="128" lengthAdjust="spacingAndGlyphs">RAG FROM SCRATCH</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">ov</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="96" lengthAdjust="spacingAndGlyphs">DATA LOADING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Conceptual Guide:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Document Loading for…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="table-of-contents"><a class="anchor" href="#table-of-contents">#</a> Table of Contents</h2>
+<ol>
+<li><a href="#introduction-to-document-loading">Introduction to Document Loading</a></li>
+<li><a href="#the-rag-pipeline-context">The RAG Pipeline Context</a></li>
+<li><a href="#core-concepts">Core Concepts</a></li>
+<li><a href="#document-structure">Document Structure</a></li>
+<li><a href="#text-extraction-strategies">Text Extraction Strategies</a></li>
+<li><a href="#text-preprocessing-philosophy">Text Preprocessing Philosophy</a></li>
+<li><a href="#page-splitting-vs-full-document">Page Splitting vs. Full Document</a></li>
+<li><a href="#comparison-with-langchainjs">Comparison with LangChain.js</a></li>
+<li><a href="#design-trade-offs">Design Trade-offs</a></li>
+<li><a href="#when-to-use-what">When to Use What</a></li>
+<li><a href="#advanced-concepts">Advanced Concepts</a></li>
+</ol>
+<hr>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/pguso/rag-from-scratch/main/images/indexing.png" alt="image" loading="lazy" /></figure></p>
+<p>Examples and how they map to the diagram</p>
+<ul>
+<li>02_data_loading = Knowledge Sources &lt;- you are here</li>
+<li>03_text_splitting_and_chunking = Chunking</li>
+<li>04_intro_to_embeddings = Embedding</li>
+<li>05_building_vector_store = Vector Database</li>
+</ul>
+<hr>
+<h2 id="introduction-to-document-loading"><a class="anchor" href="#introduction-to-document-loading">#</a> Introduction to Document Loading</h2>
+<h3 id="what-is-document-loading"><a class="anchor" href="#what-is-document-loading">#</a> What is Document Loading?</h3>
+<p>Document loading is the <strong>first and foundational step</strong> in any Retrieval-Augmented Generation (RAG) system. It&#39;s the process of taking unstructured data (PDFs, web pages, documents) and transforming them into a structured, machine-readable format that can be processed by downstream components in the RAG pipeline.</p>
+<p>Think of it as the &quot;intake system&quot; of your RAG application - just as a restaurant needs to properly receive, inspect, and prepare ingredients before cooking, a RAG system needs to properly load and structure documents before they can be used to answer questions.</p>
+<h3 id="why-document-loading-matters"><a class="anchor" href="#why-document-loading-matters">#</a> Why Document Loading Matters</h3>
+<p>The quality of your document loading directly impacts:</p>
+<ol>
+<li><strong>Retrieval Accuracy</strong>: Poor text extraction leads to incomplete or corrupted content</li>
+<li><strong>Embedding Quality</strong>: Garbage in, garbage out-messy text creates poor embeddings</li>
+<li><strong>Answer Quality</strong>: LLMs can only work with what they&#39;re given</li>
+<li><strong>Citation Accuracy</strong>: Proper metadata enables precise source attribution</li>
+<li><strong>System Performance</strong>: Efficient loading affects the entire pipeline&#39;s speed</li>
+</ol>
+<h3 id="the-challenge"><a class="anchor" href="#the-challenge">#</a> The Challenge</h3>
+<p>PDFs and other documents contain:</p>
+<ul>
+<li>Visual formatting (bold, italics, columns)</li>
+<li>Non-textual elements (images, charts, tables)</li>
+<li>Structural artifacts (headers, footers, page numbers)</li>
+<li>Encoding complexities (fonts, character sets)</li>
+<li>Layout information (columns, text boxes)</li>
+</ul>
+<p>Document loaders must extract meaningful text while handling these complexities intelligently.</p>
+<hr>
+<h2 id="the-rag-pipeline-context"><a class="anchor" href="#the-rag-pipeline-context">#</a> The RAG Pipeline Context</h2>
+<h3 id="where-document-loading-fits"><a class="anchor" href="#where-document-loading-fits">#</a> Where Document Loading Fits</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌─────────────────────────────────────────────────────────────┐
+│                     RAG PIPELINE                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. DOCUMENT LOADING                ← YOU ARE HERE          │
+│     ├─ Load PDFs, docs, web pages                           │
+│     ├─ Extract raw text                                     │
+│     ├─ Clean and normalize                                  │
+│     └─ Structure into Documents                             │
+│                                                             │
+│  2. TEXT SPLITTING                                          │
+│     ├─ Break large documents into chunks                    │
+│     ├─ Respect semantic boundaries                          │
+│     └─ Add overlap for context                              │
+│                                                             │
+│  3. EMBEDDING GENERATION                                    │
+│     ├─ Convert text chunks to vectors                       │
+│     └─ Capture semantic meaning                             │
+│                                                             │
+│  4. VECTOR STORAGE                                          │
+│     ├─ Index embeddings in vector DB                        │
+│     └─ Store metadata for retrieval                         │
+│                                                             │
+│  5. RETRIEVAL (at query time)                               │
+│     ├─ Embed user query                                     │
+│     ├─ Find similar vectors                                 │
+│     └─ Return relevant chunks                               │
+│                                                             │
+│  6. GENERATION                                              │
+│     ├─ Combine query + retrieved context                    │
+│     └─ Generate answer with LLM                             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+      </div>
+    <h3 id="the-data-flow"><a class="anchor" href="#the-data-flow">#</a> The Data Flow</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">PDF File → Document Loader → Structured Documents → Text Splitter → Chunks
+                                      ↓
+                              (with metadata)
+                                      ↓
+                          Eventually becomes context for LLM</code></pre>
+      </div>
+    <hr>
+<h2 id="core-concepts"><a class="anchor" href="#core-concepts">#</a> Core Concepts</h2>
+<h3 id="1-document-abstraction"><a class="anchor" href="#1-document-abstraction">#</a> 1. Document Abstraction</h3>
+<p>A <strong>Document</strong> is a fundamental abstraction in RAG systems. It represents a unit of text with associated metadata:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    pageContent: &quot;The actual text content...&quot;,
+    metadata: {
+        source: &quot;where it came from&quot;,
+        page: &quot;which page&quot;,
+        // ... other contextual info
+    }
+}</code></pre>
+      </div>
+    <p><strong>Why This Matters</strong>:</p>
+<ul>
+<li><strong>Separation of Concerns</strong>: Content is separate from metadata</li>
+<li><strong>Flexibility</strong>: Same structure works for PDFs, web pages, CSVs, etc.</li>
+<li><strong>Traceability</strong>: Always know where information originated</li>
+<li><strong>Filtering</strong>: Can filter retrieval by metadata (e.g., &quot;only search recent docs&quot;)</li>
+</ul>
+<h3 id="2-unstructured-structured-transformation"><a class="anchor" href="#2-unstructured-structured-transformation">#</a> 2. Unstructured → Structured Transformation</h3>
+<p>Document loading transforms:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">UNSTRUCTURED               STRUCTURED
+┌──────────────┐          ┌──────────────┐
+│ Binary PDF   │          │ Document {   │
+│ with complex │   →→→    │   text: &quot;...&quot;,│
+│ formatting   │          │   metadata   │
+└──────────────┘          └──────────────┘</code></pre>
+      </div>
+    <p>This transformation involves:</p>
+<ul>
+<li><strong>Parsing</strong>: Understanding the file format</li>
+<li><strong>Extraction</strong>: Pulling out text content</li>
+<li><strong>Cleaning</strong>: Removing artifacts</li>
+<li><strong>Structuring</strong>: Organizing into standard format</li>
+</ul>
+<h3 id="3-metadata-as-first-class-citizen"><a class="anchor" href="#3-metadata-as-first-class-citizen">#</a> 3. Metadata as First-Class Citizen</h3>
+<p>Metadata isn&#39;t just &quot;extra info&quot;-it&#39;s critical for:</p>
+<h4 id="source-attribution"><a class="anchor" href="#source-attribution">#</a> Source Attribution</h4>
+<ul>
+<li>User asks: “What does the paper say about RAG?”</li>
+<li>LLM can respond: “According to page 5 of the paper…”</li>
+<li>This is only possible because we stored page numbers!</li>
+</ul>
+<h4 id="filtering-and-routing"><a class="anchor" href="#filtering-and-routing">#</a> Filtering and Routing</h4>
+<ul>
+<li>“Search only in documents from 2024”</li>
+<li>“Find information in the Q3 reports”</li>
+<li>Metadata enables these queries</li>
+</ul>
+<h4 id="debugging-and-auditing"><a class="anchor" href="#debugging-and-auditing">#</a> Debugging and Auditing</h4>
+<ul>
+<li>“Where did this answer come from?”</li>
+<li>Metadata provides the trail back to the source</li>
+</ul>
+<h3 id="4-granularity-decisions"><a class="anchor" href="#4-granularity-decisions">#</a> 4. Granularity Decisions</h3>
+<p><strong>Granularity</strong> refers to how finely you split documents:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">COARSE GRANULARITY          FINE GRANULARITY
+┌──────────────┐            ┌───┬───┬───┬───┐
+│              │            │ P │ P │ P │ P │
+│  Entire      │     vs.    │ a │ a │ a │ a │
+│  Document    │            │ g │ g │ g │ g │
+│              │            │ e │ e │ e │ e │
+└──────────────┘            └───┴───┴───┴───┘</code></pre>
+      </div>
+    <p>Trade-offs:</p>
+<ul>
+<li><strong>Coarse</strong>: Better context, but less precise retrieval</li>
+<li><strong>Fine</strong>: More precise, but may miss context</li>
+</ul>
+<hr>
+<h2 id="document-structure"><a class="anchor" href="#document-structure">#</a> Document Structure</h2>
+<h3 id="the-document-class-philosophy"><a class="anchor" href="#the-document-class-philosophy">#</a> The Document Class Philosophy</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">class Document {
+    constructor(pageContent, metadata, id) {
+        this.pageContent = pageContent;
+        this.metadata = metadata;
+        this.id = id;
+    }
+}</code></pre>
+      </div>
+    <p>This simple structure embodies several design principles:</p>
+<h4 id="1-simplicity"><a class="anchor" href="#1-simplicity">#</a> 1. Simplicity</h4>
+<ul>
+<li>Three fields, clear purpose</li>
+<li>No unnecessary complexity</li>
+<li>Easy to understand and use</li>
+</ul>
+<h4 id="2-flexibility"><a class="anchor" href="#2-flexibility">#</a> 2. Flexibility</h4>
+<ul>
+<li><code>pageContent</code> can be any text</li>
+<li><code>metadata</code> is an open object (any structure)</li>
+<li>Works across document types</li>
+</ul>
+<h4 id="3-compatibility"><a class="anchor" href="#3-compatibility">#</a> 3. Compatibility</h4>
+<ul>
+<li>Matches LangChain&#39;s Document interface</li>
+<li>Interoperable with other RAG tools</li>
+<li>Standard pattern in the ecosystem</li>
+</ul>
+<h4 id="4-extensibility"><a class="anchor" href="#4-extensibility">#</a> 4. Extensibility</h4>
+<ul>
+<li>Easy to subclass for special document types</li>
+<li>Metadata can hold domain-specific information</li>
+<li>ID enables tracking and deduplication</li>
+</ul>
+<h3 id="metadata-schema-design"><a class="anchor" href="#metadata-schema-design">#</a> Metadata Schema Design</h3>
+<p>The metadata structure in our code:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    source: &quot;URL or file path&quot;,           // Origin
+    pdf: {
+        info: {...},                       // PDF properties
+        metadata: {...},                   // PDF metadata
+        totalPages: 22                       // Total pages
+    },
+    loc: {                                 // Location
+        pageNumber: 1                      // Specific page
+    }
+}</code></pre>
+      </div>
+    <p><strong>Design Considerations</strong>:</p>
+<p><strong>Hierarchical Organization</strong>:</p>
+<ul>
+<li>Groups related metadata together</li>
+<li><code>pdf</code> contains all PDF-specific info</li>
+<li>Easy to extend for other formats (add <code>word: {...}</code>)</li>
+</ul>
+<p><strong>Balance Between Generic and Specific</strong>:</p>
+<ul>
+<li><code>source</code> and <code>loc</code> are generic (work for any document)</li>
+<li><code>pdf</code> is format-specific (only for PDFs)</li>
+</ul>
+<p><strong>Future-Proofing</strong>:</p>
+<ul>
+<li>Can add new top-level keys without breaking existing code</li>
+<li>Nested structure allows deep customization</li>
+</ul>
+<hr>
+<h2 id="text-extraction-strategies"><a class="anchor" href="#text-extraction-strategies">#</a> Text Extraction Strategies</h2>
+<h3 id="the-challenge-of-pdf-text-extraction"><a class="anchor" href="#the-challenge-of-pdf-text-extraction">#</a> The Challenge of PDF Text Extraction</h3>
+<p>PDFs are fundamentally <strong>visual documents</strong>-they specify where ink should appear on a page, not the logical structure of text. This creates challenges:</p>
+<h4 id="problem-1-text-order-ambiguity"><a class="anchor" href="#problem-1-text-order-ambiguity">#</a> Problem 1: Text Order Ambiguity</h4>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌─────────────────────────────┐
+│  PDF Visual Layout:         │
+│                             │
+│  ┌──────────┐  ┌──────────┐ │
+│  │ Column 1 │  │ Column 2 │ │
+│  │ Text A   │  │ Text C   │ │
+│  │ Text B   │  │ Text D   │ │
+│  └──────────┘  └──────────┘ │
+└─────────────────────────────┘
+
+Possible Extractions:
+1. &quot;Text A, Text B, Text C, Text D&quot; (column-by-column)
+2. &quot;Text A, Text C, Text B, Text D&quot; (left-to-right, top-to-bottom)</code></pre>
+      </div>
+    <h4 id="problem-2-artifact-pollution"><a class="anchor" href="#problem-2-artifact-pollution">#</a> Problem 2: Artifact Pollution</h4>
+<p>PDFs contain visual elements that shouldn&#39;t be in the extracted text:</p>
+<ul>
+<li>Page numbers (&quot;Page 1 of 22&quot;)</li>
+<li>Headers and footers</li>
+<li>Watermarks</li>
+<li>Decorative elements</li>
+</ul>
+<h4 id="problem-3-encoding-issues"><a class="anchor" href="#problem-3-encoding-issues">#</a> Problem 3: Encoding Issues</h4>
+<ul>
+<li>Different fonts may encode characters differently</li>
+<li>Special characters (bullets, em-dashes) may not extract cleanly</li>
+<li>Unicode normalization issues</li>
+</ul>
+<h3 id="extraction-philosophy"><a class="anchor" href="#extraction-philosophy">#</a> Extraction Philosophy</h3>
+<p>Our code uses <strong>pdf-parse</strong>, which:</p>
+<ul>
+<li>Extracts text in reading order (best effort)</li>
+<li>Handles common encoding issues</li>
+<li>Provides page-level extraction</li>
+</ul>
+<p>The philosophy is:</p>
+<ol>
+<li><strong>Extract first, clean later</strong>: Get all text out, then process it</li>
+<li><strong>Preserve semantic structure</strong>: Keep paragraph breaks</li>
+<li><strong>Remove noise</strong>: Strip out pagination artifacts</li>
+<li><strong>Normalize</strong>: Create consistent formatting</li>
+</ol>
+<hr>
+<h2 id="text-preprocessing-philosophy"><a class="anchor" href="#text-preprocessing-philosophy">#</a> Text Preprocessing Philosophy</h2>
+<h3 id="why-clean-text"><a class="anchor" href="#why-clean-text">#</a> Why Clean Text?</h3>
+<p>Raw PDF text often looks like:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;Retrieval-Augmented    Generation  for
+
+
+AI-Generated Content
+
+-- 1 of 22 --
+
+
+Abstract:    This paper surveys...&quot;</code></pre>
+      </div>
+    <p>After cleaning:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">&quot;Retrieval-Augmented Generation for
+AI-Generated Content
+
+Abstract: This paper surveys...&quot;</code></pre>
+      </div>
+    <h3 id="the-cleaning-pipeline"><a class="anchor" href="#the-cleaning-pipeline">#</a> The Cleaning Pipeline</h3>
+<p>Our <code>cleanText</code> function implements a <strong>three-stage cleaning pipeline</strong>:</p>
+<h4 id="stage-1-artifact-removal"><a class="anchor" href="#stage-1-artifact-removal">#</a> Stage 1: Artifact Removal</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/[-–-]\s*\d+\s*of\s*\d+\s*[-–-]/gi, &#39;&#39;)</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Remove pagination artifacts that add no semantic value</p>
+<p><strong>Philosophy</strong>: These elements are <em>navigation aids</em> for human readers viewing the PDF, but they&#39;re noise for machine processing. They:</p>
+<ul>
+<li>Don&#39;t contribute to meaning</li>
+<li>Break up sentences artificially</li>
+<li>Consume tokens needlessly</li>
+<li>Confuse embedding models</li>
+</ul>
+<p><strong>Example</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Before: &quot;The study found -- 5 of 12 -- significant results&quot;
+After:  &quot;The study found significant results&quot;</code></pre>
+      </div>
+    <h4 id="stage-2-whitespace-normalization"><a class="anchor" href="#stage-2-whitespace-normalization">#</a> Stage 2: Whitespace Normalization</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/[ \t]+/g, &#39; &#39;)</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Create consistent spacing</p>
+<p><strong>Philosophy</strong>: Multiple spaces and tabs are artifacts of PDF rendering. They don&#39;t carry semantic meaning in plain text. Normalization:</p>
+<ul>
+<li>Makes text predictable</li>
+<li>Reduces token count</li>
+<li>Improves embedding consistency</li>
+<li>Simplifies downstream processing</li>
+</ul>
+<p><strong>Example</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Before: &quot;The    results     showed	significant&quot;
+After:  &quot;The results showed significant&quot;</code></pre>
+      </div>
+    <h4 id="stage-3-paragraph-preservation"><a class="anchor" href="#stage-3-paragraph-preservation">#</a> Stage 3: Paragraph Preservation</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/\n{3,}/g, &#39;\n\n&#39;)</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Maintain document structure while removing excess</p>
+<p><strong>Philosophy</strong>: This is the most subtle but important step. It balances two competing needs:</p>
+<ol>
+<li><strong>Preserve Structure</strong>: Paragraph breaks carry semantic meaning (topic changes, logical divisions)</li>
+<li><strong>Remove Noise</strong>: Multiple blank lines are rendering artifacts</li>
+</ol>
+<p><strong>Why Two Newlines?</strong>:</p>
+<ul>
+<li>Standard convention: <code>\n\n</code> = paragraph break</li>
+<li>One newline = line break (within paragraph)</li>
+<li>Two newlines = paragraph boundary</li>
+<li>Three+ newlines = rendering artifact</li>
+</ul>
+<p><strong>Example</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Before:
+&quot;First paragraph.
+
+
+Second paragraph.&quot;
+
+After:
+&quot;First paragraph.
+
+Second paragraph.&quot;</code></pre>
+      </div>
+    <h3 id="the-philosophy-of-conservative-cleaning"><a class="anchor" href="#the-philosophy-of-conservative-cleaning">#</a> The Philosophy of Conservative Cleaning</h3>
+<p>Notice what our cleaning <strong>doesn&#39;t</strong> do:</p>
+<ul>
+<li>❌ Remove punctuation</li>
+<li>❌ Lowercase everything</li>
+<li>❌ Remove stop words</li>
+<li>❌ Lemmatize or stem</li>
+<li>❌ Fix spelling errors</li>
+</ul>
+<p><strong>Why?</strong> Because:</p>
+<ol>
+<li>Modern embedding models handle these variations</li>
+<li>Preserves original meaning and author&#39;s voice</li>
+<li>Maintains proper nouns and technical terms</li>
+<li>Reduces risk of introducing errors</li>
+<li>Keeps citations accurate</li>
+</ol>
+<p>This is <strong>conservative preprocessing</strong>-remove obvious noise, preserve meaning.</p>
+<hr>
+<h2 id="page-splitting-vs-full-document"><a class="anchor" href="#page-splitting-vs-full-document">#</a> Page Splitting vs. Full Document</h2>
+<h3 id="the-core-trade-off"><a class="anchor" href="#the-core-trade-off">#</a> The Core Trade-off</h3>
+<p>This is one of the most important conceptual decisions in document loading:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">┌────────────────────────────────────────────────────────┐
+│                 GRANULARITY SPECTRUM                   │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│  Full Document          Pages           Paragraphs     │
+│  ─────────────          ─────           ───────────    │
+│  • Best context         • Balanced      • Best         │
+│  • Worst precision      • Citations     • Precision    │
+│  • Simple               • Flexible      • Complex      │
+│                                                        │
+└────────────────────────────────────────────────────────┘</code></pre>
+      </div>
+    <h3 id="full-document-mode-splitpages-false"><a class="anchor" href="#full-document-mode-splitpages-false">#</a> Full Document Mode (<code>splitPages: false</code>)</h3>
+<p><strong>Concept</strong>: Treat the entire PDF as a single, monolithic document.</p>
+<p><strong>When to Use</strong>:</p>
+<ul>
+<li>Short documents (&lt; 10 pages)</li>
+<li>Highly cohesive content (single topic throughout)</li>
+<li>When you&#39;ll be doing your own custom chunking later</li>
+<li>Simple use cases</li>
+</ul>
+<p><strong>Advantages</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">✓ Maximum context preservation
+✓ No artificial boundaries
+✓ Simpler data structure (1 document)
+✓ Faster processing (single extraction)
+✓ Good for whole-document questions</code></pre>
+      </div>
+    <p><strong>Disadvantages</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">✗ May exceed embedding model token limits
+✗ Less precise retrieval
+✗ No page-level citations
+✗ Harder to identify relevant sections
+✗ Memory intensive for large documents</code></pre>
+      </div>
+    <p><strong>Example Use Case</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Document: A 5-page company policy on remote work
+Strategy: Load as single document
+Reason: Short, cohesive, users need full context</code></pre>
+      </div>
+    <h3 id="page-splitting-mode-splitpages-true"><a class="anchor" href="#page-splitting-mode-splitpages-true">#</a> Page Splitting Mode (<code>splitPages: true</code>)</h3>
+<p><strong>Concept</strong>: Create one document per page, each with its own metadata.</p>
+<p><strong>When to Use</strong>:</p>
+<ul>
+<li>Long documents (&gt; 10 pages)</li>
+<li>Academic papers (citations matter)</li>
+<li>Technical manuals (specific page references)</li>
+<li>When you need granular retrieval</li>
+</ul>
+<p><strong>Advantages</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">✓ Precise page-level citations
+✓ Manageable chunk sizes
+✓ Better retrieval granularity
+✓ Parallel processing possible
+✓ Respects natural boundaries</code></pre>
+      </div>
+    <p><strong>Disadvantages</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">✗ Context may split across pages
+✗ More documents to manage
+✗ Slightly slower processing
+✗ Need good chunking strategy later</code></pre>
+      </div>
+    <p><strong>Example Use Case</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Document: 50-page research paper
+Strategy: Split by pages
+Reason: Need citations, paper is long, topics vary by section</code></pre>
+      </div>
+    <h3 id="the-middle-ground"><a class="anchor" href="#the-middle-ground">#</a> The Middle Ground</h3>
+<p>In practice, pages are often still too large for optimal retrieval. The typical workflow is:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">PDF → Load by Pages → Further Split into Chunks → Embed
+
+Example:
+1. Load: 50-page PDF → 50 page-documents
+2. Split: Each page → 2-4 chunks (semantic boundaries)
+3. Result: ~150 chunks, each with page number metadata</code></pre>
+      </div>
+    <p>This gives you:</p>
+<ul>
+<li>The best of both worlds</li>
+<li>Page-level attribution</li>
+<li>Chunk-level precision</li>
+<li>Context preservation through overlap</li>
+</ul>
+<hr>
+<h2 id="comparison-with-langchainjs"><a class="anchor" href="#comparison-with-langchainjs">#</a> Comparison with LangChain.js</h2>
+<h3 id="overview"><a class="anchor" href="#overview">#</a> Overview</h3>
+<p>LangChain.js is the leading framework for building LLM applications, including RAG systems. Let&#39;s compare our custom implementation with LangChain&#39;s approach.</p>
+<h3 id="document-loaders-in-langchain"><a class="anchor" href="#document-loaders-in-langchain">#</a> Document Loaders in LangChain</h3>
+<p>LangChain provides a rich ecosystem of document loaders:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { PDFLoader } from &quot;langchain/document-loaders/fs/pdf&quot;;
+import { WebPDFLoader } from &quot;langchain/document-loaders/web/pdf&quot;;
+
+// URL-based loading
+const loader = new WebPDFLoader(&quot;https://example.com/paper.pdf&quot;);
+
+// File-based loading
+const loader = new PDFLoader(&quot;./path/to/file.pdf&quot;);
+
+// Load documents
+const docs = await loader.load();</code></pre>
+      </div>
+    <h3 id="architectural-comparison"><a class="anchor" href="#architectural-comparison">#</a> Architectural Comparison</h3>
+<h4 id="our-implementation"><a class="anchor" href="#our-implementation">#</a> Our Implementation</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Custom, explicit
+const extractTextFromPDF = async (url, {splitPages} = {splitPages: false}) =&gt; {
+    const parser = new PDFParse({url});
+    // ... manual processing
+    return doc;
+}</code></pre>
+      </div>
+    <p><strong>Philosophy</strong>:</p>
+<ul>
+<li><strong>Explicit control</strong> over every step</li>
+<li><strong>Transparency</strong> in what happens to the text</li>
+<li><strong>Customization</strong> is straightforward</li>
+<li><strong>Learning-focused</strong> (understand the process)</li>
+</ul>
+<h4 id="langchainjs"><a class="anchor" href="#langchainjs">#</a> LangChain.js</h4>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Abstracted, declarative
+const loader = new WebPDFLoader(url, {
+    splitPages: true,
+    pdfjs: () =&gt; import(&quot;pdf-parse&quot;)
+});
+const docs = await loader.load();</code></pre>
+      </div>
+    <p><strong>Philosophy</strong>:</p>
+<ul>
+<li><strong>Abstraction</strong> hides complexity</li>
+<li><strong>Consistency</strong> across different loaders</li>
+<li><strong>Batteries included</strong> with smart defaults</li>
+<li><strong>Production-focused</strong> (get results fast)</li>
+</ul>
+<h3 id="feature-comparison-table"><a class="anchor" href="#feature-comparison-table">#</a> Feature Comparison Table</h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Our Implementation</th>
+<th>LangChain.js</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Learning Curve</strong></td>
+<td>Low (simple, clear)</td>
+<td>Medium (framework concepts)</td>
+</tr>
+<tr>
+<td><strong>Flexibility</strong></td>
+<td>High (full control)</td>
+<td>Medium (within framework)</td>
+</tr>
+<tr>
+<td><strong>Setup Complexity</strong></td>
+<td>Low (one file)</td>
+<td>Medium (dependencies)</td>
+</tr>
+<tr>
+<td><strong>Text Cleaning</strong></td>
+<td>Custom, explicit</td>
+<td>Built-in, opinionated</td>
+</tr>
+<tr>
+<td><strong>Error Handling</strong></td>
+<td>Manual</td>
+<td>Automatic</td>
+</tr>
+<tr>
+<td><strong>Multiple Formats</strong></td>
+<td>Need custom code</td>
+<td>80+ loaders available</td>
+</tr>
+<tr>
+<td><strong>Integration</strong></td>
+<td>Custom pipeline</td>
+<td>Seamless with LangChain</td>
+</tr>
+<tr>
+<td><strong>Production Ready</strong></td>
+<td>Need hardening</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><strong>Documentation</strong></td>
+<td>Basic</td>
+<td>Extensive</td>
+</tr>
+<tr>
+<td><strong>Community</strong></td>
+<td>DIY</td>
+<td>Large ecosystem</td>
+</tr>
+</tbody></table>
+<h3 id="detailed-feature-analysis"><a class="anchor" href="#detailed-feature-analysis">#</a> Detailed Feature Analysis</h3>
+<h4 id="1-document-structure"><a class="anchor" href="#1-document-structure">#</a> 1. Document Structure</h4>
+<p><strong>Our Implementation</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">class Document {
+    constructor(pageContent, metadata, id) {
+        this.pageContent = pageContent;
+        this.metadata = metadata;
+        this.id = id;
+    }
+}</code></pre>
+      </div>
+    <ul>
+<li>Simple, straightforward</li>
+<li>Easy to understand</li>
+<li>Compatible with LangChain (same interface!)</li>
+</ul>
+<p><strong>LangChain</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import { Document } from &quot;langchain/document&quot;;
+
+// Same structure, but with additional methods
+const doc = new Document({
+    pageContent: &quot;...&quot;,
+    metadata: {...}
+});</code></pre>
+      </div>
+    <ul>
+<li>More features (serialization, etc.)</li>
+<li>Part of larger ecosystem</li>
+<li>Typed (TypeScript definitions)</li>
+</ul>
+<h4 id="2-text-cleaning"><a class="anchor" href="#2-text-cleaning">#</a> 2. Text Cleaning</h4>
+<p><strong>Our Implementation</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const cleanText = (text) =&gt; {
+    return text
+        .replace(/[-–-]\s*\d+\s*of\s*\d+\s*[-–-]/gi, &#39;&#39;)
+        .replace(/[ \t]+/g, &#39; &#39;)
+        .replace(/\n{3,}/g, &#39;\n\n&#39;)
+        .trim();
+}</code></pre>
+      </div>
+    <ul>
+<li><strong>Explicit</strong>: You see exactly what&#39;s happening</li>
+<li><strong>Customizable</strong>: Easy to add/remove cleaning steps</li>
+<li><strong>Transparent</strong>: No hidden transformations</li>
+</ul>
+<p><strong>LangChain</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Cleaning is often handled internally by loaders
+// Can customize via TextSplitter configuration
+const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    // Cleaning happens automatically
+});</code></pre>
+      </div>
+    <ul>
+<li><strong>Automatic</strong>: Cleaning is built-in</li>
+<li><strong>Opinionated</strong>: Uses framework&#39;s defaults</li>
+<li><strong>Hidden</strong>: Less visibility into process</li>
+</ul>
+<h4 id="3-page-splitting"><a class="anchor" href="#3-page-splitting">#</a> 3. Page Splitting</h4>
+<p><strong>Our Implementation</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (splitPages) {
+    for (let i = 0; i &lt; pages; i++) {
+        const rawText = (await parser.getText({partial: [i + 1]})).text;
+        // ... create page-level document
+    }
+}</code></pre>
+      </div>
+    <ul>
+<li><strong>Manual loop</strong>: Explicit page-by-page processing</li>
+<li><strong>Direct control</strong>: Decide exactly how pages are handled</li>
+<li><strong>Visible logic</strong>: Easy to debug</li>
+</ul>
+<p><strong>LangChain</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const loader = new WebPDFLoader(url, {
+    splitPages: true  // That&#39;s it!
+});</code></pre>
+      </div>
+    <ul>
+<li><strong>Declarative</strong>: Just specify what you want</li>
+<li><strong>Handled internally</strong>: Framework does the work</li>
+<li><strong>Consistent</strong>: Same API across loaders</li>
+</ul>
+<h4 id="4-metadata-handling"><a class="anchor" href="#4-metadata-handling">#</a> 4. Metadata Handling</h4>
+<p><strong>Our Implementation</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    source: url,
+    pdf: {
+        info: info,
+        metadata: info.metadata,
+        totalPages: pages,
+    },
+    loc: {
+        pageNumber: i + 1
+    }
+}</code></pre>
+      </div>
+    <ul>
+<li><strong>Custom structure</strong>: Design your own metadata schema</li>
+<li><strong>Explicit construction</strong>: You control what&#39;s stored</li>
+<li><strong>Full flexibility</strong>: Add any metadata you need</li>
+</ul>
+<p><strong>LangChain</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">// Metadata is automatically populated
+{
+    source: &quot;https://example.com/paper.pdf&quot;,
+    pdf: {
+        version: &quot;1.4&quot;,
+        info: {...},
+        metadata: {...},
+        totalPages: 50
+    },
+    loc: { pageNumber: 1 }
+}</code></pre>
+      </div>
+    <ul>
+<li><strong>Standardized</strong>: Consistent across loaders</li>
+<li><strong>Automatic</strong>: No manual construction needed</li>
+<li><strong>Rich</strong>: Includes many useful fields by default</li>
+</ul>
+<hr>
+<h2 id="conclusion"><a class="anchor" href="#conclusion">#</a> Conclusion</h2>
+<h3 id="key-takeaways"><a class="anchor" href="#key-takeaways">#</a> Key Takeaways</h3>
+<ol>
+<li><p><strong>Document loading is foundational</strong>: Quality here affects everything downstream</p>
+</li>
+<li><p><strong>Simple is often better</strong>: Our implementation proves you don&#39;t need complexity for effectiveness</p>
+</li>
+<li><p><strong>Understand the trade-offs</strong>: Every design decision has pros and cons</p>
+</li>
+<li><p><strong>Start simple, evolve</strong>: Begin with basic loading, add sophistication as needed</p>
+</li>
+<li><p><strong>Choose the right tool</strong>: Custom for learning, LangChain for production, hybrid for special needs</p>
+</li>
+</ol>
+<h3 id="the-journey"><a class="anchor" href="#the-journey">#</a> The Journey</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Phase 1: Learn the concepts (custom implementation)
+    ↓
+Phase 2: Understand the challenges (hit edge cases)
+    ↓
+Phase 3: Appreciate the frameworks (see why they exist)
+    ↓
+Phase 4: Make informed decisions (custom vs. framework)</code></pre>
+      </div>
+    <h3 id="further-exploration"><a class="anchor" href="#further-exploration">#</a> Further Exploration</h3>
+<p>To deepen your understanding:</p>
+<ol>
+<li><strong>Experiment</strong>: Try different cleaning strategies, compare results</li>
+<li><strong>Measure</strong>: Add metrics, see what affects quality</li>
+<li><strong>Compare</strong>: Load same document with custom code and LangChain</li>
+<li><strong>Extend</strong>: Add table extraction, image handling</li>
+<li><strong>Scale</strong>: Try loading 100 documents, measure performance</li>
+</ol>
+<h3 id="final-thoughts"><a class="anchor" href="#final-thoughts">#</a> Final Thoughts</h3>
+<p>Document loading is where data engineering meets information retrieval. It&#39;s:</p>
+<ul>
+<li>Part science (algorithms, strategies)</li>
+<li>Part art (knowing what to preserve)</li>
+<li>Part craft (implementation quality)</li>
+</ul>
+<p>Our simple implementation teaches the fundamentals. LangChain provides production power. Understanding both makes you a better RAG engineer.</p>
+<p>The best RAG systems don&#39;t just load documents-they <strong>curate knowledge</strong>. And that starts here, at the very first step, with thoughtful, principled document loading.</p>
+
+<h2 id="code-walkthrough"><a class="anchor" href="#code-walkthrough">#</a> Code walkthrough</h2>
+<h2 id="overview"><a class="anchor" href="#overview">#</a> Overview</h2>
+<p>This module provides functionality for extracting and preprocessing text from PDF documents, specifically designed for Retrieval-Augmented Generation (RAG) applications. The code handles PDF parsing, text cleaning, and document structuring to prepare content for downstream RAG pipelines.</p>
+<p><strong>Note:</strong> This is a very simplified example. In real-world RAG applications, data typically comes from multiple heterogeneous sources (databases, APIs, web pages, documents in various formats, etc.) rather than just PDFs.</p>
+<h2 id="context-rag-retrieval-augmented-generation"><a class="anchor" href="#context-rag-retrieval-augmented-generation">#</a> Context: RAG (Retrieval-Augmented Generation)</h2>
+<p>The code is part of a RAG implementation, which is a technique that enhances Large Language Model (LLM) responses by retrieving relevant information from external documents. The referenced papers at the bottom of the code represent foundational research in RAG:</p>
+<ul>
+<li><strong>Retrieval-Augmented Generation for AI-Generated Content</strong>: Survey of RAG techniques</li>
+<li><strong>A Comprehensive Survey of RAG</strong>: Evolution and current landscape</li>
+<li><strong>Corrective Retrieval Augmented Generation</strong>: Advanced RAG with correction mechanisms</li>
+</ul>
+<h2 id="dependencies"><a class="anchor" href="#dependencies">#</a> Dependencies</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">import {PDFParse} from &#39;pdf-parse&#39;;</code></pre>
+      </div>
+    <p>The code uses the <code>pdf-parse</code> library, which provides PDF parsing capabilities for Node.js applications.</p>
+<h2 id="core-components"><a class="anchor" href="#core-components">#</a> Core Components</h2>
+<h3 id="1-document-class"><a class="anchor" href="#1-document-class">#</a> 1. Document Class</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">class Document {
+    constructor(pageContent, metadata, id) {
+        this.pageContent = pageContent;
+        this.metadata = metadata;
+        this.id = id;
+    }
+}</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Represents a structured document object that encapsulates extracted text and associated metadata.</p>
+<p><strong>Properties</strong>:</p>
+<ul>
+<li><code>pageContent</code>: The cleaned text content extracted from the PDF</li>
+<li><code>metadata</code>: Object containing document information (source URL, PDF metadata, page numbers)</li>
+<li><code>id</code>: Optional identifier for the document (set to <code>undefined</code> in current implementation)</li>
+</ul>
+<p><strong>Use in RAG</strong>: This structure is commonly used in vector databases and RAG frameworks (like LangChain) to store documents with their embeddings and metadata for retrieval.</p>
+<h3 id="2-cleantext-function"><a class="anchor" href="#2-cleantext-function">#</a> 2. cleanText Function</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const cleanText = (text) =&gt; {
+    return text
+        .replace(/[-–—]\s*\d+\s*of\s*\d+\s*[-–—]/gi, &#39;&#39;)
+        .replace(/[ \t]+/g, &#39; &#39;)
+        .replace(/\n{3,}/g, &#39;\n\n&#39;)
+        .trim();
+}</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Preprocesses raw PDF text to remove artifacts and normalize formatting.</p>
+<p><strong>Cleaning Steps</strong>:</p>
+<ol>
+<li><p><strong>Remove Page Markers</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/[-–—]\s*\d+\s*of\s*\d+\s*[-–—]/gi, &#39;&#39;)</code></pre>
+      </div>
+    <ul>
+<li>Removes pagination markers like &quot;-- 1 of 22 --&quot; or &quot;— 5 of 12 —&quot;</li>
+<li>Uses regex to match various dash types (hyphen, en-dash, em-dash)</li>
+<li><code>gi</code> flags: global (all occurrences) and case-insensitive</li>
+</ul>
+</li>
+<li><p><strong>Normalize Whitespace</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/[ \t]+/g, &#39; &#39;)</code></pre>
+      </div>
+    <ul>
+<li>Collapses multiple consecutive spaces and tabs into a single space</li>
+<li>Improves text consistency for embedding generation</li>
+</ul>
+</li>
+<li><p><strong>Preserve Paragraph Structure</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.replace(/\n{3,}/g, &#39;\n\n&#39;)</code></pre>
+      </div>
+    <ul>
+<li>Reduces 3+ consecutive newlines to exactly 2 newlines</li>
+<li>Maintains paragraph breaks while removing excessive spacing</li>
+<li>Important for semantic chunking in RAG</li>
+</ul>
+</li>
+<li><p><strong>Trim Edges</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">.trim()</code></pre>
+      </div>
+    <ul>
+<li>Removes leading and trailing whitespace</li>
+</ul>
+</li>
+</ol>
+<p><strong>Why This Matters for RAG</strong>: Clean text improves:</p>
+<ul>
+<li>Embedding quality (vector representations)</li>
+<li>Chunk boundary detection</li>
+<li>Token efficiency when sending to LLMs</li>
+<li>Search relevance during retrieval</li>
+</ul>
+<h3 id="3-constructdocument-function"><a class="anchor" href="#3-constructdocument-function">#</a> 3. constructDocument Function</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const constructDocument = (pageContent, source, info, metadata, numPages, pageNumber) =&gt; {
+    return new Document(
+        pageContent,
+        {
+            source,
+            pdf: {
+                info,
+                metadata,
+                numPages,
+            },
+            loc: {
+                pageNumber
+            }
+        },
+        undefined
+    );
+}</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Factory function that creates Document instances with standardized metadata structure.</p>
+<p><strong>Parameters</strong>:</p>
+<ul>
+<li><code>pageContent</code>: The cleaned text content</li>
+<li><code>source</code>: URL or file path of the PDF</li>
+<li><code>info</code>: PDF information object from pdf-parse</li>
+<li><code>metadata</code>: PDF metadata (author, title, creation date, etc.)</li>
+<li><code>numPages</code>: Total number of pages in the PDF</li>
+<li><code>pageNumber</code>: Current page number (optional, used when splitting pages)</li>
+</ul>
+<p><strong>Metadata Structure</strong>:</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">{
+    source: &quot;https://arxiv.org/pdf/2402.19473&quot;,  // Origin of the document
+    pdf: {
+        info: {...},        // PDF properties (version, producer, etc.)
+        metadata: {...},    // Author, title, keywords, etc.
+        numPages: 22        // Total pages
+    },
+    loc: {
+        pageNumber: 1       // Specific page (for split documents)
+    }
+}</code></pre>
+      </div>
+    <p><strong>RAG Benefits</strong>: This metadata enables:</p>
+<ul>
+<li>Citation generation (knowing which page information came from)</li>
+<li>Filtering during retrieval (e.g., &quot;only search page 5-10&quot;)</li>
+<li>Source attribution in LLM responses</li>
+<li>Debugging and tracing retrieved content</li>
+</ul>
+<h3 id="4-extracttextfrompdf-function-main-function"><a class="anchor" href="#4-extracttextfrompdf-function-main-function">#</a> 4. extractTextFromPDF Function (Main Function)</h3>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const extractTextFromPDF = async (url, {splitPages} = {splitPages: false}) =&gt; {
+    // ... implementation
+}</code></pre>
+      </div>
+    <p><strong>Purpose</strong>: Main orchestrator function that extracts text from PDFs with optional page-level splitting.</p>
+<h4 id="parameters"><a class="anchor" href="#parameters">#</a> Parameters</h4>
+<ul>
+<li><code>url</code>: String containing the PDF URL or file path</li>
+<li><code>{splitPages}</code>: Options object with destructured parameter<ul>
+<li>Default: <code>{splitPages: false}</code></li>
+<li>When <code>true</code>: Creates separate Document objects for each page</li>
+<li>When <code>false</code>: Creates single Document with entire PDF content</li>
+</ul>
+</li>
+</ul>
+<h4 id="implementation-breakdown"><a class="anchor" href="#implementation-breakdown">#</a> Implementation Breakdown</h4>
+<p><strong>Step 1: Initialize Parser</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const parser = new PDFParse({url});
+const info = await parser.getInfo();
+const pages = info.total
+let doc = []</code></pre>
+      </div>
+    <ul>
+<li>Creates PDFParse instance with the URL</li>
+<li>Retrieves PDF information (page count, metadata)</li>
+<li>Initializes empty array to store Document objects</li>
+</ul>
+<p><strong>Step 2A: Split Pages Mode</strong> (<code>splitPages: true</code>)</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">if (splitPages) {
+    for (let i = 0; i &lt; pages; i++) {
+        const rawText = (await parser.getText({partial: [i + 1]})).text;
+        const cleanedText = cleanText(rawText);
+
+        doc.push(constructDocument(
+            cleanedText,
+            url,
+            info,
+            info.metadata,
+            pages,
+            i + 1  // Page number
+        ))
+    }
+}</code></pre>
+      </div>
+    <p><strong>Process</strong>:</p>
+<ol>
+<li>Loops through each page (0-indexed in loop, 1-indexed for PDF pages)</li>
+<li>Extracts text from single page using <code>partial: [i + 1]</code></li>
+<li>Cleans the extracted text</li>
+<li>Creates individual Document object for each page with page number in metadata</li>
+<li>Adds to documents array</li>
+</ol>
+<p><strong>Use Case</strong>: Ideal for:</p>
+<ul>
+<li>Large PDFs where you want granular retrieval</li>
+<li>Citation accuracy (exact page references)</li>
+<li>Better semantic chunking (respecting page boundaries)</li>
+<li>Memory efficiency (can process page-by-page)</li>
+</ul>
+<p><strong>Step 2B: Full Document Mode</strong> (<code>splitPages: false</code>)</p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">else {
+    const rawText = (await parser.getText()).text;
+    const cleanedText = cleanText(rawText);
+
+    doc.push(constructDocument(
+        cleanedText,
+        url,
+        info,
+        info.metadata,
+        pages,
+        // No pageNumber parameter
+    ))
+}</code></pre>
+      </div>
+    <p><strong>Process</strong>:</p>
+<ol>
+<li>Extracts all text from entire PDF in one call</li>
+<li>Cleans the complete text</li>
+<li>Creates single Document object containing entire PDF content</li>
+<li>No <code>pageNumber</code> in metadata</li>
+</ol>
+<p><strong>Use Case</strong>: Appropriate for:</p>
+<ul>
+<li>Small PDFs</li>
+<li>When page boundaries aren&#39;t semantically important</li>
+<li>Faster processing (single extraction)</li>
+<li>Simpler retrieval logic</li>
+</ul>
+<p><strong>Step 3: Return Documents</strong></p>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">return doc;</code></pre>
+      </div>
+    <p>Returns array of Document objects (1 document or N documents based on mode)</p>
+<h2 id="usage-example"><a class="anchor" href="#usage-example">#</a> Usage Example</h2>
+
+      <div class="codeblock" data-lang="javascript">
+        <span class="cb-label">javascript</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-javascript hljs">const url = &quot;https://arxiv.org/pdf/2402.19473&quot;
+extractTextFromPDF(url, {splitPages: true}).then(text =&gt; {
+    console.log(`Extracted ${text.length} document(s). First page snippet:\n`);
+    console.log(text[0]?.pageContent.slice(0, 300) + &quot;...&quot;);
+});</code></pre>
+      </div>
+    <p><strong>Breakdown</strong>:</p>
+<ol>
+<li><strong>URL Selection</strong>: Points to an arXiv research paper on RAG (meta!)</li>
+<li><strong>Configuration</strong>: Uses <code>splitPages: true</code> to create page-level documents</li>
+<li><strong>Promise Handling</strong>: Uses <code>.then()</code> to handle async result</li>
+<li><strong>Logging</strong>:<ul>
+<li>Shows total document count (number of pages)</li>
+<li>Displays first 300 characters of first page</li>
+<li>Uses optional chaining (<code>?.</code>) for safe access</li>
+</ul>
+</li>
+</ol>
+<p><strong>Expected Output</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Extracted 22 document(s). First page snippet:
+
+Retrieval-Augmented Generation for
+AI-Generated Content: A Survey
+[Abstract content...]...</code></pre>
+      </div>
+    <h2 id="alternative-research-papers-comments"><a class="anchor" href="#alternative-research-papers-comments">#</a> Alternative Research Papers (Comments)</h2>
+<p>The code includes references to three foundational RAG papers:</p>
+<ol>
+<li><p><strong>Retrieval-Augmented Generation for AI-Generated Content: A Survey</strong></p>
+<ul>
+<li>URL: <a href="https://arxiv.org/pdf/2402.19473">https://arxiv.org/pdf/2402.19473</a></li>
+<li>Currently used in the example</li>
+</ul>
+</li>
+<li><p><strong>A Comprehensive Survey of RAG: Evolution, Current Landscape and Future Directions</strong></p>
+<ul>
+<li>URL: <a href="https://arxiv.org/pdf/2410.12837">https://arxiv.org/pdf/2410.12837</a></li>
+<li>Comprehensive overview of RAG techniques</li>
+</ul>
+</li>
+<li><p><strong>Corrective Retrieval Augmented Generation</strong></p>
+<ul>
+<li>URL: <a href="https://arxiv.org/pdf/2401.15884">https://arxiv.org/pdf/2401.15884</a></li>
+<li>Advanced RAG with self-correction mechanisms</li>
+</ul>
+</li>
+</ol>
+<p>These can be easily swapped in the <code>url</code> variable to extract different papers.</p>
+<h2 id="integration-with-rag-pipeline"><a class="anchor" href="#integration-with-rag-pipeline">#</a> Integration with RAG Pipeline</h2>
+<p>This code represents the <strong>first stage</strong> of a typical RAG pipeline:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">1. Document Loading (this code) ← YOU ARE HERE
+   ↓
+2. Text Splitting/Chunking
+   ↓
+3. Embedding Generation
+   ↓
+4. Vector Store Indexing
+   ↓
+5. Retrieval
+   ↓
+6. LLM Generation</code></pre>
+      </div>
+    <p><strong>Next Steps</strong> (typical workflow):</p>
+<ol>
+<li>Take the Document objects from this code</li>
+<li>Split large pages into smaller chunks (e.g., 500 tokens each)</li>
+<li>Generate embeddings for each chunk using an embedding model</li>
+<li>Store embeddings in a vector database (Pinecone, Chroma, FAISS, etc.)</li>
+<li>At query time: embed user question → retrieve relevant chunks → send to LLM</li>
+</ol>
+<h2 id="design-patterns"><a class="anchor" href="#design-patterns">#</a> Design Patterns</h2>
+<h3 id="1-factory-pattern"><a class="anchor" href="#1-factory-pattern">#</a> 1. Factory Pattern</h3>
+<p>The <code>constructDocument</code> function acts as a factory, encapsulating Document creation logic and ensuring consistent metadata structure.</p>
+<h3 id="2-strategy-pattern"><a class="anchor" href="#2-strategy-pattern">#</a> 2. Strategy Pattern</h3>
+<p>The <code>splitPages</code> option implements different processing strategies (page-by-page vs. full document) without changing the interface.</p>
+<h3 id="3-asyncawait-pattern"><a class="anchor" href="#3-asyncawait-pattern">#</a> 3. Async/Await Pattern</h3>
+<p>Properly handles asynchronous PDF parsing operations, making the code more readable than callback-based approaches.</p>
+<h2 id="potential-improvements"><a class="anchor" href="#potential-improvements">#</a> Potential Improvements</h2>
+<ol>
+<li><strong>Error Handling</strong>: Add try-catch blocks for network errors, invalid PDFs, or parsing failures</li>
+<li><strong>Progress Tracking</strong>: Add callbacks for long PDFs to track extraction progress</li>
+<li><strong>Chunking Strategy</strong>: Implement semantic chunking that respects sentence boundaries</li>
+<li><strong>Metadata Enrichment</strong>: Extract title, authors, and abstract from PDF metadata</li>
+<li><strong>Caching</strong>: Cache extracted text to avoid re-processing same PDFs</li>
+<li><strong>Batch Processing</strong>: Support multiple URLs in single call</li>
+<li><strong>ID Generation</strong>: Implement proper document ID generation (e.g., UUID or content-based hash)</li>
+</ol>
+<h2 id="performance-considerations"><a class="anchor" href="#performance-considerations">#</a> Performance Considerations</h2>
+<ul>
+<li><strong>Memory</strong>: Split pages mode is more memory-efficient for large PDFs</li>
+<li><strong>Network</strong>: Downloads entire PDF before processing; consider streaming for very large files</li>
+<li><strong>Parsing Speed</strong>: pdf-parse is relatively fast but can be slow for complex PDFs with images</li>
+<li><strong>Concurrency</strong>: Could process multiple PDFs in parallel using <code>Promise.all()</code></li>
+</ul>
+<h2 id="common-issues-solutions"><a class="anchor" href="#common-issues-solutions">#</a> Common Issues &amp; Solutions</h2>
+<h3 id="issue-special-characters-garbled"><a class="anchor" href="#issue-special-characters-garbled">#</a> Issue: Special Characters Garbled</h3>
+<p><strong>Solution</strong>: pdf-parse handles most encodings, but some PDFs may need encoding specification</p>
+<h3 id="issue-tables-and-columns-mixed"><a class="anchor" href="#issue-tables-and-columns-mixed">#</a> Issue: Tables and Columns Mixed</h3>
+<p><strong>Solution</strong>: PDF text extraction is linear; consider specialized table extraction libraries</p>
+<h3 id="issue-empty-pages"><a class="anchor" href="#issue-empty-pages">#</a> Issue: Empty Pages</h3>
+<p><strong>Solution</strong>: Add length check before creating Document objects</p>
+<h3 id="issue-memory-errors-on-large-pdfs"><a class="anchor" href="#issue-memory-errors-on-large-pdfs">#</a> Issue: Memory Errors on Large PDFs</h3>
+<p><strong>Solution</strong>: Use <code>splitPages: true</code> and process pages individually or in batches</p>
+
+
+    <nav class="paginate">
+      <span></span>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#c05621", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#c05621", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

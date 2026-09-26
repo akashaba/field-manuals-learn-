@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chapter 7: Design a Unique ID Generator in Distributed Systems — System Design</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#8b3a2a;--accent-2:#6b2b1f;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/system-design"><b>System Design</b></a>
+  <nav>
+    <a href="/system-design">Index</a>
+    <a href="https://github.com/liquidslr/system-design-notes/blob/main/07.%20Unique-Id%20Generator/Readme.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/system-design">System Design</a>
+    </div>
+    <div class="phase-label">Chapters</div>
+    <ol class="toc"><li><a href="#introduction">Introduction</a></li><li><a href="#step-1-understanding-the-problem">Step 1: Understanding the Problem</a></li><li><a href="#step-2-high-level-design-options">Step 2: High-Level Design Options</a></li><li><a href="#step-4-additional-considerations">Step 4: Additional Considerations</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">System Design · Chapters</div>
+    <h1 class="lesson-title">Chapter 7: Design a Unique ID Generator in Distributed Systems</h1>
+    
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System Design — Chapters 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M48.2,77.0 L65.7,50.7 L83.3,77.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="43.4" y="44.6" width="33.9" height="33.9" rx="2" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55" transform="rotate(242 60.3 61.6)"/>
+        <rect x="38.6" y="40.3" width="32.6" height="32.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(224 54.9 56.6)"/>
+        <rect x="33.8" y="36.0" width="31.3" height="31.3" rx="2" fill="none" stroke="#8b3a2a" stroke-width="1.1" opacity="0.55" transform="rotate(206 49.5 51.7)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="104" lengthAdjust="spacingAndGlyphs">SYSTEM DESIGN</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="64" lengthAdjust="spacingAndGlyphs">CHAPTERS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Chapter 7: Design a</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Unique ID Generator…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="introduction"><a class="anchor" href="#introduction">#</a> Introduction</h2>
+<p>This chapter addresses the challenge of designing a <strong>unique ID generator</strong> for distributed systems. Traditional auto-increment keys are unsuitable in distributed environments due to scalability and synchronization challenges. The focus is on creating unique, sortable, 64-bit numerical IDs that meet the following requirements:</p>
+<ul>
+<li>IDs must be <strong>unique</strong> and <strong>ordered by date</strong>.</li>
+<li>IDs must fit within <strong>64 bits</strong>.</li>
+<li>The system should generate <strong>over 10,000 IDs per second</strong>.</li>
+</ul>
+<hr>
+<h2 id="step-1-understanding-the-problem"><a class="anchor" href="#step-1-understanding-the-problem">#</a> Step 1: Understanding the Problem</h2>
+<h3 id="basic-requirements"><a class="anchor" href="#basic-requirements">#</a> Basic Requirements</h3>
+<ul>
+<li>IDs must be unique and numerical and should fit in 64 bits.</li>
+<li>IDs increment with time but not strictly by <code>+1</code>.</li>
+<li>IDs should be sortable by date.</li>
+<li>System must handle high throughput (10,000 IDs/sec).</li>
+</ul>
+<hr>
+<h2 id="step-2-high-level-design-options"><a class="anchor" href="#step-2-high-level-design-options">#</a> Step 2: High-Level Design Options</h2>
+<h3 id="1-multi-master-replication"><a class="anchor" href="#1-multi-master-replication">#</a> 1. Multi-Master Replication</h3>
+<ul>
+<li><p><strong>Approach:</strong> Use database <code>auto_increment</code> with step increments (e.g., <code>+k</code> for k servers).</p>
+  <p align="left">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/07.%20Unique-Id%20Generator/images/multi-master.png"  alt="Multi Master" width="400">
+  </p>
+</li>
+<li><p><strong>Drawbacks:</strong></p>
+<ul>
+<li>Hard to scale across data centers.</li>
+<li>IDs do not always increase with time.</li>
+<li>Scaling issues when servers are added/removed.</li>
+</ul>
+</li>
+</ul>
+<h3 id="2-uuid-universally-unique-identifier"><a class="anchor" href="#2-uuid-universally-unique-identifier">#</a> 2. UUID (Universally Unique Identifier)</h3>
+<ul>
+<li><p><strong>Approach:</strong> </p>
+<ul>
+<li><p>Generate 128-bit unique identifiers independently on each server using UUID.</p>
+</li>
+<li><p>UUIDs can be generated independently without coordination between servers</p>
+  <p align="left">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/07.%20Unique-Id%20Generator/images/uuid.png"  alt="UUID generator" width="600">
+  </p></li>
+</ul>
+</li>
+<li><p><strong>Advantages:</strong></p>
+<ul>
+<li>No coordination needed between servers.</li>
+<li>Scales easily with web servers.</li>
+</ul>
+</li>
+<li><p><strong>Drawbacks:</strong></p>
+<ul>
+<li>Exceeds 64-bit requirement.</li>
+<li>IDs are not sortable by time and may be non-numeric.</li>
+</ul>
+</li>
+</ul>
+<h3 id="3-ticket-server"><a class="anchor" href="#3-ticket-server">#</a> 3. Ticket Server</h3>
+<ul>
+<li><p><strong>Approach:</strong> Use a centralized database server to increment and assign IDs.</p>
+  <p align="left">
+  <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/07.%20Unique-Id%20Generator/images/ticket-server.png"  alt="UUID generator" width="500">
+  </p>
+</li>
+<li><p><strong>Advantages:</strong></p>
+<ul>
+<li>Simple to implement for small-scale systems.</li>
+<li>Generates numeric IDs.</li>
+</ul>
+</li>
+<li><p><strong>Drawbacks:</strong></p>
+<ul>
+<li>Single point of failure.</li>
+<li>Synchronization challenges in multi-server setups.</li>
+</ul>
+</li>
+</ul>
+<h3 id="4-twitter-snowflake-approach"><a class="anchor" href="#4-twitter-snowflake-approach">#</a> 4. Twitter Snowflake Approach</h3>
+<ul>
+<li><p><strong>Approach:</strong> </p>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/07.%20Unique-Id%20Generator/images/twitter-snowflake.png"  alt="Snowflake approach" width="500">
+  </div>
+  <div style="margin-left:3rem">
+    <img src="https://raw.githubusercontent.com/liquidslr/system-design-notes/main/07.%20Unique-Id%20Generator/images/snowflake-id-breakdown.png"  alt="Snowflake ID breakdow" width="500">
+  </div>
+
+<ul>
+<li>Divide IDs into sections to ensure uniqueness and scalability.</li>
+<li><strong>Sign Bit (1 bit):</strong> Always <code>0</code>, potentially distinguishing signed and unsigned numbers.</li>
+<li><strong>Timestamp (41 bits):</strong> Milliseconds since a custom epoch (Twitter&#39;s default is <code>1288834974657</code>, equivalent to Nov 04, 2010, 01:42:54 UTC). Ensures IDs are time-ordered.</li>
+<li><strong>Datacenter ID (5 bits):</strong> Identifies up to <code>2^5 = 32</code> datacenters.</li>
+<li><strong>Machine ID (5 bits):</strong> Identifies up to <code>2^5 = 32</code> machines within each datacenter.</li>
+<li><strong>Sequence Number (12 bits):</strong> Tracks IDs generated on a machine within the same millisecond, supporting up to <code>2^12 = 4096</code> IDs per millisecond. The sequence resets to <code>0</code> every millisecond.</li>
+</ul>
+</li>
+<li><p><strong>Advantages:</strong></p>
+<ul>
+<li><strong>Scalability:</strong> Handles 10,000+ IDs per second across multiple servers.</li>
+<li><strong>Time-Order:</strong> Ensures IDs are sortable by time.</li>
+<li><strong>Decentralization:</strong> No single point of failure.</li>
+</ul>
+</li>
+</ul>
+<h2 id="step-4-additional-considerations"><a class="anchor" href="#step-4-additional-considerations">#</a> Step 4: Additional Considerations</h2>
+<h3 id="1-clock-synchronization"><a class="anchor" href="#1-clock-synchronization">#</a> 1. Clock Synchronization</h3>
+<ul>
+<li><strong>Challenge:</strong> ID generation assumes synchronized clocks across servers.</li>
+<li><strong>Solution:</strong> Use <strong>Network Time Protocol (NTP)</strong> to minimize drift.</li>
+</ul>
+<h3 id="2-section-length-tuning"><a class="anchor" href="#2-section-length-tuning">#</a> 2. Section Length Tuning</h3>
+<ul>
+<li>Adjust section sizes (e.g., fewer sequence bits, more timestamp bits) based on use case.</li>
+</ul>
+<h3 id="3-high-availability"><a class="anchor" href="#3-high-availability">#</a> 3. High Availability</h3>
+<ul>
+<li>ID generators are mission-critical and must be fault-tolerant.</li>
+<li>Consider redundancy and failover mechanisms.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-key-value-store.html"><span>← Previous</span><b>key value store</b></a>
+      <a class="next" href="./08-url-shortener.html"><span>Next →</span><b>url shortener</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#8b3a2a", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#8b3a2a", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

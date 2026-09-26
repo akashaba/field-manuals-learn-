@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Self-Hosted Serving Selection — Matching Engine to Hardware and Scale — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/17-infrastructure-and-production/28-self-hosted-serving-selection/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Infrastructure &amp; Production</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Infrastructure &amp; Production</div>
+    <h1 class="lesson-title">Self-Hosted Serving Selection — Matching Engine to Hardware and Scale</h1>
+    <p class="lesson-sub">Engine selection is a function of hardware, scale, and ecosystem — not a leaderboard read. Four engines dominate self-hosted inference in 2026: llama.cpp, Ollama, vLLM, SGLang, with TGI trailing in maintenance mode. **llama.cpp** is fastest on CPU — widest model support, full control over quantization and threading. **Ollama** is the dev-laptop one-command install, ~15-30% slower than llama.cpp (Go + CGo + HTTP serialization), 3x throughput gap under prod-like load. **TGI entered maintenance mode December 11, 2025** — only bug fixes, ~10% slower raw throughput than vLLM but historically top observability and HF-ecosystem integration. That maintenance status makes it a risky long-term bet — SGLang or vLLM are safer defaults for new projects. **vLLM** is the general-purpose production default — v0.15.1 (February 2026) adds PyTorch 2.10, RTX Blackwell SM120, H200 optimization. **SGLang** is the agentic multi-turn / prefix-heavy specialist — 400,000+ GPUs in production (xAI, LinkedIn, Cursor, Oracle, GCP, Azure, AWS). Hardware constraints: CPU-first → llama.cpp. AMD / non-NVIDIA → vLLM is the strongest-supported path (TRT-LLM is NVIDIA-locked). 2026 pipeline pattern: dev = Ollama, staging = llama.cpp, prod = vLLM or SGLang. The engines take different weight formats — GGUF for the llama.cpp family, HF safetensors for the GPU engines — so a format conversion may sit between stages.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, engine-decision tree walker)</b></div><div><span>Prerequisites</span><b>All Phase 17 lessons covering engines (04, 06, 07, 09, 18)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Infrastructure &amp; Production 28">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M64.5,72.9 L69.5,65.4 L74.6,72.9 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <path d="M46.7,75.4 L64.1,49.3 L81.5,75.4 Z" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <rect x="41.9" y="43.3" width="33.5" height="33.5" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(236 58.7 60.1)"/>
+        <rect x="37.1" y="39.0" width="32.2" height="32.2" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(219 53.3 55.1)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">28</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">INFRASTRUCTURE &amp; PRODUCTION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Self-Hosted Serving</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Selection — Matching…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Pick an engine given hardware (CPU / AMD / NVIDIA Hopper / Blackwell), scale (1 user / 100 / 10,000), and workload (general chat / agent / long-context).</li>
+<li>Name the 2026 TGI maintenance-mode status (December 11, 2025) and why it biases new projects toward vLLM or SGLang.</li>
+<li>Describe the dev/staging/prod pipeline, including where a GGUF-to-safetensors format conversion sits between stages.</li>
+<li>Explain why &quot;CPU-first&quot; points to llama.cpp and &quot;AMD&quot; excludes TRT-LLM.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Your team starts a new self-hosted LLM project. One engineer says Ollama, another says vLLM, a third says &quot;doesn&#39;t TGI just work out of the box?&quot; All three are right for different contexts. None is right for all.</p>
+<p>In 2026 the choice tree matters: hardware first, scale second, workload third. And one specific 2025 event — TGI entering maintenance mode December 11 — changes the default for new projects.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-five-engines"><a class="anchor" href="#the-five-engines">#</a> The five engines</h3>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Best for</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>llama.cpp</strong></td>
+<td>CPU / edge / minimal deps / widest model support</td>
+<td>Fastest on CPU, full control</td>
+</tr>
+<tr>
+<td><strong>Ollama</strong></td>
+<td>Dev laptops, single user, one-command install</td>
+<td>15-30% slower than llama.cpp; 3x prod throughput gap</td>
+</tr>
+<tr>
+<td><strong>TGI</strong></td>
+<td>HF ecosystem, regulated industries</td>
+<td><strong>Maintenance mode Dec 11, 2025</strong></td>
+</tr>
+<tr>
+<td><strong>vLLM</strong></td>
+<td>General-purpose production, 100+ users</td>
+<td>Broad production default; v0.15.1 Feb 2026</td>
+</tr>
+<tr>
+<td><strong>SGLang</strong></td>
+<td>Agentic multi-turn, prefix-heavy workloads</td>
+<td>400,000+ GPUs in production</td>
+</tr>
+</tbody></table>
+<h3 id="hardware-first-decision"><a class="anchor" href="#hardware-first-decision">#</a> Hardware-first decision</h3>
+<p><strong>CPU-first</strong> → llama.cpp. Ollama works too but is slower. No other engine is competitive on CPU.</p>
+<p><strong>AMD GPU</strong> → vLLM is the strongest-supported path (AMD ROCm support). SGLang also works. TRT-LLM is NVIDIA-locked, so it&#39;s out.</p>
+<p><strong>NVIDIA Hopper (H100 / H200)</strong> → vLLM or SGLang or TRT-LLM. All three top-tier.</p>
+<p><strong>NVIDIA Blackwell (B200 / GB200)</strong> → TRT-LLM is the throughput leader (Phase 17 · 07). vLLM and SGLang follow close.</p>
+<p><strong>Apple Silicon (M-series)</strong> → llama.cpp (Metal). Ollama wraps this.</p>
+<h3 id="scale-second-decision"><a class="anchor" href="#scale-second-decision">#</a> Scale-second decision</h3>
+<p><strong>1 user / local dev</strong> → Ollama. One command, first-token in seconds.</p>
+<p><strong>10-100 users / small team</strong> → vLLM single-GPU.</p>
+<p><strong>100-10k users / production</strong> → vLLM production-stack (Phase 17 · 18) or SGLang.</p>
+<p><strong>10k+ users / enterprise</strong> → vLLM production-stack + disaggregated (Phase 17 · 17) + LMCache (Phase 17 · 18).</p>
+<h3 id="workload-third-decision"><a class="anchor" href="#workload-third-decision">#</a> Workload-third decision</h3>
+<p><strong>General chat / Q&amp;A</strong> → vLLM wins on broad default.</p>
+<p><strong>Agentic multi-turn (tools, planning, memory)</strong> → SGLang&#39;s RadixAttention (Phase 17 · 06) dominates.</p>
+<p><strong>RAG with heavy prefix reuse</strong> → SGLang.</p>
+<p><strong>Code generation</strong> → vLLM fine; SGLang slightly better on cache.</p>
+<p><strong>Long context (128K+)</strong> → vLLM + chunked prefill; SGLang + tiered KV.</p>
+<h3 id="the-tgi-maintenance-trap"><a class="anchor" href="#the-tgi-maintenance-trap">#</a> The TGI maintenance trap</h3>
+<p>Hugging Face TGI entered maintenance mode December 11, 2025 — only bug fixes going forward. Historically: top-tier observability, best-in-class HF-ecosystem integration (model cards, safety tools), slightly behind vLLM on raw throughput.</p>
+<p>For new projects in 2026: default away from TGI. Existing TGI deployments can continue but should migrate eventually. SGLang and vLLM are the safer defaults.</p>
+<h3 id="the-pipeline-pattern"><a class="anchor" href="#the-pipeline-pattern">#</a> The pipeline pattern</h3>
+<p>Dev (Ollama) → staging (llama.cpp) → prod (vLLM). The engines take different weight formats — GGUF for the llama.cpp family, HF safetensors for the GPU engines — so a format conversion may sit between stages. Engineers iterate quickly on laptops; staging mirrors production quantization; prod is the serving target.</p>
+<h3 id="ollama-caveat"><a class="anchor" href="#ollama-caveat">#</a> Ollama caveat</h3>
+<p>Ollama is great for dev. It is not great for shared production: Go HTTP serialization adds overhead, concurrency management is simpler than vLLM, OpenTelemetry support lags. Use Ollama where it shines — one user, one command — and switch to vLLM for shared.</p>
+<h3 id="self-hosted-vs-managed-is-a-separate-decision"><a class="anchor" href="#self-hosted-vs-managed-is-a-separate-decision">#</a> Self-hosted vs managed is a separate decision</h3>
+<p>Phase 17 · 01 (managed hyperscalers), · 02 (inference platforms) cover managed. This lesson assumes you&#39;ve already decided to self-host. Reasons to self-host: data residency, custom fine-tune, total cost ownership at scale, domain model not available on hosted.</p>
+<h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
+<ul>
+<li>TGI maintenance mode: December 11, 2025.</li>
+<li>vLLM v0.15.1: February 2026; PyTorch 2.10; Blackwell SM120 support.</li>
+<li>SGLang production footprint: 400,000+ GPUs.</li>
+<li>Ollama throughput gap vs llama.cpp: 15-30% slower; 3x under prod load.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">data-parallel</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> is a decision-tree walker: given hardware + scale + workload, picks an engine and explains why.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-engine-picker.md</code>. Given constraints, picks an engine and writes the migration plan.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Run <code>code/main.py</code> with your hardware / scale / workload. Does the output match your intuition?</li>
+<li>Your infra is 12 H100s and 8 MI300X AMD. What engine? Why is TRT-LLM off the table?</li>
+<li>A team wants to use TGI in 2026 because &quot;it&#39;s what we know.&quot; Argue the migration case.</li>
+<li>Ollama dev to vLLM prod: what changes in quantization, configuration, and observability?</li>
+<li>RAG product with P99 prefix length 8K and high reuse across tenants. Pick an engine and stack it with Phase 17 · 11 + 18.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>llama.cpp</td>
+<td>&quot;the CPU one&quot;</td>
+<td>Widest model support, fastest on CPU</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td>&quot;the laptop one&quot;</td>
+<td>One-command install, dev-grade throughput</td>
+</tr>
+<tr>
+<td>TGI</td>
+<td>&quot;HF&#39;s serving&quot;</td>
+<td>Maintenance mode since Dec 2025</td>
+</tr>
+<tr>
+<td>vLLM</td>
+<td>&quot;the default&quot;</td>
+<td>Broad production baseline 2026</td>
+</tr>
+<tr>
+<td>SGLang</td>
+<td>&quot;the agentic one&quot;</td>
+<td>Prefix-heavy, RadixAttention</td>
+</tr>
+<tr>
+<td>TRT-LLM</td>
+<td>&quot;NVIDIA-locked&quot;</td>
+<td>Blackwell throughput leader, NVIDIA only</td>
+</tr>
+<tr>
+<td>GGUF</td>
+<td>&quot;llama.cpp format&quot;</td>
+<td>Bundled K-quant variants</td>
+</tr>
+<tr>
+<td>Production-stack</td>
+<td>&quot;vLLM K8s&quot;</td>
+<td>Phase 17 · 18 reference deployment</td>
+</tr>
+<tr>
+<td>Pipeline pattern</td>
+<td>&quot;dev→stage→prod&quot;</td>
+<td>Ollama → llama.cpp → vLLM; weight formats differ per engine</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://www.aimadetools.com/blog/vllm-vs-ollama-vs-llamacpp-vs-tgi/">AI Made Tools — vLLM vs Ollama vs llama.cpp vs TGI 2026</a></li>
+<li><a href="https://www.morphllm.com/comparisons/llama-cpp-vs-ollama">Morph — llama.cpp vs Ollama 2026</a></li>
+<li><a href="https://explore.n1n.ai/blog/llm-inference-engine-comparison-vllm-tgi-tensorrt-sglang-2026-03-13">n1n.ai — Comprehensive LLM Inference Engine Comparison</a></li>
+<li><a href="https://blog.premai.io/10-best-vllm-alternatives-for-llm-inference-in-production-2026/">PremAI — 10 Best vLLM Alternatives 2026</a></li>
+<li><a href="https://github.com/huggingface/text-generation-inference">TGI maintenance announcement</a> — release notes.</li>
+<li><a href="https://github.com/vllm-project/vllm/releases">vLLM v0.15.1 release notes</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./27-finops-llms.html"><span>← Previous</span><b>finops llms</b></a>
+      <span></span>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

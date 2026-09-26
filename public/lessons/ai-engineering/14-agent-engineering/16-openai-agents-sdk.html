@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenAI Agents SDK: Handoffs, Guardrails, Tracing — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/14-agent-engineering/16-openai-agents-sdk/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Agent Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Agent Engineering</div>
+    <h1 class="lesson-title">OpenAI Agents SDK: Handoffs, Guardrails, Tracing</h1>
+    <p class="lesson-sub">OpenAI Agents SDK is the lightweight multi-agent framework built on the Responses API. Five primitives: Agent, Handoff, Guardrail, Session, Tracing. Handoffs are tools named `transfer_to_&lt;agent&gt;`. Guardrails trip on input or output. Tracing is on by default.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn + Build</b></div><div><span>Languages</span><b>Python (stdlib)</b></div><div><span>Prerequisites</span><b>Phase 14 · 01 (Agent Loop), Phase 14 · 06 (Tool Use)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Agent Engineering 16">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M72.1,81.4 L78.2,72.3 L84.2,81.4 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M67.3,76.1 L72.7,68.0 L78.2,76.1 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <path d="M49.5,78.6 L67.3,51.9 L85.1,78.6 Z" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <path d="M44.8,73.3 L61.9,47.6 L79.0,73.3 Z" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#37613b" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#37613b" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#37613b" letter-spacing="-2">16</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">AGENT ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">OpenAI Agents SDK:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Handoffs…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Name the five primitives of the OpenAI Agents SDK.</li>
+<li>Explain handoffs: why they are modeled as tools, what name shape the model sees, and how context transfers.</li>
+<li>Distinguish input guardrails, output guardrails, and tool guardrails; explain <code>run_in_parallel</code> vs blocking mode.</li>
+<li>Implement a stdlib runtime with handoffs + guardrails + span-style tracing.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Agents that cannot delegate cleanly end up stuffing everything into one prompt. Agents without guardrails ship PII, policy-violating output, or loop forever. OpenAI&#39;s SDK codifies the three primitives that make multi-agent work tractable.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="five-primitives"><a class="anchor" href="#five-primitives">#</a> Five primitives</h3>
+<ol>
+<li><strong>Agent.</strong> LLM + instructions + tools + handoffs.</li>
+<li><strong>Handoff.</strong> Delegation to another agent. Represented to the model as a tool named <code>transfer_to_&lt;agent_name&gt;</code>.</li>
+<li><strong>Guardrail.</strong> Validation on input (first agent only), output (last agent only), or tool invocation (per function tool).</li>
+<li><strong>Session.</strong> Automatic conversation history across turns.</li>
+<li><strong>Tracing.</strong> Built-in spans for LLM generations, tool calls, handoffs, guardrails.</li>
+</ol>
+<h3 id="handoffs-as-tools"><a class="anchor" href="#handoffs-as-tools">#</a> Handoffs as tools</h3>
+<p>The model sees <code>transfer_to_billing_agent</code> in its tool list. Calling it signals the runtime to:</p>
+<ol>
+<li>Copy the conversation context (or collapse it via <code>nest_handoff_history</code> beta).</li>
+<li>Initialize the target agent with its instructions.</li>
+<li>Continue the run with the target agent.</li>
+</ol>
+<p>This is the supervisor pattern (Lesson 13 / Lesson 28) productized.</p>
+<h3 id="guardrails"><a class="anchor" href="#guardrails">#</a> Guardrails</h3>
+<p>Three flavors:</p>
+<ul>
+<li><strong>Input guardrails.</strong> Run on the first agent&#39;s input. Reject unsafe or out-of-scope requests before any LLM call.</li>
+<li><strong>Output guardrails.</strong> Run on the last agent&#39;s output. Catch PII leaks, policy violations, malformed responses.</li>
+<li><strong>Tool guardrails.</strong> Run per-function-tool. Validate arguments, check permissions, audit execution.</li>
+</ul>
+<p>Mode:</p>
+<ul>
+<li><strong>Parallel</strong> (default). Guardrail LLM runs alongside the main LLM. Lower tail latency. If tripped, the main LLM&#39;s work is discarded (token waste).</li>
+<li><strong>Blocking</strong> (<code>run_in_parallel=False</code>). Guardrail LLM runs first. If tripped, no tokens wasted on the main call.</li>
+</ul>
+<p>Tripwires raise <code>InputGuardrailTripwireTriggered</code> / <code>OutputGuardrailTripwireTriggered</code>.</p>
+<h3 id="tracing"><a class="anchor" href="#tracing">#</a> Tracing</h3>
+<p>On by default. Every LLM generation, tool call, handoff, and guardrail emits a span. <code>OPENAI_AGENTS_DISABLE_TRACING=1</code> opts out. <code>add_trace_processor(processor)</code> fans spans to your own backend alongside OpenAI&#39;s.</p>
+<h3 id="sessions"><a class="anchor" href="#sessions">#</a> Sessions</h3>
+<p><code>Session</code> stores conversation history in a backend (SQLite, Redis, custom). <code>Runner.run(agent, input, session=session)</code> auto-loads and appends.</p>
+<h3 id="where-this-pattern-goes-wrong"><a class="anchor" href="#where-this-pattern-goes-wrong">#</a> Where this pattern goes wrong</h3>
+<ul>
+<li><strong>Handoff drift.</strong> Agent A hands off to Agent B which hands back to Agent A. Add a hop counter.</li>
+<li><strong>Guardrail bypass.</strong> Tool guardrails only fire on function tools; built-in tools (file reader, web fetch) need separate policy.</li>
+<li><strong>Over-tracing.</strong> Sensitive content in spans. Pair with OTel GenAI content-capture rules (Lesson 23) — store externally, reference by ID.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">ae-agent-handoff</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p><code>code/main.py</code> implements the SDK shape in stdlib:</p>
+<ul>
+<li><code>Agent</code>, <code>FunctionTool</code>, <code>Handoff</code> (as a function tool with transfer semantics).</li>
+<li><code>Runner</code> with input/output/tool guardrails, handoff dispatch, and hop counter.</li>
+<li>A simple span emitter to show the trace shape.</li>
+<li>A triage agent that hands off to billing or support based on the user&#39;s query; guardrail trips on one input.</li>
+</ul>
+<p>Run it:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">python3 code/main.py</code></pre>
+      </div>
+    <p>The trace shows two successful handoffs, one input guardrail trip, and a span tree mirroring what the real SDK emits.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<ul>
+<li><strong>OpenAI Agents SDK</strong> for OpenAI-first products.</li>
+<li><strong>Claude Agent SDK</strong> (Lesson 17) for Claude-first products.</li>
+<li><strong>LangGraph</strong> (Lesson 13) when you want explicit state and durable resume.</li>
+<li><strong>Custom</strong> when you need exact control (voice, multi-provider, federated deployments).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p><code>outputs/skill-agents-sdk-scaffold.md</code> scaffolds an Agents SDK app with a triage agent, handoffs, input/output/tool guardrails, session store, and a trace processor.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li>Add a handoff hop counter: refuse after N transfers. Trace the behavior.</li>
+<li>Implement <code>nest_handoff_history</code> as an option — collapse prior messages into one summary before transferring.</li>
+<li>Write a blocking output guardrail. Compare latency on prompts that would trip it vs ones that pass.</li>
+<li>Wire <code>add_trace_processor</code> to a JSON logger. What shape does it emit per span?</li>
+<li>Read the SDK docs. Port your stdlib toy to <code>openai-agents-python</code>. What did you model wrong?</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent</td>
+<td>&quot;LLM + instructions&quot;</td>
+<td>Agent type in the SDK; owns tools and handoffs</td>
+</tr>
+<tr>
+<td>Handoff</td>
+<td>&quot;Transfer&quot;</td>
+<td>Tool the model calls to delegate to another agent</td>
+</tr>
+<tr>
+<td>Guardrail</td>
+<td>&quot;Policy check&quot;</td>
+<td>Validation on input / output / tool invocation</td>
+</tr>
+<tr>
+<td>Tripwire</td>
+<td>&quot;Guardrail trip&quot;</td>
+<td>Exception raised when guardrail rejects</td>
+</tr>
+<tr>
+<td>Session</td>
+<td>&quot;History store&quot;</td>
+<td>Conversation memory persisted between runs</td>
+</tr>
+<tr>
+<td>Tracing</td>
+<td>&quot;Spans&quot;</td>
+<td>Built-in observability over LLM + tool + handoff + guardrail</td>
+</tr>
+<tr>
+<td>Blocking guardrail</td>
+<td>&quot;Sequential check&quot;</td>
+<td>Guardrail runs first; no token waste on trip</td>
+</tr>
+<tr>
+<td>Parallel guardrail</td>
+<td>&quot;Concurrent check&quot;</td>
+<td>Guardrail runs alongside; lower latency, wastes tokens on trip</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://openai.github.io/openai-agents-python/">OpenAI Agents SDK docs</a> — primitives, handoffs, guardrails, tracing</li>
+<li><a href="https://platform.claude.com/docs/en/agent-sdk/overview">Claude Agent SDK overview</a> — Claude-flavored counterpart</li>
+<li><a href="https://www.anthropic.com/research/building-effective-agents">Anthropic, Building Effective Agents</a> — when to reach for handoffs at all</li>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">OpenTelemetry GenAI semantic conventions</a> — the standard Agents SDK spans map to</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./15-crewai-role-based-crews.html"><span>← Previous</span><b>crewai role based crews</b></a>
+      <a class="next" href="./17-claude-agent-sdk.html"><span>Next →</span><b>claude agent sdk</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tokenized Dataset with Sliding Window — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/31-tokenized-dataset-sliding-window/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-frame">The frame</a></li><li><a href="#the-shape-contract">The shape contract</a></li><li><a href="#why-a-sliding-window">Why a sliding window</a></li><li><a href="#the-dataset-class">The Dataset class</a></li><li><a href="#deterministic-shuffle">Deterministic shuffle</a></li><li><a href="#batch-sampler">Batch sampler</a></li><li><a href="#counting-examples">Counting examples</a></li><li><a href="#what-this-lesson-does-not-do">What this lesson does not do</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Tokenized Dataset with Sliding Window</h1>
+    <p class="lesson-sub">A pretraining run is a function from token ids to gradients. This lesson builds the conveyor that feeds the ids in.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 04 lessons, Phase 07 transformer lessons, Lesson 30 of this phase</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 31">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="15.9" y="120.0" width="26.5" height="26.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(140 29.1 133.2)"/>
+        <circle cx="23.7" cy="128.3" r="12.6" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="18.3" cy="123.4" r="12.0" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">31</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Tokenized Dataset</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">with Sliding Window</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Convert a raw corpus into a stream of token ids by calling the tokenizer once.</li>
+<li>Slice the id stream into fixed-length windows with a configurable overlap stride.</li>
+<li>Build a PyTorch Dataset that returns input and target tensors for next-token prediction.</li>
+<li>Wrap the dataset in a DataLoader with a deterministic shuffle seeded per epoch.</li>
+<li>Reason about the trade-off between stride, redundancy, and effective dataset size.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cap-sliding-window</code></pre>
+      </div>
+    <h2 id="the-frame"><a class="anchor" href="#the-frame">#</a> The frame</h2>
+<p>A pretraining run reads one batch of token ids at a time and updates the model. The shape of each batch is fixed by the training contract. For a causal language model, the batch holds <code>(B, T)</code> input ids and <code>(B, T)</code> target ids where the target is the input shifted left by one. The job of the data pipeline is to produce that contract on demand, in a deterministic and reproducible way, from a corpus that may be several gigabytes of raw text.</p>
+<p>This lesson builds the pipeline. The tokenizer from the previous lesson turns text into a long flat list of ids. A sliding window slices that list into training examples. A custom Dataset exposes the examples as tensors. A DataLoader batches them and shuffles them with a known seed.</p>
+<h2 id="the-shape-contract"><a class="anchor" href="#the-shape-contract">#</a> The shape contract</h2>
+<p>A causal LM consumes ids of shape <code>(B, T)</code> where <code>B</code> is the batch size and <code>T</code> is the context length. The target at position <code>t</code> is the input at position <code>t+1</code>. That means every training example covers <code>T+1</code> raw ids. The window stride controls how much overlap exists between consecutive examples.</p>
+<div class="fig"><pre class="mermaid">flowchart LR
+    A[raw corpus text] --&gt; B[tokenizer.encode]
+    B --&gt; C[flat list of ids]
+    C --&gt; D[sliding window slicer]
+    D --&gt; E[(id_window_0)]
+    D --&gt; F[(id_window_1)]
+    D --&gt; G[(id_window_n)]
+    E --&gt; H[PyTorch Dataset]
+    F --&gt; H
+    G --&gt; H
+    H --&gt; I[DataLoader with seeded shuffle]
+    I --&gt; J[batches of B x T+1 ids]
+    J --&gt; K[split into input and target]</pre></div><p>The slicer never overlaps with the boundary of the corpus. If the last window does not have enough ids to fill <code>T+1</code> positions, the slicer drops it. Padding the tail with <code>&lt;|pad|&gt;</code> is also a valid choice but it complicates the loss mask. For this lesson we drop.</p>
+<h2 id="why-a-sliding-window"><a class="anchor" href="#why-a-sliding-window">#</a> Why a sliding window</h2>
+<p>A pretraining corpus is one long stream of ids. If the model only saw non-overlapping windows, every training example would teach it the same <code>T</code> boundaries. Adjusting the stride moves those boundaries around so the model sees more diverse predict-next-token tasks.</p>
+<p>A stride of <code>T</code> produces non-overlapping windows. A stride of <code>T // 2</code> produces fifty-percent overlap and doubles the effective dataset. A stride of <code>1</code> produces maximum overlap and increases the dataset by a factor of <code>T</code>. The cost is more compute per epoch. The benefit is more boundary diversity. Most pretraining runs use a stride equal to the context length because the corpus is already much larger than the model can finish in one epoch, so the boundary diversity argument is weaker.</p>
+<h2 id="the-dataset-class"><a class="anchor" href="#the-dataset-class">#</a> The Dataset class</h2>
+<p>A PyTorch Dataset has two required methods. <code>__len__</code> returns the number of examples. <code>__getitem__</code> returns one example as a pair of tensors. Our Dataset stores the encoded id stream and the stride. Indexing into it computes the start of the window on the fly so the memory cost is one copy of the id stream regardless of how many examples the stride produces.</p>
+<div class="fig"><pre class="mermaid">sequenceDiagram
+    participant Trainer
+    participant DataLoader
+    participant Dataset
+    participant Tokenizer
+    Trainer-&gt;&gt;DataLoader: iter(dataloader)
+    DataLoader-&gt;&gt;Dataset: __len__
+    DataLoader-&gt;&gt;Dataset: __getitem__(i)
+    Dataset-&gt;&gt;Dataset: window = ids[start:start+T+1]
+    Dataset-&gt;&gt;DataLoader: (input_ids, target_ids)
+    DataLoader-&gt;&gt;Trainer: batch (B,T) input, (B,T) target
+    Note over Tokenizer,Dataset: tokenizer.encode runs once at build time</pre></div><p>The shift-by-one happens inside <code>__getitem__</code>. The Dataset returns <code>(input, target)</code> where <code>input = window[:-1]</code> and <code>target = window[1:]</code>. Both are PyTorch long tensors. The training loop treats them as ground truth.</p>
+<h2 id="deterministic-shuffle"><a class="anchor" href="#deterministic-shuffle">#</a> Deterministic shuffle</h2>
+<p>A DataLoader with <code>shuffle=True</code> reads from a PyTorch random generator. By passing an explicit <code>torch.Generator</code> seeded per epoch, we get the same shuffle every time the run is restarted. That property matters when you want to compare two runs that differ only in a single hyperparameter. Without a seed, two runs see the data in different orders and the loss curves diverge for reasons unrelated to the change.</p>
+<p>The seed contract in this lesson is simple. <code>epoch_seed = base_seed + epoch_index</code>. The base seed is passed at construction. The epoch index is incremented by the trainer at the top of each epoch. A re-run with the same base seed always sees the same order in every epoch.</p>
+<h2 id="batch-sampler"><a class="anchor" href="#batch-sampler">#</a> Batch sampler</h2>
+<p>The default sampler in PyTorch picks indices uniformly at random with replacement disabled. That is what we want for pretraining. For finetuning on a small dataset the contract is the same. The DataLoader assembles a batch by calling <code>__getitem__</code> <code>B</code> times and stacking the results. Because every example is the same length by construction, no padding logic is needed.</p>
+<p>The lesson keeps <code>num_workers=0</code> for simplicity. In a production run the workers parallelize the <code>__getitem__</code> calls. With our pipeline that is mostly a no-op because the work is just a slice of an in-memory tensor, but the same Dataset API supports workers cleanly.</p>
+<h2 id="counting-examples"><a class="anchor" href="#counting-examples">#</a> Counting examples</h2>
+<p>For an id stream of length <code>N</code>, a context length <code>T</code>, and a stride <code>S</code>, the number of examples is <code>max(0, 1 + (N - (T + 1)) // S)</code>. The lesson exposes that calculation as a static method on the Dataset so the trainer can compute total steps per epoch without iterating.</p>
+<h2 id="what-this-lesson-does-not-do"><a class="anchor" href="#what-this-lesson-does-not-do">#</a> What this lesson does not do</h2>
+<p>It does not stream from disk. The corpus is encoded fully in memory and held as a single tensor. For a corpus of a few million ids that is well under a hundred megabytes and is the right shape for the lesson. Disk streaming is a separate concern that plugs in by replacing the storage but keeps the Dataset contract.</p>
+<p>It does not handle multiple documents. The corpus is treated as one continuous id stream. The next-document boundary is encoded by inserting <code>&lt;|endoftext|&gt;</code> ids when the corpus is built from multiple documents. The model learns to predict around the boundary.</p>
+<h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>main.py</code> defines two classes and one helper. <code>SlidingWindowDataset</code> is the PyTorch Dataset. <code>make_dataloader</code> returns a configured DataLoader with a seeded generator. <code>_encode_corpus_to_ids</code> is the one-shot tokenizer call. The demo at the bottom builds a small tokenizer in-process, encodes a built-in corpus, constructs the dataset and dataloader, prints one batch, and asserts the shape contract. The tests in <code>code/tests/test_dataset.py</code> pin the window count formula, the shift-by-one property, the deterministic shuffle, and the stride trade-off.</p>
+<p>Run the demo. Then change the context length from 16 to 32 and watch how the number of examples per epoch falls. That number is your steps-per-epoch budget.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./30-bpe-tokenizer-from-scratch.html"><span>← Previous</span><b>bpe tokenizer from scratch</b></a>
+      <a class="next" href="./32-token-positional-embeddings.html"><span>Next →</span><b>token positional embeddings</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

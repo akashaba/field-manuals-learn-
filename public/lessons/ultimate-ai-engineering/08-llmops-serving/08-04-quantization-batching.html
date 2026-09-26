@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>08.04 — Quantization &amp; Batching (Making Every GPU-Second Count) — Ultimate AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#6d28d9;--accent-2:#4c1d95;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ultimate-ai-engineering"><b>Ultimate AI Engineering</b></a>
+  <nav>
+    <a href="/ultimate-ai-engineering">Index</a>
+    <a href="https://github.com/akashaba/Ultimate-AI-Engineering/blob/main/08.%20LLMOps%20%26%20Serving/08-04-quantization-batching.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ultimate-ai-engineering">Ultimate AI Engineering</a>
+    </div>
+    <div class="phase-label">LLMOps &amp; Serving</div>
+    <ol class="toc"><li><a href="#1-why-quantize-decode-is-a-bandwidth-problem">1. Why Quantize: Decode Is a Bandwidth Problem</a></li><li><a href="#2-number-formats">2. Number Formats</a></li><li><a href="#3-algorithms">3. Algorithms</a></li><li><a href="#4-validating-a-quantized-model-the-part-teams-skip">4. Validating a Quantized Model (the Part Teams Skip)</a></li><li><a href="#5-batching-throughput-latency-and-goodput">5. Batching: Throughput, Latency, and Goodput</a></li><li><a href="#6-production-challenges-and-solutions">6. Production Challenges and Solutions</a></li><li><a href="#7-hands-on-projects">7. Hands-On Projects</a></li><li><a href="#8-foundational-papers-and-tooling">8. Foundational Papers and Tooling</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">Ultimate AI Engineering · LLMOps &amp; Serving</div>
+    <h1 class="lesson-title">08.04 — Quantization &amp; Batching (Making Every GPU-Second Count)</h1>
+    <p class="lesson-sub">**Module 8: LLMOps &amp; Serving** · Subtopic 4 of 5</p>
+    
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ultimate AI Engineering — LLMOps &amp; Serving 08">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="14.6" y="118.8" width="26.2" height="26.2" rx="2" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55" transform="rotate(135 27.7 131.9)"/>
+        <circle cx="22.2" cy="126.9" r="12.4" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="16.8" cy="122.0" r="11.8" fill="none" stroke="#6d28d9" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6d28d9" textLength="184" lengthAdjust="spacingAndGlyphs">ULTIMATE AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#6d28d9" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#6d28d9" letter-spacing="-2">08</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLMOPS &amp; SERVING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">08.04 — Quantization</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">&amp; Batching (Making…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <blockquote>
+<p><strong>Prerequisites:</strong> <strong>01.02 §2, §3, §7 (required: roofline view of prefill/decode, KV cache, PagedAttention, continuous batching, the quantization intro)</strong>, 01.01 §3.2 (KV sizing), 06.01 (paired bootstrap), 08.02 (unit economics), 08.03 (vLLM flags, capacity math).
+<strong>Outcome:</strong> you can choose a number format and quantization algorithm for a given GPU and workload, produce and validate a quantized checkpoint with slice-level quality gates, and tune batching for maximum <strong>goodput</strong> (throughput delivered within SLO), with a roofline model that predicts where each optimisation helps.</p>
+</blockquote>
+<blockquote>
+<p><strong>Status check (September 2026).</strong></p>
+<ul>
+<li><strong>LLM Compressor</strong> (<code>vllm-project/llm-compressor</code>) is the standard way to produce vLLM-ready checkpoints (the <code>compressed-tensors</code> format). It supports:<ul>
+<li><strong>W8A8</strong> (INT8 and FP8), <strong>W4A16</strong>, <strong>W8A16</strong>, <strong>W4AFP8</strong>;</li>
+<li>microscaling <strong>NVFP4 / MXFP4 / MXFP8</strong>;</li>
+<li><strong>FP8 and NVFP4 KV-cache/attention</strong> quantization;</li>
+<li>the algorithms <strong>GPTQ, AWQ, SmoothQuant, AutoRound</strong>, rotations (<strong>SpinQuant, QuIP</strong>), and simple PTQ.</li>
+</ul>
+</li>
+<li><strong>Hardware sets the menu:</strong><ul>
+<li>Ampere (A100) has no FP8 tensor cores, so use INT8 or W4A16 there.</li>
+<li>Hopper (H100/H200) and Ada add FP8.</li>
+<li>Blackwell (B200/GB200/RTX 50xx) adds native FP4 (NVFP4/MXFP4).</li>
+<li>Always verify kernel support for your exact (GPU, scheme, vLLM version) triple.</li>
+</ul>
+</li>
+</ul>
+</blockquote>
+<hr>
+<h2 id="1-why-quantize-decode-is-a-bandwidth-problem"><a class="anchor" href="#1-why-quantize-decode-is-a-bandwidth-problem">#</a> 1. Why Quantize: Decode Is a Bandwidth Problem</h2>
+<p>Recall 01.02 §2. Each decode step must stream <strong>every weight</strong> (plus each sequence&#39;s KV cache) from HBM.</p>
+<p>For batch size $B$, parameters $P$, bytes per weight $b_w$, KV bytes per sequence $b_{kv}$, peak compute $F$, and bandwidth $BW$:</p>
+<p>$$
+t_{\text{step}}(B) ;\approx; \max!\left(\underbrace{\frac{2PB}{F}}<em>{\text{compute}},; \underbrace{\frac{P,b_w + B,b</em>{kv}}{BW}}<em>{\text{memory}}\right),
+\qquad
+\text{tok/s} = \frac{B}{t</em>{\text{step}}(B)} .
+$$</p>
+<p>Ignoring KV, the weight GEMM stays <strong>memory-bound</strong> while its arithmetic intensity $2B/b_w$ is below the GPU&#39;s <strong>ridge point</strong> $F/BW$:</p>
+<p>$$
+B^{*} ;=; \frac{F}{BW}\cdot\frac{b_w}{2}.
+$$</p>
+<p>Three consequences drive every decision in this subtopic:</p>
+<ol>
+<li><strong>Weight-only quantization (W4A16, W8A16) speeds up small-batch, latency-bound serving</strong> almost in proportion to $1/b_w$. Its crossover batch $B^*$ is lower, however. With INT4 on an H100 it is ≈ 74 versus ≈ 295 for BF16 (§5.1). Past that point you are compute-bound on BF16 math plus dequantisation overhead, and W4A16 can end up <strong>slower</strong> than FP8.</li>
+<li><strong>Weight+activation quantization (W8A8-FP8, W4A4-NVFP4)</strong> also doubles or quadruples the tensor-core FLOPs. It is the choice for <strong>high-batch throughput</strong> serving.</li>
+<li><strong>At long context and large batch, KV traffic dominates weights.</strong> An 8B model at 2k context and $B=256$ reads about 67 GB of KV per step versus 16 GB of weights (§5.1). There, <strong>KV-cache quantization</strong> (FP8 KV) and prefix caching buy more than weight quantization does. KV quantization also doubles KV capacity (08.03 §3).</li>
+</ol>
+<hr>
+<h2 id="2-number-formats"><a class="anchor" href="#2-number-formats">#</a> 2. Number Formats</h2>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Bits (S/E/M)</th>
+<th>Range / grid</th>
+<th>Scaling granularity</th>
+<th>HW (native math)</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>BF16</strong></td>
+<td>1/8/7</td>
+<td>FP32 range, ~3 significant digits</td>
+<td>none</td>
+<td>A100+</td>
+<td>Baseline serving, training</td>
+</tr>
+<tr>
+<td><strong>FP8 E4M3</strong></td>
+<td>1/4/3</td>
+<td>±448, 3 mantissa bits</td>
+<td>per-tensor, per-channel, per-token, or <strong>block (e.g. 128×128)</strong></td>
+<td>H100/H200, Ada, Blackwell</td>
+<td><strong>W8A8 inference default on Hopper</strong>, KV cache</td>
+</tr>
+<tr>
+<td><strong>FP8 E5M2</strong></td>
+<td>1/5/2</td>
+<td>±57344, 2 mantissa bits</td>
+<td>per-tensor</td>
+<td>same</td>
+<td>Gradients (training)</td>
+</tr>
+<tr>
+<td><strong>INT8</strong></td>
+<td>8-bit two&#39;s complement</td>
+<td>256 uniform levels</td>
+<td>per-channel W, per-token A</td>
+<td>A100+ (IMMA)</td>
+<td>W8A8 on Ampere, SmoothQuant</td>
+</tr>
+<tr>
+<td><strong>INT4</strong></td>
+<td>4-bit</td>
+<td>16 uniform levels</td>
+<td><strong>group-wise (g = 32/64/128)</strong> + FP16 scales (± zero points)</td>
+<td>dequant-to-FP16 kernels (Marlin/Machete etc.)</td>
+<td><strong>W4A16</strong> (GPTQ/AWQ) for memory-bound serving</td>
+</tr>
+<tr>
+<td><strong>MXFP4</strong> (OCP MX)</td>
+<td>E2M1 elements</td>
+<td>{0, .5, 1, 1.5, 2, 3, 4, 6} × scale</td>
+<td><strong>32-element blocks, E8M0 (power-of-two) scale</strong></td>
+<td>Blackwell</td>
+<td>Open standard FP4</td>
+</tr>
+<tr>
+<td><strong>NVFP4</strong></td>
+<td>E2M1 elements</td>
+<td>same grid</td>
+<td><strong>16-element blocks, FP8 E4M3 scale + FP32 per-tensor scale</strong></td>
+<td>Blackwell</td>
+<td>W4A4 / W4A16 on NVIDIA, FP4 KV</td>
+</tr>
+</tbody></table>
+<p><strong>Uniform quantization.</strong> With step $\Delta$ and zero point $z$:</p>
+<p>$$
+q = \mathrm{clamp}!\left(\mathrm{round}!\left(\tfrac{x}{\Delta}\right) + z,; q_{\min},, q_{\max}\right),
+\qquad \hat{x} = \Delta,(q - z).
+$$</p>
+<ul>
+<li><strong>Symmetric:</strong> $\Delta = \max|x| / (2^{b-1}-1)$ and $z=0$.</li>
+<li><strong>Asymmetric:</strong> $\Delta = (\max x - \min x)/(2^b - 1)$.</li>
+<li>For values spread uniformly inside the clipping range, the rounding error is uniform on $[-\Delta/2, \Delta/2]$, which gives:</li>
+</ul>
+<p>$$
+\mathbb{E}\big[(x-\hat x)^2\big] = \frac{\Delta^2}{12},
+\qquad
+\text{SQNR} \approx 6.02,b + 1.76 \ \text{dB (full-scale sinusoid)}.
+$$</p>
+<p>Each bit removed costs about 6 dB. The real enemy is not the bit count, though. It is <strong>$\Delta$ being set by outliers</strong>: one value 20× larger than the rest inflates $\Delta$ 20× for everything sharing its scale. Every modern method is a way to shrink the set of values that share a scale (groups, blocks), to move outliers somewhere harmless (SmoothQuant, rotations), or to compensate the rounding error (GPTQ).</p>
+<p><strong>Floating-point formats</strong> give relative (log-spaced) precision. The error scales with $|x|$ rather than with the global max, which is why FP8 E4M3 per-tensor beats INT8 per-tensor on outlier-heavy tensors (below). <strong>Microscaling</strong> formats (MX/NVFP4) combine a tiny FP element with a per-block scale, so small blocks isolate outliers. NVFP4&#39;s smaller blocks and finer (E4M3 rather than power-of-two) scales give it lower error than MXFP4.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def quant_int(x, bits=4, axis=None, group=None, symmetric=True):
+    &quot;&quot;&quot;Fake-quantize (quantize-&gt;dequantize). axis=None: per-tensor; group: group-wise along last dim.&quot;&quot;&quot;
+    x = np.asarray(x, dtype=np.float64)
+    shp = x.shape
+    if group is not None:
+        assert shp[-1] % group == 0
+        x = x.reshape(*shp[:-1], shp[-1] // group, group)
+        axis = -1
+    red = dict(axis=axis, keepdims=True) if axis is not None else dict()
+    if symmetric:
+        qmax = 2 ** (bits - 1) - 1
+        scale = np.max(np.abs(x), **red) / qmax
+        scale = np.where(scale == 0, 1.0, scale)
+        out = np.clip(np.round(x / scale), -qmax - 1, qmax) * scale
+    else:
+        lo, hi = np.min(x, **red), np.max(x, **red)
+        scale = (hi - lo) / (2 ** bits - 1)
+        scale = np.where(scale == 0, 1.0, scale)
+        z = np.round(-lo / scale)
+        q = np.clip(np.round(x / scale) + z, 0, 2 ** bits - 1)
+        out = (q - z) * scale
+    return out.reshape(shp)
+
+def fp_round(x, man_bits, max_val, min_exp):
+    &quot;&quot;&quot;Round to a sign/exponent/mantissa grid (saturating; subnormals below 2**min_exp).&quot;&quot;&quot;
+    x = np.asarray(x, dtype=np.float64)
+    ax = np.abs(x)
+    e = np.maximum(np.floor(np.log2(np.maximum(ax, 1e-300))), min_exp)
+    step = 2.0 ** (e - man_bits)
+    return np.sign(x) * np.minimum(np.round(ax / step) * step, max_val)
+
+E4M3 = dict(man_bits=3, max_val=448.0, min_exp=-6)    # FP8 E4M3 (&quot;fn&quot; variant)
+E2M1 = dict(man_bits=1, max_val=6.0, min_exp=0)       # FP4 element grid {0,.5,1,1.5,2,3,4,6}
+
+def quant_fp8(x, fmt=E4M3):
+    s = np.max(np.abs(x)) / fmt[&quot;max_val&quot;]             # per-tensor scale: amax -&gt; format max
+    return fp_round(x / s, **fmt) * s
+
+def quant_nvfp4(x):
+    &quot;&quot;&quot;NVFP4 sim: 16-element blocks, E4M3 block scale, FP32 per-tensor scale.&quot;&quot;&quot;
+    x = np.asarray(x, dtype=np.float64)
+    b = x.reshape(-1, 16)
+    g = np.max(np.abs(b)) / (6.0 * 448.0)
+    s = fp_round(np.max(np.abs(b), axis=1, keepdims=True) / 6.0 / g, **E4M3)
+    s = np.where(s == 0, 1.0, s)
+    return (fp_round(b / (s * g), **E2M1) * s * g).reshape(x.shape)
+
+def quant_mxfp4(x):
+    &quot;&quot;&quot;MXFP4 sim (OCP MX): 32-element blocks, power-of-two (E8M0) shared scale.&quot;&quot;&quot;
+    x = np.asarray(x, dtype=np.float64)
+    b = x.reshape(-1, 32)
+    amax = np.maximum(np.max(np.abs(b), axis=1, keepdims=True), 1e-30)
+    s = 2.0 ** (np.floor(np.log2(amax)) - 2)           # emax of E2M1 = 2
+    return (fp_round(b / s, **E2M1) * s).reshape(x.shape)
+
+def rel_err(x, xq):
+    return float(np.linalg.norm(x - xq) / np.linalg.norm(x))
+
+rng = np.random.default_rng(0)
+W = rng.standard_normal((256, 1024)) * 0.02
+W[rng.random(W.shape) &lt; 0.001] *= 20                    # sparse large-magnitude outliers
+for name, f in [(&quot;INT8 per-tensor&quot;, lambda w: quant_int(w, 8)),
+                (&quot;FP8 E4M3 per-tensor&quot;, quant_fp8),
+                (&quot;INT4 per-tensor&quot;, lambda w: quant_int(w, 4)),
+                (&quot;INT4 per-channel&quot;, lambda w: quant_int(w, 4, axis=-1)),
+                (&quot;INT4 group-128&quot;, lambda w: quant_int(w, 4, group=128)),
+                (&quot;MXFP4 (32, E8M0)&quot;, quant_mxfp4),
+                (&quot;NVFP4 (16, E4M3)&quot;, quant_nvfp4)]:
+    print(f&quot;{name:22s} rel_err={rel_err(W, f(W)):.4f}&quot;)
+
+grid = sorted({float(v) for v in np.abs(fp_round(np.linspace(-7, 7, 2001), **E2M1)).round(3)})
+assert grid == [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
+x = rng.uniform(-1, 1, 200_000)
+print(&quot;asym INT8 MSE&quot;, np.mean((x - quant_int(x, 8, symmetric=False)) ** 2), &quot;theory&quot;, (2 / 255) ** 2 / 12)</code></pre>
+      </div>
+    <p>Measured output (outlier-bearing weights):</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Relative error</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>INT8 per-tensor</td>
+<td>0.116</td>
+</tr>
+<tr>
+<td><strong>FP8 E4M3 per-tensor</strong></td>
+<td><strong>0.026</strong></td>
+</tr>
+<tr>
+<td>INT4 per-tensor</td>
+<td>0.817</td>
+</tr>
+<tr>
+<td>INT4 per-channel</td>
+<td>0.506</td>
+</tr>
+<tr>
+<td>INT4 group-128</td>
+<td>0.216</td>
+</tr>
+<tr>
+<td>MXFP4</td>
+<td>0.145</td>
+</tr>
+<tr>
+<td><strong>NVFP4</strong></td>
+<td><strong>0.093</strong></td>
+</tr>
+</tbody></table>
+<p>The uniform-noise MSE matches $\Delta^2/12$ to 0.1%.</p>
+<p>Reading the numbers:</p>
+<ul>
+<li>FP8&#39;s relative precision makes it 4× better than INT8 when outliers set the scale.</li>
+<li>Group size is the main lever for INT4.</li>
+<li>Block-scaled FP4 beats group-128 INT4 at the same nominal 4 bits. The effective bits are ≈ 4.5 for NVFP4: 4 bits plus an 8-bit scale per 16 elements.</li>
+</ul>
+<p><strong>Effective bits per weight:</strong></p>
+<p>$$
+b_{\text{eff}} = b + \frac{b_{\text{scale}} (+ b_{\text{zero}})}{g}.
+$$</p>
+<p>This gives, for example, 4 + 16/128 = 4.125 for INT4 g128 with FP16 scales, 4.5 for NVFP4, and 4.25 for MXFP4. Use $b_{\text{eff}}$, not the nominal bit count, in memory math.</p>
+<hr>
+<h2 id="3-algorithms"><a class="anchor" href="#3-algorithms">#</a> 3. Algorithms</h2>
+<h3 id="31-taxonomy"><a class="anchor" href="#31-taxonomy">#</a> 3.1 Taxonomy</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">                    ┌── weight-only (W4A16, W8A16) ── RTN · GPTQ · AWQ · AutoRound  → memory-bound wins
+ Post-training ─────┼── weight+activation (W8A8, W4A4) ── SmoothQuant · rotations (QuaRot/SpinQuant) · FP8 dynamic
+ quantization (PTQ) └── KV cache (FP8 / NVFP4 / INT4-2bit research: KIVI) → capacity + attention bandwidth
+ Quantization-aware training (QAT) / QLoRA fine-tuning ── when PTQ loses too much (≤ 4-bit activations, small models)</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Idea</th>
+<th>Calibration</th>
+<th>Cost</th>
+<th>Strength</th>
+<th>Watch out</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RTN</strong> (round-to-nearest)</td>
+<td>Round with per-group scales</td>
+<td>none</td>
+<td>seconds</td>
+<td>FP8 dynamic, INT8 W8A16 are near-lossless</td>
+<td>Poor at W4 without small groups</td>
+</tr>
+<tr>
+<td><strong>GPTQ</strong></td>
+<td>Second-order error compensation, column by column, using $H = 2X^\top X$</td>
+<td>~128–512 samples</td>
+<td>minutes–hours</td>
+<td>Strong W4/W3</td>
+<td><strong>Overfits calibration domain</strong>; act-order + groups need kernel support</td>
+</tr>
+<tr>
+<td><strong>AWQ</strong></td>
+<td>Protect salient channels (large activation magnitude) by per-channel scaling before quantizing; grid-search $\alpha$</td>
+<td>small</td>
+<td>fast</td>
+<td>Robust W4A16, less calibration-sensitive</td>
+<td>Weight-only</td>
+</tr>
+<tr>
+<td><strong>SmoothQuant</strong></td>
+<td>Migrate activation outliers into weights: $X&#39; = X,\mathrm{diag}(s)^{-1}$, $W&#39; = \mathrm{diag}(s),W$</td>
+<td>small</td>
+<td>fast</td>
+<td>Makes <strong>W8A8 INT8</strong> work</td>
+<td>α tuning per model</td>
+</tr>
+<tr>
+<td><strong>QuaRot / SpinQuant</strong></td>
+<td>Orthogonal (Hadamard / learned) rotations spread outliers; exact in FP</td>
+<td>small (SpinQuant learns $R$)</td>
+<td>moderate</td>
+<td><strong>W4A4 and 4-bit KV</strong> feasible</td>
+<td>Needs rotation-aware kernels / fused Hadamards</td>
+</tr>
+<tr>
+<td><strong>FP8 dynamic</strong></td>
+<td>Per-token activation scales computed at runtime; static per-channel weight scales</td>
+<td>none</td>
+<td>seconds</td>
+<td><strong>Default first move on Hopper</strong>; near-lossless for most models</td>
+<td>Needs FP8 HW</td>
+</tr>
+<tr>
+<td><strong>NVFP4 / MXFP4</strong></td>
+<td>Microscaled FP4 with calibrated global scales</td>
+<td>small</td>
+<td>fast</td>
+<td>Blackwell 4-bit compute</td>
+<td>Accuracy varies by model; validate</td>
+</tr>
+<tr>
+<td><strong>QAT / QLoRA</strong></td>
+<td>Train with fake-quant in the loop / LoRA on frozen 4-bit base</td>
+<td>training data</td>
+<td>hours–days</td>
+<td>Recovers accuracy at low bits</td>
+<td>Engineering + compute cost</td>
+</tr>
+</tbody></table>
+<h3 id="32-gptq-the-math-that-matters"><a class="anchor" href="#32-gptq-the-math-that-matters">#</a> 3.2 GPTQ — the math that matters</h3>
+<p>GPTQ is used for a linear layer $Y = XW^\top$, where $W \in \mathbb{R}^{d_{out}\times d_{in}}$ and calibration inputs are $X \in \mathbb{R}^{n\times d_{in}}$. It minimizes $\lVert XW^\top - X\hat W^\top\rVert_F^2$ row by row. The loss is quadratic with Hessian $H = 2X^\top X$, shared across rows.</p>
+<p>When column $i$ is quantized to $q_i$, the <strong>Optimal Brain Surgeon</strong> update redistributes the error optimally over the remaining columns:</p>
+<p>$$
+\delta_{,i+1:} ;=; -,\frac{w_i - q_i}{[H^{-1}]<em>{ii}};[H^{-1}]</em>{i,,i+1:} .
+$$</p>
+<p>GPTQ&#39;s engineering tricks turn this into an $O(d_{in}^3)$-per-layer algorithm that runs on 100B+ models:</p>
+<ul>
+<li>process columns in a <strong>fixed order</strong>, so one Cholesky factor of $H^{-1}$ serves all rows;</li>
+<li>apply <strong>lazy batch updates</strong>;</li>
+<li>use <strong>dampening</strong> $H + \lambda,\overline{\mathrm{diag}(H)},I$.</li>
+</ul>
+<p>&quot;Act-order&quot; quantizes high-$H_{ii}$ columns first.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def rtn_rowwise(W, bits=4, group=None):
+    &quot;&quot;&quot;Round-to-nearest, symmetric, per-output-row scales (optionally group-wise along input dim).&quot;&quot;&quot;
+    qmax = 2 ** (bits - 1) - 1
+    out, g = np.empty_like(W), group or W.shape[1]
+    for j in range(0, W.shape[1], g):
+        blk = W[:, j:j + g]
+        s = np.maximum(np.abs(blk).max(axis=1, keepdims=True), 1e-12) / qmax
+        out[:, j:j + g] = np.clip(np.round(blk / s), -qmax - 1, qmax) * s
+    return out
+
+def gptq(W, X, bits=4, group=None, damp=0.01):
+    &quot;&quot;&quot;GPTQ: quantize input columns in order; push each column&#39;s error onto the not-yet-quantized
+    columns via the upper Cholesky factor of H^-1, H = 2 X^T X.  W: (out, in); X: (n, in).&quot;&quot;&quot;
+    W = W.astype(np.float64).copy()
+    d = W.shape[1]
+    H = 2.0 * X.T @ X
+    H += damp * np.mean(np.diag(H)) * np.eye(d)
+    U = np.linalg.cholesky(np.linalg.inv(H)).T
+    qmax, g = 2 ** (bits - 1) - 1, group or d
+    Q = np.zeros_like(W)
+    for i in range(d):
+        if i % g == 0:                                   # group scales from the *updated* weights
+            s = np.maximum(np.abs(W[:, i:i + g]).max(axis=1), 1e-12) / qmax
+        q = np.clip(np.round(W[:, i] / s), -qmax - 1, qmax) * s
+        Q[:, i] = q
+        err = (W[:, i] - q) / U[i, i]
+        W[:, i + 1:] -= np.outer(err, U[i, i + 1:])
+    return Q
+
+rng = np.random.default_rng(1)
+n, d_in, d_out = 4096, 256, 128
+A = rng.standard_normal((d_in, d_in)) / np.sqrt(d_in)
+mix = np.eye(d_in) + 0.9 * A                              # correlated input features
+X = rng.standard_normal((n, d_in)) @ mix;   X[:, :4] *= 8.0
+Xte = rng.standard_normal((n, d_in)) @ mix; Xte[:, :4] *= 8.0   # held-out activations
+W = rng.standard_normal((d_out, d_in)) * 0.05
+
+def out_err(Wq):
+    return float(np.linalg.norm(Xte @ W.T - Xte @ Wq.T) / np.linalg.norm(Xte @ W.T))
+
+for bits, grp in [(4, None), (4, 64), (3, 64)]:
+    e_rtn, e_gptq = out_err(rtn_rowwise(W, bits, grp)), out_err(gptq(W, X, bits, grp))
+    print(f&quot;W{bits} group={grp}: RTN {e_rtn:.4f}  GPTQ {e_gptq:.4f}  ratio {e_gptq / e_rtn:.2f}&quot;)
+    assert e_gptq &lt; e_rtn</code></pre>
+      </div>
+    <p><strong>Result on held-out activations:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>RTN output error</th>
+<th>GPTQ output error</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>W4 per-channel</td>
+<td>0.128</td>
+<td>0.081</td>
+</tr>
+<tr>
+<td>W4 g64</td>
+<td>0.109</td>
+<td>0.070</td>
+</tr>
+<tr>
+<td>W3 g64</td>
+<td>0.256</td>
+<td>0.179</td>
+</tr>
+</tbody></table>
+<p>GPTQ gives <strong>30–37% lower output error</strong>. The gain comes from correlated inputs: GPTQ exploits $H$&#39;s off-diagonal structure, which RTN ignores. The same mechanism is why GPTQ <strong>overfits</strong> when the calibration set does not match production. <strong>Calibrate on your traffic</strong>, e.g. bills, statutes, and agent transcripts rather than generic web text, and keep a held-out domain eval.</p>
+<h3 id="33-smoothquant-and-rotations-taming-activation-outliers"><a class="anchor" href="#33-smoothquant-and-rotations-taming-activation-outliers">#</a> 3.3 SmoothQuant and rotations — taming activation outliers</h3>
+<p>LLM activations have a few <strong>systematic outlier channels</strong>, 10–100× larger than the rest, that recur across tokens. Per-tensor or per-token activation scales are then dominated by them. Weights are easy to quantize by comparison.</p>
+<p><strong>SmoothQuant</strong> moves difficulty from $X$ to $W$ with an exact reparameterization:</p>
+<p>$$
+Y = XW^\top = \big(X,\mathrm{diag}(s)^{-1}\big)\big(W,\mathrm{diag}(s)\big)^\top,
+\qquad
+s_j = \frac{\max|X_{:,j}|^{\alpha}}{\max|W_{:,j}|^{,1-\alpha}} .
+$$</p>
+<p>Here α≈0.5 balances the difficulty, and $s$ folds into the preceding LayerNorm or linear layer offline.</p>
+<p><strong>Rotations</strong> (QuaRot, SpinQuant) apply an orthogonal $R$ such that $Y = (XR)(WR)^\top$. A Hadamard $R$ mixes every channel into every other, so outliers are spread out and the distribution becomes near-Gaussian. This is the enabler for <strong>W4A4 and 4-bit KV</strong>.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+from scipy.linalg import hadamard
+from scipy.stats import kurtosis
+
+def q8_tensor(x):                                         # per-tensor activation scale
+    s = np.abs(x).max() / 127
+    return np.clip(np.round(x / s), -128, 127) * s
+
+def q8_rows(w):                                           # per-output-channel weight scales
+    s = np.abs(w).max(axis=1, keepdims=True) / 127
+    return np.clip(np.round(w / s), -128, 127) * s
+
+def smoothquant_scales(X, W, alpha=0.5):
+    ax, aw = np.abs(X).max(axis=0), np.abs(W).max(axis=0)
+    return np.maximum(ax, 1e-8) ** alpha / np.maximum(aw, 1e-8) ** (1 - alpha)
+
+def w8a8_err(X, W, s=None):
+    Y = X @ W.T
+    if s is not None:
+        X, W = X / s, W * s
+    return float(np.linalg.norm(Y - q8_tensor(X) @ q8_rows(W).T) / np.linalg.norm(Y))
+
+rng = np.random.default_rng(2)
+n, d, o = 2048, 512, 256
+X = rng.standard_normal((n, d))
+X[:, rng.choice(d, 6, replace=False)] *= 60.0             # systematic outlier channels
+W = rng.standard_normal((o, d)) * 0.02
+
+print(f&quot;W8A8 naive            : {w8a8_err(X, W):.4f}&quot;)
+for a in (0.3, 0.5, 0.7, 0.9):
+    print(f&quot;W8A8 SmoothQuant a={a} : {w8a8_err(X, W, smoothquant_scales(X, W, a)):.4f}&quot;)
+
+Hm = hadamard(d) / np.sqrt(d)                              # orthonormal Walsh-Hadamard
+Xr, Wr = X @ Hm, W @ Hm
+assert np.allclose(X @ W.T, Xr @ Wr.T)                    # exact in full precision
+print(f&quot;activation kurtosis   : raw {kurtosis(X.ravel()):.1f} -&gt; rotated {kurtosis(Xr.ravel()):.2f}&quot;)
+print(f&quot;W8A8 after rotation   : {w8a8_err(Xr, Wr):.4f}&quot;)</code></pre>
+      </div>
+    <p><strong>Results.</strong></p>
+<ul>
+<li>Naive W8A8 error: 0.087.</li>
+<li>SmoothQuant: 0.027 at α=0.3, <strong>0.015 at α=0.5–0.7</strong>, and 0.026 at α=0.9. The U-shape in α is why the parameter is tuned per model.</li>
+<li>Hadamard rotation: excess kurtosis drops from <strong>245 to 0.05</strong>, which is Gaussian, and W8A8 error falls to <strong>0.014</strong>. Rotation needs no calibration here.</li>
+</ul>
+<h3 id="34-kv-cache-quantization"><a class="anchor" href="#34-kv-cache-quantization">#</a> 3.4 KV-cache quantization</h3>
+<p>Quantizing the KV cache to <strong>FP8</strong> (<code>--kv-cache-dtype fp8</code>; see 08.03 §3):</p>
+<ul>
+<li>halves KV memory, doubling concurrent tokens (≈214k → 428k in the 70B example there);</li>
+<li>halves attention bandwidth at long context.</li>
+</ul>
+<p>Use calibrated per-tensor or per-head scales (LLM Compressor can produce them) rather than scale = 1.0 defaults. Validate <strong>long-context retrieval</strong> (01.04 needle and multi-hop tests) specifically, because KV error accumulates over positions. 4-bit and 2-bit KV (KIVI, NVFP4 KV, rotated KV) are viable only with validation per model.</p>
+<h3 id="35-what-to-pick"><a class="anchor" href="#35-what-to-pick">#</a> 3.5 What to pick</h3>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Is the GPU Blackwell? ──yes──► try NVFP4 (W4A4) or FP8; gate on evals; keep FP8 as the fallback
+        │ no
+Hopper/Ada? ──yes──► FP8 dynamic W8A8 + FP8 KV   (first move, near-lossless, minutes to produce)
+        │               └─ memory-bound / single-GPU fit needed? add W4A16 (AWQ/GPTQ) candidate
+        │ no (Ampere / older / consumer)
+        └────────► W4A16 (AWQ or GPTQ, g128) for fit/latency · W8A8-INT8 (SmoothQuant) for throughput
+Local/edge (CPU, Apple): GGUF k-quants (llama.cpp) or MLX 4-bit
+Never skip: slice-level quality gates (§4) + a perf benchmark at YOUR batch/context profile (§5)</code></pre>
+      </div>
+    <h3 id="36-producing-a-checkpoint-with-llm-compressor"><a class="anchor" href="#36-producing-a-checkpoint-with-llm-compressor">#</a> 3.6 Producing a checkpoint with LLM Compressor</h3>
+<p>This is the canonical <code>oneshot</code> flow. Scheme names and arguments evolve between releases, so pin the version.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># pip install llmcompressor   (pin the version; run on a GPU box)
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import QuantizationModifier, GPTQModifier
+
+MODEL_ID = &quot;your-org/bill-summarizer-8b&quot;          # fine-tuned model from 08.01&#39;s bake-off
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=&quot;auto&quot;)
+tok = AutoTokenizer.from_pretrained(MODEL_ID)
+
+# (a) FP8 dynamic: no calibration data, near-lossless on Hopper
+fp8 = QuantizationModifier(targets=&quot;Linear&quot;, scheme=&quot;FP8_DYNAMIC&quot;, ignore=[&quot;lm_head&quot;])
+oneshot(model=model, recipe=fp8)
+model.save_pretrained(&quot;out/bill-8b-fp8&quot;, save_compressed=True); tok.save_pretrained(&quot;out/bill-8b-fp8&quot;)
+
+# (b) W4A16 GPTQ: calibrate on *domain* text (bills, statutes, fiscal notes), not generic web data
+# model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=&quot;auto&quot;)   # reload fresh
+# gptq = GPTQModifier(targets=&quot;Linear&quot;, scheme=&quot;W4A16&quot;, ignore=[&quot;lm_head&quot;])
+# oneshot(model=model, dataset=calib_ds, recipe=gptq, max_seq_length=4096, num_calibration_samples=512)</code></pre>
+      </div>
+    <p>Serve it with <code>vllm serve out/bill-8b-fp8 --kv-cache-dtype fp8 ...</code>. vLLM reads the quantization config from the checkpoint. Record the scheme, the calibration-set hash, and the tool version in the <strong>bundle manifest</strong> (08.05 §2).</p>
+<hr>
+<h2 id="4-validating-a-quantized-model-the-part-teams-skip"><a class="anchor" href="#4-validating-a-quantized-model-the-part-teams-skip">#</a> 4. Validating a Quantized Model (the Part Teams Skip)</h2>
+<p><strong>Perplexity is necessary but not sufficient.</strong> Quantization damage concentrates in:</p>
+<ul>
+<li>long-context retrieval;</li>
+<li>arithmetic and fiscal numbers;</li>
+<li>structured output validity;</li>
+<li>tool-call arguments;</li>
+<li>rare languages and domain jargon;</li>
+<li>reasoning chains, where small per-token drift compounds.</li>
+</ul>
+<p>The ladder is:</p>
+<ol>
+<li><strong>Teacher-forced divergence.</strong> On identical inputs, compute $\mathrm{KL}(p_{ref},\Vert,p_{q})$ per token and the <strong>greedy flip rate</strong>. This is cheap, sensitive, and catches broken kernels and bad scales immediately.</li>
+<li><strong>Task evals by slice</strong>, paired against the BF16 baseline on the <em>same items</em>, with the paired bootstrap from 06.01. Pass means the <strong>lower CI bound of the delta ≥ −ε per slice</strong>, not just in aggregate.</li>
+<li><strong>Hard invariants:</strong> JSON/schema validity, tool-call parse rate, refusal and guardrail behaviour (07.01). These must not regress at all.</li>
+<li><strong>Performance at your profile.</strong> Measure TTFT, ITL, and max QPS at SLO (08.03 §5) at your real prompt/output length distribution and concurrency. A scheme that is faster at batch 1 can be slower at batch 128 (§1).</li>
+<li><strong>Shadow and canary</strong> (08.05 §4) with online metrics (06.03).</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def _log_softmax(z):
+    z = z - z.max(axis=-1, keepdims=True)
+    return z - np.log(np.exp(z).sum(axis=-1, keepdims=True))
+
+def token_divergence(ref_logits, q_logits):
+    &quot;&quot;&quot;Teacher-forced: mean/p99 KL(ref || quant) per position and greedy top-1 flip rate.&quot;&quot;&quot;
+    lp, lq = _log_softmax(ref_logits), _log_softmax(q_logits)
+    kl = (np.exp(lp) * (lp - lq)).sum(-1)
+    flips = ref_logits.argmax(-1) != q_logits.argmax(-1)
+    return dict(mean_kl=float(kl.mean()), p99_kl=float(np.percentile(kl, 99)), flip_rate=float(flips.mean()))
+
+def quant_gate(base, cand, slices, max_drop=0.01, n_boot=4000, alpha=0.05, seed=0, hard_checks=None):
+    &quot;&quot;&quot;Paired bootstrap per slice: PASS iff lower CI bound of mean(cand - base) &gt;= -max_drop,
+    on the SAME items. hard_checks: name -&gt; (value, minimum) invariants (e.g. JSON validity).&quot;&quot;&quot;
+    rng = np.random.default_rng(seed)
+    base, cand, slices = map(np.asarray, (base, cand, slices))
+    report, ok = {}, True
+    for s in [&quot;ALL&quot;, *sorted(set(slices.tolist()))]:
+        m = np.ones_like(base, bool) if s == &quot;ALL&quot; else slices == s
+        d = cand[m] - base[m]
+        idx = rng.integers(0, len(d), (n_boot, len(d)))
+        lo = float(np.percentile(d[idx].mean(1), 100 * alpha / 2))
+        report[s] = dict(n=int(m.sum()), delta=float(d.mean()), ci_lo=lo, pass_=bool(lo &gt;= -max_drop))
+        ok &amp;= report[s][&quot;pass_&quot;]
+    for name, (value, limit) in (hard_checks or {}).items():
+        report[name] = dict(value=value, limit=limit, pass_=value &gt;= limit)
+        ok &amp;= report[name][&quot;pass_&quot;]
+    return bool(ok), report
+
+rng = np.random.default_rng(3)
+V, T = 32000, 512
+ref = rng.standard_normal((T, V)) * 3
+print(&quot;small noise:&quot;, token_divergence(ref, ref + rng.standard_normal((T, V)) * 0.05))
+print(&quot;large noise:&quot;, token_divergence(ref, ref + rng.standard_normal((T, V)) * 0.6))
+
+n = 1200
+sl = rng.choice([&quot;summaries&quot;, &quot;statute_qa&quot;, &quot;fiscal_notes&quot;], n, p=[0.45, 0.45, 0.10])
+base = (rng.random(n) &lt; 0.86).astype(float)
+cand = base.copy()
+cand[(sl == &quot;fiscal_notes&quot;) &amp; (rng.random(n) &lt; 0.15)] = 0.0     # regression hidden in a small slice
+ok, rep = quant_gate(base, cand, sl, max_drop=0.02, hard_checks={&quot;json_valid_rate&quot;: (0.997, 0.995)})
+for k, v in rep.items():
+    print(k, v)
+print(&quot;GATE:&quot;, &quot;PASS&quot; if ok else &quot;FAIL&quot;)
+assert rep[&quot;ALL&quot;][&quot;pass_&quot;] and not rep[&quot;fiscal_notes&quot;][&quot;pass_&quot;] and not ok</code></pre>
+      </div>
+    <p>The planted regression makes the point. The <strong>aggregate passes</strong> (Δ = −1.3 pts, CI lower bound −2.0), but the <strong>fiscal-notes slice fails</strong> (Δ = −13.9 pts). That slice holds the number-heavy text quantization tends to hurt, and an aggregate-only gate would have shipped it.</p>
+<hr>
+<h2 id="5-batching-throughput-latency-and-goodput"><a class="anchor" href="#5-batching-throughput-latency-and-goodput">#</a> 5. Batching: Throughput, Latency, and Goodput</h2>
+<h3 id="51-the-roofline-in-numbers"><a class="anchor" href="#51-the-roofline-in-numbers">#</a> 5.1 The roofline in numbers</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def decode_step_roofline(B, params_b, bytes_per_w, peak_tflops, bw_tbs, kv_bytes_per_seq=0.0):
+    &quot;&quot;&quot;One decode step at batch B: max(compute, memory). Returns (ms, regime, tok/s).&quot;&quot;&quot;
+    flops = 2.0 * params_b * 1e9 * B
+    bytes_ = params_b * 1e9 * bytes_per_w + B * kv_bytes_per_seq
+    t_c, t_m = flops / (peak_tflops * 1e12), bytes_ / (bw_tbs * 1e12)
+    t = max(t_c, t_m)
+    return t * 1e3, (&quot;compute&quot; if t_c &gt; t_m else &quot;memory&quot;), B / t
+
+def crossover_batch(bytes_per_w, peak_tflops, bw_tbs):
+    return (peak_tflops / bw_tbs) * bytes_per_w / 2.0
+
+# H100 SXM, approximate dense specs: ~989 TFLOPS BF16, ~1979 FP8, 3.35 TB/s
+for name, bpw, tf in [(&quot;BF16&quot;, 2.0, 989), (&quot;FP8 W8A8&quot;, 1.0, 1979), (&quot;INT4 W4A16&quot;, 0.5, 989)]:
+    print(f&quot;{name:10s} crossover B ~ {crossover_batch(bpw, tf, 3.35):5.0f}&quot;, end=&quot; | &quot;)
+    for B in (1, 32, 256):
+        ms, reg, tps = decode_step_roofline(B, 8, bpw, tf, 3.35)
+        print(f&quot;B={B}: {ms:4.2f} ms {reg[:3]} {tps:7.0f} tok/s&quot;, end=&quot;; &quot;)
+    print()
+
+kv_seq = 2 * 32 * 8 * 128 * 2 * 2000       # Llama-3-8B-like: 128 KiB/token x 2k context
+for B in (32, 256):
+    ms, reg, tps = decode_step_roofline(B, 8, 2.0, 989, 3.35, kv_bytes_per_seq=kv_seq)
+    print(f&quot;BF16 + KV@2k B={B}: {ms:5.2f} ms ({reg}) {tps:6.0f} tok/s; KV/step {B * kv_seq / 1e9:.1f} GB&quot;)</code></pre>
+      </div>
+    <p>Idealised upper bounds for an 8B model on one H100 (real kernels reach perhaps 60–80% of these):</p>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Crossover $B^*$</th>
+<th>B=1</th>
+<th>B=256</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BF16</td>
+<td>≈ 295</td>
+<td>4.8 ms/step</td>
+<td>still memory-bound</td>
+</tr>
+<tr>
+<td>FP8 W8A8</td>
+<td>≈ 295 (FP8 doubles both FLOPs and bytes/elt)</td>
+<td>2× BF16</td>
+<td>2× BF16</td>
+</tr>
+<tr>
+<td>INT4 W4A16</td>
+<td><strong>≈ 74</strong></td>
+<td><strong>4× BF16</strong></td>
+<td><strong>compute-bound</strong> at 4.1 ms, and <strong>loses to FP8</strong> at 2.4 ms</td>
+</tr>
+</tbody></table>
+<p><strong>With KV at 2k context,</strong> $B=256$ reads <strong>67 GB of KV per step vs 16 GB of weights</strong>. The step grows to 24.8 ms and throughput collapses from 53.6k to 10.3k tok/s. Long-context, high-concurrency workloads are <strong>KV-bound</strong>, so FP8 KV, prefix caching (08.02 §2), GQA/MLA models, and context budgets (01.04) are the levers.</p>
+<h3 id="52-queueing-littles-law-and-the-step-time-model"><a class="anchor" href="#52-queueing-littles-law-and-the-step-time-model">#</a> 5.2 Queueing: Little&#39;s law and the step-time model</h3>
+<p><strong>Little&#39;s law</strong> in steady state: $L = \lambda W$. Here $L$ is the mean number of in-flight requests, $\lambda$ the arrival rate, and $W$ the mean time in system.</p>
+<p>If the engine runs $L$ concurrent sequences with step time $t(B) = t_0 + kB$, then per-sequence ITL is $t(L)$ and decode throughput is $L/t(L)$. For mean output length $\bar{n}_{out}$ the system is stable only if</p>
+<p>$$
+\lambda,\bar n_{\text{out}} ;&lt;; \max_{B \le B_{\max}} \frac{B}{t_0 + kB} ;=; \frac{B_{\max}}{t_0 + k B_{\max}},
+$$</p>
+<p>and ITL SLO compliance requires $t_0 + kB \le \text{ITL}<em>{\text{SLO}}$, i.e. $B \le (\text{ITL}</em>{\text{SLO}} - t_0)/k$. <strong>Goodput</strong> = requests/s completed <em>within</em> TTFT and ITL SLOs. It is the metric to maximize, not raw tok/s (DistServe).</p>
+<h3 id="53-static-vs-continuous-batching-simulated"><a class="anchor" href="#53-static-vs-continuous-batching-simulated">#</a> 5.3 Static vs continuous batching — simulated</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+
+def simulate(policy, lam, n_req=3000, max_batch=64, t0=0.012, k=0.00025,
+             prefill_per_tok=0.00002, seed=0):
+    &quot;&quot;&quot;Poisson arrivals; step time = t0 + k*B + prefill cost of newly admitted prompts.
+    &#39;continuous&#39; admits into free slots every step (iteration-level scheduling, Orca/vLLM);
+    &#39;static&#39; admits a new batch only when the current one fully drains.&quot;&quot;&quot;
+    rng = np.random.default_rng(seed)
+    arrivals = np.cumsum(rng.exponential(1 / lam, n_req))
+    out_len = np.clip(rng.lognormal(np.log(150), 0.8, n_req).astype(int), 5, 2000)
+    in_len = np.clip(rng.lognormal(np.log(800), 0.6, n_req).astype(int), 20, 8000)
+    t, nxt, running, queue, done, first_tok = 0.0, 0, [], [], {}, {}
+    while len(done) &lt; n_req:
+        while nxt &lt; n_req and arrivals[nxt] &lt;= t:
+            queue.append(nxt); nxt += 1
+        admit = []
+        if policy == &quot;continuous&quot; or not running:
+            while queue and len(running) + len(admit) &lt; max_batch:
+                admit.append(queue.pop(0))
+        running += [[i, out_len[i]] for i in admit]
+        if not running:
+            t = arrivals[nxt]; continue
+        t += t0 + k * len(running) + prefill_per_tok * sum(in_len[i] for i in admit)
+        for r in running:
+            first_tok.setdefault(r[0], t)
+            r[1] -= 1
+            if r[1] == 0:
+                done[r[0]] = t
+        running = [r for r in running if r[1] &gt; 0]
+    lat = np.array([done[i] - arrivals[i] for i in range(n_req)])
+    ttft = np.array([first_tok[i] - arrivals[i] for i in range(n_req)])
+    return dict(tok_s=out_len.sum() / (max(done.values()) - arrivals[0]),
+                p50_ttft=float(np.percentile(ttft, 50)), p95_ttft=float(np.percentile(ttft, 95)),
+                p95_e2e=float(np.percentile(lat, 95)))
+
+for lam in (4, 8, 12):
+    for pol in (&quot;static&quot;, &quot;continuous&quot;):
+        r = simulate(pol, lam)
+        print(f&quot;lam={lam:2d} {pol:10s} tok/s={r[&#39;tok_s&#39;]:5.0f} p50 TTFT={r[&#39;p50_ttft&#39;]:6.2f}s &quot;
+              f&quot;p95 TTFT={r[&#39;p95_ttft&#39;]:6.2f}s p95 e2e={r[&#39;p95_e2e&#39;]:6.2f}s&quot;)
+assert simulate(&quot;continuous&quot;, 8)[&quot;p95_ttft&quot;] &lt; simulate(&quot;static&quot;, 8)[&quot;p95_ttft&quot;]</code></pre>
+      </div>
+    <table>
+<thead>
+<tr>
+<th>λ (req/s)</th>
+<th>Static: tok/s · p95 TTFT</th>
+<th>Continuous: tok/s · p95 TTFT</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>4</td>
+<td>765 · 45.9 s</td>
+<td>821 · <strong>0.08 s</strong></td>
+</tr>
+<tr>
+<td>8</td>
+<td>758 · 404 s (<strong>unstable</strong>)</td>
+<td><strong>1,577</strong> · 0.20 s</td>
+</tr>
+<tr>
+<td>12</td>
+<td>774 · 507 s</td>
+<td>1,800 · 71 s (<strong>past capacity</strong>)</td>
+</tr>
+</tbody></table>
+<p>What the table shows:</p>
+<ul>
+<li>Static batching caps out near 760 tok/s. Every batch waits for its <strong>longest</strong> member (lognormal output lengths), so slots sit idle, and the queue diverges already at λ=4 (demand ≈ 825 tok/s).</li>
+<li>Continuous batching <strong>doubles capacity</strong> and keeps TTFT sub-second until it approaches its own limit.</li>
+<li>At λ=12 it also saturates, which you would detect with <code>num_requests_waiting</code> (08.03 §6.3) and fix with replicas or shorter outputs.</li>
+</ul>
+<h3 id="54-batching-knobs-and-their-trade-offs-vllm-terms-see-0803-4"><a class="anchor" href="#54-batching-knobs-and-their-trade-offs-vllm-terms-see-0803-4">#</a> 5.4 Batching knobs and their trade-offs (vLLM terms, see 08.03 §4)</h3>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>↑ increases</th>
+<th>↓ decreases</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--max-num-seqs</code> (max B)</td>
+<td>throughput, KV pressure</td>
+<td>ITL (worse), preemptions</td>
+<td>Set from the ITL SLO: $B \le (\text{ITL}_{SLO}-t_0)/k$ fitted from a sweep</td>
+</tr>
+<tr>
+<td><code>--max-num-batched-tokens</code> (token budget per step)</td>
+<td>prefill throughput, TTFT for long prompts</td>
+<td>ITL stability (big prefills stall decodes)</td>
+<td>With <strong>chunked prefill</strong>, 2k–8k is typical for interactive; larger for offline</td>
+</tr>
+<tr>
+<td>Chunked prefill</td>
+<td>ITL p99 stability</td>
+<td>slight TTFT increase</td>
+<td>On for interactive mixes (Sarathi-Serve)</td>
+</tr>
+<tr>
+<td>Priority scheduling</td>
+<td>SLO for interactive tier</td>
+<td>batch/offline latency</td>
+<td>Two classes: interactive vs bulk</td>
+</tr>
+<tr>
+<td>Prefill/decode <strong>disaggregation</strong></td>
+<td>independent scaling of TTFT vs ITL</td>
+<td>complexity, KV transfer</td>
+<td>At scale (llm-d / Dynamo, 08.03 §6.2); DistServe/Splitwise</td>
+</tr>
+<tr>
+<td>Speculative decoding</td>
+<td>ITL at low B</td>
+<td>gains vanish at high B (compute-bound)</td>
+<td>Enable for latency tier only (01.02 §5)</td>
+</tr>
+</tbody></table>
+<h3 id="55-offline-bulk-batch-inference"><a class="anchor" href="#55-offline-bulk-batch-inference">#</a> 5.5 Offline (bulk) batch inference</h3>
+<p>Examples of bulk work: nightly re-summarisation of all amended bills, back-filling embeddings after a model change (03.01), and eval runs. For these, <strong>latency is irrelevant and cost per token is everything.</strong> The recipe:</p>
+<ol>
+<li><strong>Separate pool or priority class</strong>, so bulk never shares an SLO with interactive traffic.</li>
+<li>Use <strong>vLLM offline</strong> <code>LLM.generate(prompts, sampling_params)</code>, which schedules the whole list with maximum batch, or a provider <strong>Batch API</strong> (often ≈50% discount, 24 h window; 08.02 §4.2).</li>
+<li><strong>Sort or group by shared prefix</strong> (same system prompt and schema) so prefix caching hits. Sort by prompt length to reduce padding in any static stages.</li>
+<li>Feed work from <strong>Kafka</strong> with idempotent keys (<code>bill_id:version:task</code>), commit offsets only after the result is persisted, and route failures to a dead-letter topic with bounded retries.</li>
+<li>Checkpoint progress and emit throughput and cost per 1k items to the FinOps dashboard (08.05 §7).</li>
+</ol>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># Offline bulk generation with vLLM (GPU box). Assumes prompts share a system prompt -&gt; prefix-cache hits.
+from vllm import LLM, SamplingParams
+
+llm = LLM(model=&quot;out/bill-8b-fp8&quot;, kv_cache_dtype=&quot;fp8&quot;, enable_prefix_caching=True,
+          max_num_seqs=256, max_num_batched_tokens=16384)
+params = SamplingParams(temperature=0.0, max_tokens=400)
+SYSTEM = &quot;You summarize Montana bills for legislators. Output JSON {summary, fiscal_impact, sections}.&quot;
+bills = load_amended_bills()                               # your data access
+prompts = [f&quot;{SYSTEM}\n\nBILL {b.id} v{b.version}:\n{b.text}&quot; for b in sorted(bills, key=lambda b: len(b.text))]
+for b, out in zip(sorted(bills, key=lambda b: len(b.text)), llm.generate(prompts, params)):
+    persist(b.id, b.version, out.outputs[0].text)          # idempotent upsert keyed on (id, version)</code></pre>
+      </div>
+    <hr>
+<h2 id="6-production-challenges-and-solutions"><a class="anchor" href="#6-production-challenges-and-solutions">#</a> 6. Production Challenges and Solutions</h2>
+<table>
+<thead>
+<tr>
+<th>Challenge</th>
+<th>Symptom</th>
+<th>Solution</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Quality cliff in one slice</strong></td>
+<td>Aggregate evals flat; users report wrong fiscal numbers</td>
+<td>Slice-level paired gates (§4); number-heavy and long-context slices mandatory; calibrate on domain data</td>
+</tr>
+<tr>
+<td><strong>Calibration overfit (GPTQ)</strong></td>
+<td>Great on the calib-like eval, worse on real traffic</td>
+<td>Calibrate on sampled production prompts (PII-scrubbed; 07.01), hold out a domain eval; prefer AWQ/FP8 when unsure</td>
+</tr>
+<tr>
+<td><strong>&quot;Quantized is slower&quot;</strong></td>
+<td>W4A16 regresses throughput at high concurrency</td>
+<td>Roofline check (§5.1): past $B^*$ use FP8/W8A8; benchmark at real concurrency</td>
+</tr>
+<tr>
+<td><strong>Kernel not supported</strong></td>
+<td>vLLM falls back to a slow path or fails to load</td>
+<td>Match (GPU arch, scheme, group size, act-order) to supported kernels for the pinned vLLM version; CI load test</td>
+</tr>
+<tr>
+<td><strong>Long-context degradation with FP8 KV</strong></td>
+<td>Needle/multi-hop recall drops at 32k+</td>
+<td>Calibrated KV scales; keep BF16 KV for the long-context tier; test by position</td>
+</tr>
+<tr>
+<td><strong>Structured-output / tool-call breakage</strong></td>
+<td>JSON validity or argument accuracy dips</td>
+<td>Hard invariants in the gate; constrained decoding (02.04) masks malformed tokens but not wrong values</td>
+</tr>
+<tr>
+<td><strong>Non-determinism confusion</strong></td>
+<td>Different outputs at different batch sizes</td>
+<td>Batch-invariance is not guaranteed (batched kernels change reduction order); evaluate distributionally, pin seeds only for debugging</td>
+</tr>
+<tr>
+<td><strong>MoE quantization</strong></td>
+<td>Router or expert gates destabilise</td>
+<td>Keep routers/gates and <code>lm_head</code> in higher precision (<code>ignore=[...]</code>); check expert load balance post-quant</td>
+</tr>
+<tr>
+<td><strong>Tail latency from big prefills</strong></td>
+<td>ITL p99 spikes when long prompts arrive</td>
+<td>Chunked prefill + token budget; priority classes; disaggregation at scale</td>
+</tr>
+<tr>
+<td><strong>Checkpoint provenance</strong></td>
+<td>Can&#39;t reproduce which calib set/scheme is in prod</td>
+<td>Record scheme, tool version, calib hash, eval report in the bundle manifest (08.05)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="7-hands-on-projects"><a class="anchor" href="#7-hands-on-projects">#</a> 7. Hands-On Projects</h2>
+<h3 id="project-1-quantization-bake-off-for-the-bill-summarizer"><a class="anchor" href="#project-1-quantization-bake-off-for-the-bill-summarizer">#</a> Project 1 — Quantization Bake-Off for the Bill-Summarizer</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the platform owner</em>, I want the cheapest checkpoint that serves bill summaries within SLO without measurable quality loss, so that session-peak traffic fits on our GPU budget.</li>
+<li><em>As a fiscal analyst</em>, I need fiscal numbers in summaries to be exactly right, whatever precision the model runs at.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Candidates are BF16 (baseline), FP8-dynamic + FP8 KV, W4A16-AWQ, and W4A16-GPTQ (domain calibration), plus NVFP4 if Blackwell is available. All are produced with a pinned LLM Compressor.</li>
+<li>Teacher-forced KL and flip rate are reported for each. Each candidate goes through <code>quant_gate</code> with slices {summaries, statute QA, fiscal notes, long bills &gt; 16k tokens} and ε = 1 pt. JSON validity must stay ≥ baseline − 0.2 pt.</li>
+<li>Performance: max QPS at SLO (TTFT p95 ≤ 1.5 s, ITL p95 ≤ 60 ms) at the production length distribution, using 08.03&#39;s harness.</li>
+<li>A decision memo gives $/1M output tokens at SLO for each candidate (08.02 <code>call_cost</code> / 08.01 TCO) and names a winner plus a fallback.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Sample 2k PII-scrubbed production prompts: 512 for calibration, the rest for eval. Freeze the eval set with a hash (06.02).</li>
+<li>Produce the checkpoints (§3.6) and log scheme, calibration hash, and tool version.</li>
+<li>Dump logits on 200 held-out prompts for each checkpoint and run <code>token_divergence</code>. Any candidate with a flip rate far above FP8&#39;s is investigated first; it may be a kernel or scale bug.</li>
+<li>Run the task evals, with LLM-as-judge plus exact-match on extracted fiscal figures, then run <code>quant_gate</code>.</li>
+<li>Sweep concurrency on each passing candidate and fit $t(B)=t_0+kB$. Compute max QPS at SLO and cost.</li>
+<li>Write the memo. Include the roofline explanation of why the winner wins at your concurrency.</li>
+</ol>
+<h3 id="project-2-gptqawq-from-scratch-verified-against-the-library"><a class="anchor" href="#project-2-gptqawq-from-scratch-verified-against-the-library">#</a> Project 2 — GPTQ/AWQ From Scratch, Verified Against the Library</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As an ML engineer</em>, I want to understand exactly what the quantizer does to our weights, so I can debug accuracy regressions rather than guess.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>Implement per-layer GPTQ (from §3.2, extended with act-order and lazy block updates) and AWQ scale search in PyTorch for one decoder layer of a small open model (≤ 1.5B).</li>
+<li>Layer output error is within 10% of LLM Compressor&#39;s on the same calibration batch.</li>
+<li>The full model is quantized with your implementation. Its perplexity on a domain corpus is within 0.2 of the library&#39;s, and both are reported against BF16.</li>
+<li>An ablation shows the effect of group size (32/64/128), act-order on/off, dampening (0.001–0.1), and calibration domain (web vs legislative) on domain perplexity.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Hook the inputs of each <code>nn.Linear</code> layer and accumulate $H = 2X^\top X$ over the calibration batches (in float64 for stability).</li>
+<li>Port <code>gptq()</code> to torch. Add act-order (permute columns by $\mathrm{diag}(H)$ descending, and un-permute when saving) and block updates (128 columns).</li>
+<li>AWQ: for each linear layer, grid-search $\alpha \in [0,1]$ with $s = \bar{|x|}^{\alpha}$, and minimize $\lVert Q(W,\mathrm{diag}(s)),(\mathrm{diag}(s)^{-1}x) - Wx\rVert$.</li>
+<li>Pack to the <code>compressed-tensors</code> W4A16 format, or evaluate with fake-quant weights.</li>
+<li>Run the ablation grid and plot error against effective bits. Write up the calibration-domain finding.</li>
+</ol>
+<h3 id="project-3-goodput-tuning-and-a-bulk-pipeline-for-session-peaks"><a class="anchor" href="#project-3-goodput-tuning-and-a-bulk-pipeline-for-session-peaks">#</a> Project 3 — Goodput Tuning and a Bulk Pipeline for Session Peaks</h3>
+<p><strong>User stories</strong></p>
+<ul>
+<li><em>As the on-call engineer</em>, I want interactive chat to hold its SLO while nightly bulk summarisation runs on the same cluster during the legislative session.</li>
+<li><em>As FinOps</em>, I want bulk jobs to run at minimum cost per item.</li>
+</ul>
+<p><strong>Acceptance criteria</strong></p>
+<ul>
+<li>A concurrency sweep produces a fitted $t(B)$ model. <code>--max-num-seqs</code> and <code>--max-num-batched-tokens</code> are chosen analytically (§5.2) and validated by load test. Interactive goodput is ≥ 95% of requests within SLO at the forecast session peak λ.</li>
+<li>The bulk pipeline is Kafka → vLLM offline workers (or a provider Batch API), with idempotent keys, a dead-letter queue, and resume-from-checkpoint. Throughput and cost per 1k bills are reported, and the prefix-cache hit rate is ≥ 80%.</li>
+<li>In a chaos test with the bulk job at full load, interactive p95 TTFT degrades by ≤ 10%. This is achieved with priority classes or separate pools.</li>
+<li>A dashboard shows goodput, <code>num_requests_waiting</code>, KV usage, preemptions, and cost per 1k items.</li>
+</ul>
+<p><strong>Step-by-step</strong></p>
+<ol>
+<li>Replay production traces (lengths and inter-arrivals) with 08.03&#39;s load generator. Sweep B and fit $t_0$ and $k$.</li>
+<li>Derive the B cap from the ITL SLO and a token budget from TTFT targets. Validate with the simulator (§5.3), then with real load.</li>
+<li>Build the bulk consumer: sort by prefix and length, use <code>LLM.generate</code> in chunks of about 2k prompts, upsert results idempotently, commit offsets after persisting, and send failures to a DLQ.</li>
+<li>Isolate traffic with either (a) a separate node pool with KEDA scaling to zero outside batch windows (08.03 §6.2), or (b) priority scheduling on a shared pool. Measure both options.</li>
+<li>Run the chaos test, then tune and document the chosen isolation strategy.</li>
+</ol>
+<hr>
+<h2 id="8-foundational-papers-and-tooling"><a class="anchor" href="#8-foundational-papers-and-tooling">#</a> 8. Foundational Papers and Tooling</h2>
+<p><strong>Papers (exact titles)</strong></p>
+<ul>
+<li>Frantar et al., 2022 — <em>GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers</em></li>
+<li>Frantar &amp; Alistarh, 2022 — <em>Optimal Brain Compression: A Framework for Accurate Post-Training Quantization and Pruning</em></li>
+<li>Lin et al., 2023 — <em>AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration</em></li>
+<li>Xiao et al., 2022 — <em>SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models</em></li>
+<li>Dettmers et al., 2022 — <em>LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale</em></li>
+<li>Dettmers et al., 2023 — <em>QLoRA: Efficient Finetuning of Quantized LLMs</em></li>
+<li>Ashkboos et al., 2024 — <em>QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs</em></li>
+<li>Liu et al., 2024 — <em>SpinQuant: LLM Quantization with Learned Rotations</em></li>
+<li>Micikevicius et al., 2022 — <em>FP8 Formats for Deep Learning</em></li>
+<li>Rouhani et al., 2023 — <em>Microscaling Data Formats for Deep Learning</em></li>
+<li>Liu et al., 2024 — <em>KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache</em></li>
+<li>Kurtic et al., 2024 — <em>&quot;Give Me BF16 or Give Me Death&quot;? Accuracy-Performance Trade-Offs in LLM Quantization</em></li>
+<li>Yu et al., 2022 — <em>Orca: A Distributed Serving System for Transformer-Based Generative Models</em></li>
+<li>Kwon et al., 2023 — <em>Efficient Memory Management for Large Language Model Serving with PagedAttention</em></li>
+<li>Agrawal et al., 2024 — <em>Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve</em></li>
+<li>Zhong et al., 2024 — <em>DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving</em></li>
+<li>Williams, Waterman &amp; Patterson, 2009 — <em>Roofline: An Insightful Visual Performance Model for Multicore Architectures</em></li>
+</ul>
+<p><strong>Tooling</strong></p>
+<ul>
+<li><strong>Producing checkpoints:</strong> LLM Compressor + <code>compressed-tensors</code> (vLLM), NVIDIA TensorRT Model Optimizer (ModelOpt), AutoAWQ/AutoGPTQ (legacy; prefer LLM Compressor), Intel AutoRound, bitsandbytes (QLoRA / on-the-fly 4/8-bit), llama.cpp GGUF quantizers, MLX.</li>
+<li><strong>Kernels and engines:</strong> vLLM (Marlin/Machete W4A16, FP8/FP4 CUTLASS kernels), TensorRT-LLM, SGLang.</li>
+<li><strong>Evaluation:</strong> lm-evaluation-harness, your 06.01 eval harness, vLLM <code>benchmarks/</code> and GuideLLM for load, NVIDIA Nsight Systems for profiling.</li>
+<li><strong>Batch and bulk:</strong> vLLM offline <code>LLM</code> API, Ray Data + vLLM, provider Batch APIs, Kafka consumers with DLQ.</li>
+</ul>
+<p><strong>Image prompt (roofline figure):</strong> <em>&quot;Clean technical roofline chart on white background: log-log axes, x = arithmetic intensity (FLOP/byte), y = attainable TFLOPS. A sloped memory-bandwidth line meets a flat compute ceiling at a labeled &#39;ridge point ≈ 295 FLOP/byte (H100 BF16)&#39;. Plot three dots per format (BF16, FP8, INT4-W4A16) at batch sizes 1, 32, 256, colour-coded; INT4 dots cross the ridge earliest. Annotate &#39;decode = memory-bound&#39;, &#39;large-batch prefill = compute-bound&#39;. Minimal flat style, sans-serif labels.&quot;</em></p>
+<p><strong>Image prompt (continuous batching):</strong> <em>&quot;Side-by-side timeline diagram. Left &#39;static batching&#39;: 4 GPU slot rows with requests of varying length as coloured bars; after short requests finish, grey idle gaps until the longest finishes; queued requests wait outside. Right &#39;continuous batching&#39;: same slots, new requests slot in immediately as others finish, no gaps. Labels: &#39;iteration-level scheduling&#39;, &#39;idle slots&#39;, &#39;queue&#39;. Flat vector style, white background.&quot;</em></p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./08-03-vllm-tgi.html"><span>← Previous</span><b>03 vllm tgi</b></a>
+      <a class="next" href="./08-05-production-lifecycle.html"><span>Next →</span><b>05 production lifecycle</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#6d28d9", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#6d28d9", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Function Calling Deep Dive — OpenAI, Anthropic, Gemini — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/13-tools-and-protocols/02-function-calling-deep-dive/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Tools &amp; Protocols</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Tools &amp; Protocols</div>
+    <h1 class="lesson-title">Function Calling Deep Dive — OpenAI, Anthropic, Gemini</h1>
+    <p class="lesson-sub">The three frontier providers converged on the same tool-call loop in 2024 and then diverged on everything else. OpenAI uses `tools` and `tool_calls`. Anthropic uses `tool_use` and `tool_result` blocks. Gemini uses `functionDeclarations` and unique-id correlation. This lesson diffs the three side by side so code that ships on one provider does not break when you port it.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python (stdlib, schema translators)</b></div><div><span>Prerequisites</span><b>Phase 13 · 01 (the tool interface)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Tools &amp; Protocols 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="41.3" y="42.7" width="33.3" height="33.3" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(234 57.9 59.4)"/>
+        <rect x="36.5" y="38.4" width="32.1" height="32.1" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(216 52.5 54.5)"/>
+        <rect x="31.7" y="34.1" width="30.8" height="30.8" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(198 47.1 49.5)"/>
+        <rect x="26.9" y="129.9" width="29.5" height="29.5" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(181 41.7 144.6)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TOOLS &amp; PROTOCOLS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Function Calling</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Deep Dive — OpenAI…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>State the three shape differences between OpenAI, Anthropic, and Gemini function-calling payloads (declaration, call, result).</li>
+<li>Translate one tool declaration across all three provider formats and predict where strict-mode constraints will differ.</li>
+<li>Use <code>tool_choice</code> in each provider to force, forbid, or auto-pick tool calls.</li>
+<li>Know the per-provider hard limits (tool count, schema depth, argument length) and the error signatures each one emits when limits are violated.</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The shape of a function-calling request differs by provider. Three concrete examples from 2026 production stacks:</p>
+<p><strong>OpenAI Chat Completions / Responses API.</strong> You pass <code>tools: [{type: &quot;function&quot;, function: {name, description, parameters, strict}}]</code>. The model&#39;s response contains <code>choices[0].message.tool_calls: [{id, type: &quot;function&quot;, function: {name, arguments}}]</code> where <code>arguments</code> is a JSON string you must parse. Strict mode (<code>strict: true</code>) enforces schema compliance via constrained decoding.</p>
+<p><strong>Anthropic Messages API.</strong> You pass <code>tools: [{name, description, input_schema}]</code>. The response comes back as <code>content: [{type: &quot;text&quot;}, {type: &quot;tool_use&quot;, id, name, input}]</code>. <code>input</code> is already parsed (an object, not a string). You reply with a new <code>user</code> message containing a <code>{type: &quot;tool_result&quot;, tool_use_id, content}</code> block.</p>
+<p><strong>Google Gemini API.</strong> You pass <code>tools: [{functionDeclarations: [{name, description, parameters}]}]</code> (nested under <code>functionDeclarations</code>). The response arrives as <code>candidates[0].content.parts: [{functionCall: {name, args, id}}]</code> where <code>id</code> is unique in Gemini 3 and up for parallel-call correlation. You reply with <code>{functionResponse: {name, id, response}}</code>.</p>
+<p>Same loop. Different field names, different nesting, different string-vs-object conventions, different correlation mechanisms. A team that writes a weather agent on OpenAI pays a two-day port to Anthropic and another day to Gemini just for the plumbing.</p>
+<p>This lesson builds a translator that unifies the three formats into one canonical tool declaration and routes at the edge. Phase 13 · 17 generalizes the same pattern into an LLM gateway.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-common-structure"><a class="anchor" href="#the-common-structure">#</a> The common structure</h3>
+<p>Every provider needs five things:</p>
+<ol>
+<li><strong>Tool list.</strong> Per-tool name, description, and input schema.</li>
+<li><strong>Tool choice.</strong> Force a specific tool, forbid tools, or let the model decide.</li>
+<li><strong>Call emission.</strong> Structured output naming the tool and arguments.</li>
+<li><strong>Call id.</strong> Correlate the response to the right call (matters for parallel).</li>
+<li><strong>Result injection.</strong> A message or block that ties the result back to the call.</li>
+</ol>
+<h3 id="shape-diffs-field-by-field"><a class="anchor" href="#shape-diffs-field-by-field">#</a> Shape diffs, field by field</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>OpenAI</th>
+<th>Anthropic</th>
+<th>Gemini</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Declaration envelope</td>
+<td><code>{type: &quot;function&quot;, function: {...}}</code></td>
+<td><code>{name, description, input_schema}</code></td>
+<td><code>{functionDeclarations: [{...}]}</code></td>
+</tr>
+<tr>
+<td>Schema field</td>
+<td><code>parameters</code></td>
+<td><code>input_schema</code></td>
+<td><code>parameters</code></td>
+</tr>
+<tr>
+<td>Response container</td>
+<td><code>tool_calls[]</code> on assistant message</td>
+<td><code>content[]</code> of type <code>tool_use</code></td>
+<td><code>parts[]</code> of type <code>functionCall</code></td>
+</tr>
+<tr>
+<td>Arguments type</td>
+<td>stringified JSON</td>
+<td>parsed object</td>
+<td>parsed object</td>
+</tr>
+<tr>
+<td>Id format</td>
+<td><code>call_...</code> (OpenAI generates)</td>
+<td><code>toolu_...</code> (Anthropic)</td>
+<td>UUID (Gemini 3+)</td>
+</tr>
+<tr>
+<td>Result block</td>
+<td>role <code>tool</code>, <code>tool_call_id</code></td>
+<td><code>user</code> with <code>tool_result</code>, <code>tool_use_id</code></td>
+<td><code>functionResponse</code> with matching <code>id</code></td>
+</tr>
+<tr>
+<td>Force-a-tool</td>
+<td><code>tool_choice: {type: &quot;function&quot;, function: {name}}</code></td>
+<td><code>tool_choice: {type: &quot;tool&quot;, name}</code></td>
+<td><code>tool_config: {function_calling_config: {mode: &quot;ANY&quot;}}</code></td>
+</tr>
+<tr>
+<td>Forbid tools</td>
+<td><code>tool_choice: &quot;none&quot;</code></td>
+<td><code>tool_choice: {type: &quot;none&quot;}</code></td>
+<td><code>mode: &quot;NONE&quot;</code></td>
+</tr>
+<tr>
+<td>Strict schema</td>
+<td><code>strict: true</code></td>
+<td>schema-is-schema (always enforced)</td>
+<td><code>responseSchema</code> at request level</td>
+</tr>
+</tbody></table>
+<h3 id="limits-you-will-actually-hit"><a class="anchor" href="#limits-you-will-actually-hit">#</a> Limits you will actually hit</h3>
+<ul>
+<li><strong>OpenAI.</strong> 128 tools per request. Schema depth 5. Argument string &lt;= 8192 bytes. Strict mode requires no <code>$ref</code>, no <code>oneOf</code>/<code>anyOf</code>/<code>allOf</code> with overlap, every property listed in <code>required</code>.</li>
+<li><strong>Anthropic.</strong> 64 tools per request. Schema depth effectively unbounded but practical limit 10. No strict-mode flag; schema is a contract and the model tends to comply.</li>
+<li><strong>Gemini.</strong> 64 functions per request. Schema types are OpenAPI 3.0 subset (slight divergence from JSON Schema 2020-12). Parallel calls unique-id since Gemini 3.</li>
+</ul>
+<h3 id="tool_choice-behavior"><a class="anchor" href="#tool_choice-behavior">#</a> <code>tool_choice</code> behavior</h3>
+<p>Three modes everyone supports, named differently.</p>
+<ul>
+<li><strong>Auto.</strong> Model picks tool or text. Default.</li>
+<li><strong>Required / Any.</strong> Model must call at least one tool.</li>
+<li><strong>None.</strong> Model must not call tools.</li>
+</ul>
+<p>Plus one mode unique to each provider:</p>
+<ul>
+<li><strong>OpenAI.</strong> Force a specific tool by name.</li>
+<li><strong>Anthropic.</strong> Force a specific tool by name; <code>disable_parallel_tool_use</code> flag separates single vs multi.</li>
+<li><strong>Gemini.</strong> <code>mode: &quot;VALIDATED&quot;</code> routes every response through a schema validator regardless of model intent.</li>
+</ul>
+<h3 id="parallel-calls"><a class="anchor" href="#parallel-calls">#</a> Parallel calls</h3>
+<p>OpenAI&#39;s <code>parallel_tool_calls: true</code> (default) emits multiple calls in one assistant message. You run them all and reply with a batched tool-role message containing one entry per <code>tool_call_id</code>. Anthropic historically did single-call; <code>disable_parallel_tool_use: false</code> (default as of Claude 3.5) enables multi. Gemini 2 allowed parallel calls but did not give stable ids; Gemini 3 adds UUIDs so out-of-order responses correlate cleanly.</p>
+<h3 id="streaming"><a class="anchor" href="#streaming">#</a> Streaming</h3>
+<p>All three support streamed tool calls. The wire format differs:</p>
+<ul>
+<li><strong>OpenAI.</strong> Delta chunks of <code>tool_calls[i].function.arguments</code> arrive incrementally. You accumulate until <code>finish_reason: &quot;tool_calls&quot;</code>.</li>
+<li><strong>Anthropic.</strong> Block-start / block-delta / block-stop events. <code>input_json_delta</code> chunks carry partial arguments.</li>
+<li><strong>Gemini.</strong> <code>streamFunctionCallArguments</code> (new in Gemini 3) emits chunks with a <code>functionCallId</code> so multiple parallel calls can interleave.</li>
+</ul>
+<p>Phase 13 · 03 goes deep on parallel + streaming reassembly. This lesson focuses on the declaration and single-call shapes.</p>
+<h3 id="errors-and-repair"><a class="anchor" href="#errors-and-repair">#</a> Errors and repair</h3>
+<p>Invalid-argument errors look different too.</p>
+<ul>
+<li><strong>OpenAI (non-strict).</strong> Model returns <code>arguments: &quot;{bad json}&quot;</code>, your JSON parse fails, you inject an error message and re-call.</li>
+<li><strong>OpenAI (strict).</strong> Validation happens during decoding; invalid JSON is impossible but <code>refusal</code> can appear.</li>
+<li><strong>Anthropic.</strong> <code>input</code> may contain unexpected fields; schema is advisory. Validate server-side.</li>
+<li><strong>Gemini.</strong> OpenAPI 3.0 quirk: <code>enum</code> on object fields silently ignored; validate yourself.</li>
+</ul>
+<h3 id="the-translator-pattern"><a class="anchor" href="#the-translator-pattern">#</a> The translator pattern</h3>
+<p>A canonical tool declaration in your code looks like this (you pick the shape):</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">Tool(
+    name=&quot;get_weather&quot;,
+    description=&quot;Use when ...&quot;,
+    input_schema={&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {...}, &quot;required&quot;: [...]},
+    strict=True,
+)</code></pre>
+      </div>
+    <p>Three tiny functions translate it to the three provider shapes. The harness in <code>code/main.py</code> does exactly this, then round-trips a fake tool call through each provider&#39;s response shape. No network required — this lesson teaches the shapes, not the HTTP.</p>
+<p>Production teams wrap this translator in <code>AbstractToolset</code> (Pydantic AI), <code>UniversalToolNode</code> (LangGraph), or <code>BaseTool</code> (LlamaIndex). Phase 13 · 17 ships a gateway that exposes an OpenAI-shaped API in front of any of the three.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">function-call-args</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> defines one canonical <code>Tool</code> dataclass and three translators that emit the OpenAI, Anthropic, and Gemini declaration JSON. It then parses a hand-crafted provider response of each shape into the same canonical call object, demonstrating that the semantics are identical under the skin. Run it and diff the three declarations side by side.</p>
+<p>What to look at:</p>
+<ul>
+<li>The three declaration blocks differ only in envelope and field names.</li>
+<li>The three response blocks differ in where the call lives (top-level <code>tool_calls</code>, <code>content[]</code> block, <code>parts[]</code> entry).</li>
+<li>One <code>canonical_call()</code> function extracts <code>{id, name, args}</code> from all three response shapes.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-provider-portability-audit.md</code>. Given a function-calling integration against one provider, the skill produces a portability audit: which provider limits it relies on, which fields need renaming, and what breaks when ported to each other provider.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Run <code>code/main.py</code> and verify that the three provider declaration JSONs all serialize the same underlying <code>Tool</code> object. Modify the canonical tool to add an enum parameter and confirm only the Gemini translator needs to handle the OpenAPI quirk.</p>
+</li>
+<li><p>Add a <code>ListToolsResponse</code> parser for each provider that extracts the tool list a model returns after a <code>list_tools</code> or discovery call. OpenAI does not have one natively; note this asymmetry.</p>
+</li>
+<li><p>Implement <code>tool_choice</code> conversion: map a canonical <code>ToolChoice(mode=&quot;force&quot;, tool_name=&quot;x&quot;)</code> into all three provider shapes. Then map <code>mode=&quot;any&quot;</code> and <code>mode=&quot;none&quot;</code>. Check the lesson&#39;s diff table.</p>
+</li>
+<li><p>Pick one of the three providers and read its function-calling guide end to end. Find one field in its schema spec that the other two do not support. Candidates: OpenAI <code>strict</code>, Anthropic <code>disable_parallel_tool_use</code>, Gemini <code>function_calling_config.allowed_function_names</code>.</p>
+</li>
+<li><p>Write a test vector: a tool call whose arguments violate the declared schema. Run it through each provider&#39;s validator (the stdlib one in Lesson 01 will do as a proxy) and record which errors fire. Document which provider you would use in production for strictness.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Function calling</td>
+<td>&quot;Tool use&quot;</td>
+<td>Provider-level API for structured tool-call emission</td>
+</tr>
+<tr>
+<td>Tool declaration</td>
+<td>&quot;Tool spec&quot;</td>
+<td>Name + description + JSON Schema input payload</td>
+</tr>
+<tr>
+<td><code>tool_choice</code></td>
+<td>&quot;Force / forbid&quot;</td>
+<td>Auto / required / none / specific-name modes</td>
+</tr>
+<tr>
+<td>Strict mode</td>
+<td>&quot;Schema enforcement&quot;</td>
+<td>OpenAI flag that constrains decoding to match schema</td>
+</tr>
+<tr>
+<td><code>tool_use</code> block</td>
+<td>&quot;Anthropic&#39;s call shape&quot;</td>
+<td>Inline content block with id, name, input</td>
+</tr>
+<tr>
+<td><code>functionCall</code> part</td>
+<td>&quot;Gemini&#39;s call shape&quot;</td>
+<td>A <code>parts[]</code> entry containing name, args, and id</td>
+</tr>
+<tr>
+<td>Arguments-as-string</td>
+<td>&quot;Stringified JSON&quot;</td>
+<td>OpenAI returns args as a JSON string, not an object</td>
+</tr>
+<tr>
+<td>Parallel tool calls</td>
+<td>&quot;Fan-out in one turn&quot;</td>
+<td>Multiple tool calls in one assistant message</td>
+</tr>
+<tr>
+<td>Refusal</td>
+<td>&quot;Model declines&quot;</td>
+<td>Strict-mode-only refusal block instead of a call</td>
+</tr>
+<tr>
+<td>OpenAPI 3.0 subset</td>
+<td>&quot;Gemini schema quirk&quot;</td>
+<td>Gemini uses a JSON-Schema-like dialect with minor differences</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://platform.openai.com/docs/guides/function-calling">OpenAI — Function calling guide</a> — canonical reference including strict mode and parallel calls</li>
+<li><a href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview">Anthropic — Tool use overview</a> — <code>tool_use</code> and <code>tool_result</code> block semantics</li>
+<li><a href="https://ai.google.dev/gemini-api/docs/function-calling">Google — Gemini function calling</a> — parallel calls, unique ids, and OpenAPI subset</li>
+<li><a href="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling">Vertex AI — Function calling reference</a> — Gemini&#39;s enterprise surface</li>
+<li><a href="https://platform.openai.com/docs/guides/structured-outputs">OpenAI — Structured outputs</a> — strict-mode schema enforcement details</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-the-tool-interface.html"><span>← Previous</span><b>the tool interface</b></a>
+      <a class="next" href="./03-parallel-and-streaming-tool-calls.html"><span>Next →</span><b>parallel and streaming tool calls</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

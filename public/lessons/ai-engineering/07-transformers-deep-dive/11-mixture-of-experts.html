@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mixture of Experts (MoE) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/07-transformers-deep-dive/11-mixture-of-experts/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Transformers Deep Dive</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Transformers Deep Dive</div>
+    <h1 class="lesson-title">Mixture of Experts (MoE)</h1>
+    <p class="lesson-sub">A dense 70B transformer activates every parameter for every token. A 671B MoE activates only 37B per token and beats it on every benchmark. Sparsity is the most important scaling idea of the decade.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 7 · 05 (Full Transformer), Phase 7 · 07 (GPT)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Transformers Deep Dive 11">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="20.8" y="124.3" width="27.8" height="27.8" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(158 34.7 138.3)"/>
+        <rect x="16.0" y="120.1" width="26.6" height="26.6" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(140 29.3 133.3)"/>
+        <circle cx="23.8" cy="128.4" r="12.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">11</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">TRANSFORMERS DEEP DIVE</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Mixture of Experts</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(MoE)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>A dense transformer&#39;s FLOPs at inference equal its parameter count (times 2 for forward pass). Scale up a dense model and every token pays the full bill. By 2024 the frontier was hitting a compute wall: to be meaningfully smarter, you needed exponentially more FLOPs per token.</p>
+<p>Mixture of Experts breaks this link. Replace each FFN with <code>E</code> independent experts + a router that picks <code>k</code> experts per token. Total parameters = <code>E × FFN_size</code>. Active parameters per token = <code>k × FFN_size</code>. Typical 2026 configuration: <code>E=256</code>, <code>k=8</code>. Storage scales with <code>E</code>, compute scales with <code>k</code>.</p>
+<p>The 2026 frontier is almost entirely MoE: DeepSeek-V3 (671B total / 37B active), Mixtral 8×22B, Qwen2.5-MoE, Llama 4, Kimi K2, gpt-oss. On Artificial Analysis&#39;s independent leaderboard, the top 10 open-source models are all MoE.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/07-transformers-deep-dive/11-mixture-of-experts/assets/moe.svg" alt="MoE layer: router selects k of E experts per token" loading="lazy" /></figure></p>
+<h3 id="the-ffn-swap"><a class="anchor" href="#the-ffn-swap">#</a> The FFN swap</h3>
+<p>Dense transformer block:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">h = x + attn(norm(x))
+h = h + FFN(norm(h))</code></pre>
+      </div>
+    <p>MoE block:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">h = x + attn(norm(x))
+scores = router(norm(h))              # (N_tokens, E)
+top_k = argmax_k(scores)              # pick k of E per token
+h = h + sum_{e in top_k}(
+        gate(scores[e]) * Expert_e(norm(h))
+    )</code></pre>
+      </div>
+    <p>Every expert is an independent FFN (typically SwiGLU). The router is a single linear layer. Each token picks its own <code>k</code> experts and gets a gated mixture of their outputs.</p>
+<h3 id="the-load-balancing-problem"><a class="anchor" href="#the-load-balancing-problem">#</a> The load-balancing problem</h3>
+<p>If the router puts 90% of tokens through expert 3, the other experts starve. Three fixes have been tried:</p>
+<ol>
+<li><strong>Auxiliary load-balancing loss</strong> (Switch Transformer, Mixtral). Add a penalty proportional to the variance in expert usage. Works, but adds a hyperparameter and a second gradient signal.</li>
+<li><strong>Expert capacity + token dropping</strong> (early Switch). Each expert processes at most <code>C × N/E</code> tokens; overflow tokens skip the layer. Hurts quality.</li>
+<li><strong>Auxiliary-loss-free balancing</strong> (DeepSeek-V3). Add a learned per-expert bias that shifts the router&#39;s top-k selection. Bias is updated outside the training loss. No penalty on the main objective. 2024&#39;s big unlock.</li>
+</ol>
+<p>DeepSeek-V3&#39;s approach: after each training step, for every expert, check if its usage is above or below the target. Nudge the bias by <code>±γ</code>. Selection uses <code>scores + bias</code>. Expert probabilities used for gating are the raw <code>scores</code> unchanged. Decouples routing from expression.</p>
+<h3 id="shared-experts"><a class="anchor" href="#shared-experts">#</a> Shared experts</h3>
+<p>DeepSeek-V2/V3 also split experts into <em>shared</em> and <em>routed</em>. Every token passes through all shared experts. Routed experts are picked via top-k. Shared experts capture common knowledge; routed experts specialize. V3 runs 1 shared expert plus top-8 of 256 routed.</p>
+<h3 id="fine-grained-experts"><a class="anchor" href="#fine-grained-experts">#</a> Fine-grained experts</h3>
+<p>Classic MoE (GShard, Switch): each expert is as wide as a full FFN. <code>E</code> is small (8–64), <code>k</code> is small (1–2).</p>
+<p>Modern fine-grained MoE (DeepSeek-V3, Qwen-MoE): each expert is narrower (1/8 FFN size). <code>E</code> is large (256+), <code>k</code> is larger (8+). Same total parameters, but combinations scale much faster. <code>C(256, 8) = 400 trillion</code> possible &quot;experts&quot; per token. Quality goes up, latency stays flat.</p>
+<h3 id="the-cost-profile"><a class="anchor" href="#the-cost-profile">#</a> The cost profile</h3>
+<p>Per token, per layer:</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th>Active params / token</th>
+<th>Total params</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Mixtral 8×22B</td>
+<td>~39B</td>
+<td>141B</td>
+</tr>
+<tr>
+<td>Llama 3 70B (dense)</td>
+<td>70B</td>
+<td>70B</td>
+</tr>
+<tr>
+<td>DeepSeek-V3</td>
+<td>37B</td>
+<td>671B</td>
+</tr>
+<tr>
+<td>Kimi K2 (MoE)</td>
+<td>~32B</td>
+<td>1T</td>
+</tr>
+</tbody></table>
+<p>DeepSeek-V3 beats Llama 3 70B (dense) on almost every benchmark while doing <strong>fewer active FLOPs per token</strong>. More parameters = more knowledge. More active FLOPs = more compute per token. MoE decouples them.</p>
+<h3 id="the-catch-memory"><a class="anchor" href="#the-catch-memory">#</a> The catch: memory</h3>
+<p>All experts live on GPU regardless of which ones fire. A 671B model needs ~1.3 TB of VRAM for fp16 weights. Frontier MoE deployment requires expert parallelism — shard experts across GPUs, route tokens across the network. Latency is dominated by the all-to-all communication, not the matmul.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">expert-routing</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>See <code>code/main.py</code>. A compact MoE layer in pure stdlib with:</p>
+<ul>
+<li><code>n_experts=8</code> SwiGLU-ish experts (one linear each, for illustration)</li>
+<li>top-k=2 routing</li>
+<li>softmax-normalized gating weights</li>
+<li>auxiliary-loss-free balancing via per-expert bias</li>
+</ul>
+<h3 id="step-1-the-router"><a class="anchor" href="#step-1-the-router">#</a> Step 1: the router</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def route(hidden, W_router, top_k, bias):
+    scores = [sum(h * w for h, w in zip(hidden, W_router[e])) for e in range(len(W_router))]
+    biased = [s + b for s, b in zip(scores, bias)]
+    top_idx = sorted(range(len(biased)), key=lambda i: -biased[i])[:top_k]
+    # softmax over ORIGINAL scores of the chosen experts
+    chosen = [scores[i] for i in top_idx]
+    m = max(chosen)
+    exps = [math.exp(c - m) for c in chosen]
+    s = sum(exps)
+    gates = [e / s for e in exps]
+    return top_idx, gates</code></pre>
+      </div>
+    <p>Bias affects selection, not gate weight. That is the DeepSeek-V3 trick — bias corrects load imbalance without steering the model&#39;s predictions.</p>
+<h3 id="step-2-run-100-tokens-through-the-router"><a class="anchor" href="#step-2-run-100-tokens-through-the-router">#</a> Step 2: run 100 tokens through the router</h3>
+<p>Track which experts fire how often. Without the bias, usage is skewed. With a bias update loop (<code>-γ</code> for over-used experts, <code>+γ</code> for under-used), usage converges to a uniform distribution over a few iterations.</p>
+<h3 id="step-3-param-count-comparison"><a class="anchor" href="#step-3-param-count-comparison">#</a> Step 3: param count comparison</h3>
+<p>Print the &quot;dense equivalent&quot; of an MoE config. DeepSeek-V3-shaped: 256 routed + 1 shared, 8 active, d_model=7168. The total parameter count is eye-watering. The active count is a seventh of a dense Llama 3 70B.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>HuggingFace loading:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from transformers import AutoModelForCausalLM, AutoTokenizer
+model = AutoModelForCausalLM.from_pretrained(&quot;mistralai/Mixtral-8x22B-v0.1&quot;)</code></pre>
+      </div>
+    <p>2026 production inference: vLLM supports MoE routing natively. SGLang has the fastest expert-parallel path. Both automatically handle top-k selection and expert parallelism.</p>
+<p><strong>When to pick MoE:</strong></p>
+<ul>
+<li>You want frontier quality at lower inference cost per token.</li>
+<li>You have the VRAM / expert-parallel infrastructure.</li>
+<li>Your workload is token-heavy (chat, code) not context-heavy (long docs).</li>
+</ul>
+<p><strong>When NOT to pick MoE:</strong></p>
+<ul>
+<li>Edge deployment — you pay full storage for any active FLOP.</li>
+<li>Latency-critical single-user serving — expert routing adds overhead.</li>
+<li>Small models (&lt;7B) — MoE&#39;s quality advantage only appears above a compute threshold (~6B active params).</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>See <code>outputs/skill-moe-configurator.md</code>. The skill picks E, k, and shared-expert layout for a new MoE given parameter budget, training tokens, and deployment target.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Watch how the auxiliary-loss-free bias update evens out expert usage over 50 iterations.</li>
+<li><strong>Medium.</strong> Replace the learned router with a hash-based router (deterministic, no learning). Compare quality and balance. Why is the learned router better?</li>
+<li><strong>Hard.</strong> Implement GRPO-style &quot;rollout-matched routing&quot; (DeepSeek-V3.2 trick): log which experts fire during inference, force the same routing during gradient computation. Measure the effect on a toy policy-gradient setup.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Expert</td>
+<td>&quot;One FFN among many&quot;</td>
+<td>An independent feed-forward network; parameters dedicated to a sparse slice of the FFN computation.</td>
+</tr>
+<tr>
+<td>Router</td>
+<td>&quot;The gate&quot;</td>
+<td>A tiny linear layer that scores each token against each expert; top-k selection.</td>
+</tr>
+<tr>
+<td>Top-k routing</td>
+<td>&quot;k active experts per token&quot;</td>
+<td>Each token&#39;s FFN computation goes through exactly k experts, weighted by gate.</td>
+</tr>
+<tr>
+<td>Auxiliary loss</td>
+<td>&quot;Load-balance penalty&quot;</td>
+<td>Extra loss term that penalizes skewed expert usage.</td>
+</tr>
+<tr>
+<td>Auxiliary-loss-free</td>
+<td>&quot;DeepSeek-V3&#39;s trick&quot;</td>
+<td>Balance via per-expert bias on the router&#39;s selection only; no extra gradient.</td>
+</tr>
+<tr>
+<td>Shared expert</td>
+<td>&quot;Always on&quot;</td>
+<td>Extra expert through which every token passes; captures common knowledge.</td>
+</tr>
+<tr>
+<td>Expert parallelism</td>
+<td>&quot;Shard by expert&quot;</td>
+<td>Distribute different experts to different GPUs; route tokens across the network.</td>
+</tr>
+<tr>
+<td>Sparsity</td>
+<td>&quot;Active params &lt; total params&quot;</td>
+<td>The ratio <code>k × expert_size / (E × expert_size)</code>; 37/671 ≈ 5.5% for DeepSeek-V3.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017). Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer</a> — the idea.</li>
+<li><a href="https://arxiv.org/abs/2101.03961">Fedus, Zoph, Shazeer (2022). Switch Transformer: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity</a> — Switch, the classic MoE.</li>
+<li><a href="https://arxiv.org/abs/2401.04088">Jiang et al. (2024). Mixtral of Experts</a> — Mixtral 8×7B.</li>
+<li><a href="https://arxiv.org/abs/2412.19437">DeepSeek-AI (2024). DeepSeek-V3 Technical Report</a> — MLA + auxiliary-loss-free MoE + MTP.</li>
+<li><a href="https://arxiv.org/abs/2408.15664">Wang et al. (2024). Auxiliary-Loss-Free Load Balancing Strategy for Mixture-of-Experts</a> — the bias-based balancing paper.</li>
+<li><a href="https://arxiv.org/abs/2401.06066">Dai et al. (2024). DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models</a> — the fine-grained + shared-expert split this lesson&#39;s router uses.</li>
+<li><a href="https://arxiv.org/abs/2201.05596">Kim et al. (2022). DeepSpeed-MoE: Advancing Mixture-of-Experts Inference and Training</a> — original shared-expert paper.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./10-audio-transformers-whisper.html"><span>← Previous</span><b>audio transformers whisper</b></a>
+      <a class="next" href="./12-kv-cache-flash-attention.html"><span>Next →</span><b>kv cache flash attention</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Function Call Dispatcher — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/19-capstone-projects/23-function-call-dispatcher/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Capstone Projects</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#where-the-dispatcher-sits">Where the dispatcher sits</a></li><li><a href="#timeouts">Timeouts</a></li><li><a href="#retries-with-exponential-backoff">Retries with exponential backoff</a></li><li><a href="#idempotency-key-dedupe">Idempotency key dedupe</a></li><li><a href="#error-envelope">Error envelope</a></li><li><a href="#concurrency-limit-on-fan-out">Concurrency limit on fan-out</a></li><li><a href="#flow-for-one-call">Flow for one call</a></li><li><a href="#how-to-read-the-code">How to read the code</a></li><li><a href="#going-further">Going further</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Capstone Projects</div>
+    <h1 class="lesson-title">Function Call Dispatcher</h1>
+    <p class="lesson-sub">The dispatcher is where the harness pays for every promise the schema made. Timeouts, retries, dedupe, error mapping. All on one seam.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 13 lessons 01-07, Phase 14 lesson 01</b></div><div><span>Time</span><b>~90 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Capstone Projects 23">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="33.2" y="35.5" width="31.2" height="31.2" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(204 48.8 51.1)"/>
+        <rect x="28.4" y="31.2" width="29.9" height="29.9" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(186 43.3 46.1)"/>
+        <rect x="23.6" y="126.9" width="28.6" height="28.6" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(168 37.9 141.2)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">23</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">CAPSTONE PROJECTS</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Function Call</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Dispatcher</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Wrap a tool handler in a per-call timeout that returns a typed error instead of hanging the loop.</li>
+<li>Apply exponential backoff retry with jitter and a maximum attempt count.</li>
+<li>Deduplicate retries on an idempotency key so a retry that races with a slow original does not run twice.</li>
+<li>Map handler exceptions and transport faults onto a single error envelope the harness loop already understands.</li>
+<li>Bound parallel dispatch with a concurrency limit so a fan-out of forty tool calls does not exhaust the event loop.</li>
+</ul>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">cf-dispatch-retry</code></pre>
+      </div>
+    <h2 id="where-the-dispatcher-sits"><a class="anchor" href="#where-the-dispatcher-sits">#</a> Where the dispatcher sits</h2>
+<p>Between the harness loop (lesson twenty) and the tool registry (lesson twenty-one). The transport (lesson twenty-two) feeds the loop. The loop hands a tool call to the dispatcher. The dispatcher calls the registry, runs the handler, and returns either a result or a JSON-RPC-shaped error envelope.</p>
+<div class="fig"><pre class="mermaid">flowchart TD
+    loop[harness loop]
+    disp[dispatcher]
+    reg[tool registry]
+    handler[handler]
+    loop --&gt; disp
+    disp --&gt;|get name| reg
+    disp --&gt;|validate args| reg
+    disp --&gt;|asyncio.wait_for handler args timeout| handler
+    handler --&gt;|success| disp
+    handler --&gt;|TimeoutError -&gt; retry or fail| disp
+    handler --&gt;|Exception -&gt; map to error code| disp
+    disp --&gt;|Ok result or DispatchError| loop</pre></div><p>The dispatcher is the only layer that knows about timers, retries, and idempotency. The loop does not. The registry does not. The handler does not. That isolation is the point.</p>
+<h2 id="timeouts"><a class="anchor" href="#timeouts">#</a> Timeouts</h2>
+<p>Each tool has a default timeout. The registry record carries <code>timeout_ms</code>. The dispatcher overrides it from a per-call override when the harness passes one. We use <code>asyncio.wait_for</code>. On timeout, the handler task is cancelled and the dispatcher returns <code>DispatchError(kind=&quot;timeout&quot;)</code>.</p>
+<p>A timeout is not a retryable error by default for non-idempotent tools. A <code>db.write</code> that timed out may or may not have committed. Retrying duplicates the write. The dispatcher honors the <code>idempotent</code> flag from the registry record. Idempotent tools retry. Non-idempotent tools do not.</p>
+<h2 id="retries-with-exponential-backoff"><a class="anchor" href="#retries-with-exponential-backoff">#</a> Retries with exponential backoff</h2>
+<p>The retry policy is three attempts maximum. Backoff is exponential with jitter.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">attempt 1  -&gt; delay 0
+attempt 2  -&gt; delay 0.1s * (1 + random[0..0.5])
+attempt 3  -&gt; delay 0.4s * (1 + random[0..0.5])</code></pre>
+      </div>
+    <p>Only <code>timeout</code> and <code>transient</code> errors retry. A <code>schema</code> error, a <code>not_found</code>, or an <code>internal</code> error does not retry. Schema errors are deterministic. Retrying does not change the outcome and burns the budget.</p>
+<p>The retry loop respects the budget from the harness. If the caller&#39;s budget has zero remaining tool calls, the dispatcher fails fast on the first attempt and returns <code>kind=&quot;budget_exceeded&quot;</code>.</p>
+<h2 id="idempotency-key-dedupe"><a class="anchor" href="#idempotency-key-dedupe">#</a> Idempotency key dedupe</h2>
+<p>A retry that fires while the original is still in flight is a real production bug. The first call hangs at four point nine seconds (just under the timeout). The retry fires at five seconds. Now two requests race against the same backend. If the tool is <code>payments.charge</code>, you charged twice.</p>
+<p>The dispatcher accepts an optional <code>idempotency_key</code>. If the same key is in flight when a call arrives, the dispatcher waits on the in-flight future and returns its result. The cache holds keys for sixty seconds after completion to absorb late retries.</p>
+<p>The key is the caller&#39;s responsibility. The harness derives it from the planner: <code>f&quot;{step_id}:{tool_name}:{hash(args)}&quot;</code>. The dispatcher does not invent keys, because deriving a key from arguments alone makes two semantically-different calls look the same.</p>
+<h2 id="error-envelope"><a class="anchor" href="#error-envelope">#</a> Error envelope</h2>
+<p>A failed dispatch returns a single shape.</p>
+
+      <div class="codeblock" data-lang="text">
+        <span class="cb-label">text</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-text hljs">DispatchError
+  kind        : &quot;timeout&quot; | &quot;transient&quot; | &quot;schema&quot; | &quot;not_found&quot; | &quot;internal&quot; | &quot;budget_exceeded&quot;
+  message     : str
+  attempts    : int
+  jsonrpc_code: int   (one of -32601, -32602, -32603)</code></pre>
+      </div>
+    <p>The harness loop maps <code>kind</code> to the next state. <code>schema</code> and <code>not_found</code> go to <code>on_error</code> and trigger a replan. <code>timeout</code> and <code>transient</code> go to <code>on_error</code> and may or may not replan depending on attempts. <code>budget_exceeded</code> triggers <code>on_budget_exceeded</code>.</p>
+<h2 id="concurrency-limit-on-fan-out"><a class="anchor" href="#concurrency-limit-on-fan-out">#</a> Concurrency limit on fan-out</h2>
+<p><code>gather(*calls)</code> runs all coroutines simultaneously. With forty tool calls, that is forty open sockets or forty subprocess pipes. Most backends do not like forty parallel connections from one client.</p>
+<p>The dispatcher wraps <code>gather</code> in a semaphore. Default concurrency limit is eight. Each call acquires the semaphore before dispatching and releases on completion. The caller sees <code>gather</code>-shaped output but the actual scheduling is bounded.</p>
+<h2 id="flow-for-one-call"><a class="anchor" href="#flow-for-one-call">#</a> Flow for one call</h2>
+<div class="fig"><pre class="mermaid">flowchart TD
+    start([caller: dispatch name, args, opts])
+    validate[registry.validate name, args]
+    schema_err[DispatchError kind=schema]
+    idem_check{idempotency cache?}
+    in_flight[await existing future]
+    cached[return cached result]
+    attempt[asyncio.wait_for handler args, timeout]
+    success[cache + return result]
+    timeout_branch{TimeoutError + idempotent?}
+    retry[retry with backoff]
+    fail[DispatchError]
+    transient_branch{TransientError?}
+    other[map Exception to kind, no retry]
+    exhausted[DispatchError]
+
+    start --&gt; validate
+    validate --&gt;|errors| schema_err
+    validate --&gt;|ok| idem_check
+    idem_check --&gt;|hit in flight| in_flight
+    idem_check --&gt;|hit recent| cached
+    idem_check --&gt;|miss| attempt
+    attempt --&gt; success
+    attempt --&gt; timeout_branch
+    timeout_branch --&gt;|yes| retry
+    timeout_branch --&gt;|no| fail
+    attempt --&gt; transient_branch
+    transient_branch --&gt;|yes, attempts left| retry
+    transient_branch --&gt;|exhausted| exhausted
+    attempt --&gt; other
+    retry --&gt; attempt</pre></div><h2 id="how-to-read-the-code"><a class="anchor" href="#how-to-read-the-code">#</a> How to read the code</h2>
+<p><code>code/main.py</code> defines <code>Dispatcher</code>, <code>DispatchError</code>, and <code>TransientError</code>. The dispatcher takes a registry on construction. The async <code>dispatch(name, args, ...)</code> is the only entry point. Per-attempt timeouts are applied inline inside <code>_run_with_retries</code> using <code>asyncio.wait_for</code>. <code>gather_bounded(calls)</code> runs many dispatches with the concurrency limit.</p>
+<p><code>code/tests/test_dispatcher.py</code> covers timeout firing, retry on transient, no-retry on schema error, idempotency dedupe (two concurrent calls with the same key collapse to one handler invocation), and concurrency limiting (the semaphore in action).</p>
+<p>The tests use <code>asyncio.sleep(0)</code> and deterministic <code>Counter</code>-based handlers, so they finish in milliseconds and do not depend on wall-clock timing.</p>
+<h2 id="going-further"><a class="anchor" href="#going-further">#</a> Going further</h2>
+<p>Two extensions production dispatchers add. First, structured logging at every transition (which the loop&#39;s event stream already gives you, but the dispatcher should also emit <code>dispatch.attempt</code> and <code>dispatch.retry</code> events). Second, circuit breakers: after N failures in a window, a tool gets a cool-down period where dispatches return immediately with <code>kind=&quot;circuit_open&quot;</code> instead of attempting the handler. Both fit on top of this dispatcher without changing the contract.</p>
+<p>Lesson twenty-four glues the dispatcher to a plan-and-execute agent so you see all four pieces in motion.</p>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./22-jsonrpc-stdio-transport.html"><span>← Previous</span><b>jsonrpc stdio transport</b></a>
+      <a class="next" href="./24-plan-execute-control-flow.html"><span>Next →</span><b>plan execute control flow</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

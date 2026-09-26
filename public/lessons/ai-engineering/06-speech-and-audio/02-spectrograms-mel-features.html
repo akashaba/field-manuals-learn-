@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spectrograms, Mel Scale &amp; Audio Features — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/06-speech-and-audio/02-spectrograms-mel-features/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Speech &amp; Audio</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#pitfalls-that-still-ship-in-2026">Pitfalls that still ship in 2026</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Speech &amp; Audio</div>
+    <h1 class="lesson-title">Spectrograms, Mel Scale &amp; Audio Features</h1>
+    <p class="lesson-sub">Neural nets do not consume raw waveforms well. They consume spectrograms. They consume mel spectrograms even better. Every ASR, TTS, and audio classifier in 2026 lives or dies by this single preprocessing choice.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 6 · 01 (Audio Fundamentals)</b></div><div><span>Time</span><b>~45 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Speech &amp; Audio 02">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="19.5" cy="124.5" r="12.1" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="124.1" cy="119.6" r="11.5" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="118.7" cy="114.6" r="10.8" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="113.3" cy="109.7" r="10.2" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="107.9" cy="104.8" r="9.6" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="102.4" cy="99.8" r="8.9" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">02</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="112" lengthAdjust="spacingAndGlyphs">SPEECH &amp; AUDIO</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Spectrograms, Mel</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Scale &amp; Audio…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Take a 10-second 16 kHz clip. That is 160,000 floats, all in <code>[-1, 1]</code>, almost perfectly uncorrelated with the label &quot;dog barking&quot; or &quot;the word cat&quot;. The raw waveform has the information but in a form the model cannot easily extract. Two identical phonemes spoken 100 ms apart have completely different raw samples.</p>
+<p>A spectrogram fixes this. It collapses the temporal detail where human perception ignores it (microsecond jitter) and preserves the structure where perception attends (which frequencies are energetic, over time windows of ~10–25 ms).</p>
+<p>Mel spectrograms push further. Humans perceive pitch logarithmically: 100 Hz vs 200 Hz sounds &quot;the same distance apart&quot; as 1000 Hz vs 2000 Hz. The mel scale warps the frequency axis to match. A mel-scaled spectrogram is the single most important feature in speech ML from 2010 through 2026.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/06-speech-and-audio/02-spectrograms-mel-features/assets/mel-features.svg" alt="Waveform to STFT to mel spectrogram to MFCC ladder" loading="lazy" /></figure></p>
+<p><strong>STFT (Short-Time Fourier Transform).</strong> Slice the waveform into overlapping frames (typical: 25 ms window, 10 ms hop = 400 samples / 160 samples at 16 kHz). Multiply each frame by a window function (Hann is the default; Hamming slightly different tradeoff). FFT each frame. Stack the magnitude spectra into a matrix of shape <code>(n_frames, n_freq_bins)</code>. That is your spectrogram.</p>
+<p><strong>Log-magnitude.</strong> Raw magnitudes span 5-6 orders of magnitude. Take <code>log(|X| + 1e-6)</code> or <code>20 * log10(|X|)</code> to compress dynamic range. Every production pipeline uses log-magnitude, not raw magnitude.</p>
+<p><strong>Mel scale.</strong> Frequency <code>f</code> in Hz maps to mel <code>m</code> by <code>m = 2595 * log10(1 + f / 700)</code>. The mapping is roughly linear below 1 kHz and roughly logarithmic above. 80 mel bins covering 0–8 kHz is the standard ASR input.</p>
+<p><strong>Mel filterbank.</strong> A set of triangular filters spaced equally on the mel scale. Each filter is a weighted sum of adjacent FFT bins. Multiplying the STFT magnitude by the filterbank matrix gives the mel spectrogram in one matmul.</p>
+<p><strong>Log-mel spectrogram.</strong> <code>log(mel_spec + 1e-10)</code>. Whisper&#39;s input. Parakeet&#39;s input. SeamlessM4T&#39;s input. The universal 2026 audio frontend.</p>
+<p><strong>MFCCs.</strong> Take the log-mel spectrogram, apply a DCT (type II), keep the first 13 coefficients. Decorrelates the features and compresses further. Dominant feature until about 2015 when CNNs/Transformers on raw log-mels caught up. Still used in speaker recognition (x-vectors, ECAPA).</p>
+<p><strong>Resolution trade.</strong> Larger FFT = better frequency resolution but worse time resolution. 25 ms / 10 ms is the audio-ML default; 50 ms / 12.5 ms for music; 5 ms / 2 ms for transient detection (drum hits, plosives).</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">spectrogram-window</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-frame-the-waveform"><a class="anchor" href="#step-1-frame-the-waveform">#</a> Step 1: frame the waveform</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def frame(signal, frame_len, hop):
+    n = 1 + (len(signal) - frame_len) // hop
+    return [signal[i * hop : i * hop + frame_len] for i in range(n)]</code></pre>
+      </div>
+    <p>A 10-second 16 kHz clip with <code>frame_len=400, hop=160</code> yields 998 frames.</p>
+<h3 id="step-2-hann-window"><a class="anchor" href="#step-2-hann-window">#</a> Step 2: Hann window</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import math
+
+def hann(N):
+    return [0.5 * (1 - math.cos(2 * math.pi * n / (N - 1))) for n in range(N)]</code></pre>
+      </div>
+    <p>Multiply element-wise before the FFT. Removes spectral leakage caused by truncating at non-zero endpoints.</p>
+<h3 id="step-3-stft-magnitude"><a class="anchor" href="#step-3-stft-magnitude">#</a> Step 3: STFT magnitude</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def stft_magnitude(signal, frame_len=400, hop=160):
+    win = hann(frame_len)
+    frames = frame(signal, frame_len, hop)
+    return [magnitudes(dft([w * s for w, s in zip(win, f)])) for f in frames]</code></pre>
+      </div>
+    <p>Production uses <code>torch.stft</code> or <code>librosa.stft</code> (FFT-backed, vectorized). The loop here is pedagogical; it runs on short clips in <code>code/main.py</code>.</p>
+<h3 id="step-4-mel-filterbank"><a class="anchor" href="#step-4-mel-filterbank">#</a> Step 4: mel filterbank</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def hz_to_mel(f):
+    return 2595.0 * math.log10(1.0 + f / 700.0)
+
+def mel_to_hz(m):
+    return 700.0 * (10 ** (m / 2595.0) - 1)
+
+def mel_filterbank(n_mels, n_fft, sr, fmin=0, fmax=None):
+    fmax = fmax or sr / 2
+    mels = [hz_to_mel(fmin) + (hz_to_mel(fmax) - hz_to_mel(fmin)) * i / (n_mels + 1)
+            for i in range(n_mels + 2)]
+    hzs = [mel_to_hz(m) for m in mels]
+    bins = [int(h * n_fft / sr) for h in hzs]
+    fb = [[0.0] * (n_fft // 2 + 1) for _ in range(n_mels)]
+    for m in range(n_mels):
+        for k in range(bins[m], bins[m + 1]):
+            fb[m][k] = (k - bins[m]) / max(1, bins[m + 1] - bins[m])
+        for k in range(bins[m + 1], bins[m + 2]):
+            fb[m][k] = (bins[m + 2] - k) / max(1, bins[m + 2] - bins[m + 1])
+    return fb</code></pre>
+      </div>
+    <p>80 mels covering 0–8 kHz with <code>n_fft=400</code> gives an <code>(80, 201)</code> matrix. Multiply the <code>(n_frames, 201)</code> STFT magnitude by the transpose to get <code>(n_frames, 80)</code> mel spectrogram.</p>
+<h3 id="step-5-log-mel"><a class="anchor" href="#step-5-log-mel">#</a> Step 5: log-mel</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def log_mel(mel_spec, eps=1e-10):
+    return [[math.log(max(v, eps)) for v in frame] for frame in mel_spec]</code></pre>
+      </div>
+    <p>Common alternatives: <code>librosa.power_to_db</code> (reference-normalized dB), <code>10 * log10(power + eps)</code>. Whisper uses a more involved clip + normalize routine (see Whisper&#39;s <code>log_mel_spectrogram</code>).</p>
+<h3 id="step-6-mfccs"><a class="anchor" href="#step-6-mfccs">#</a> Step 6: MFCCs</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def dct_ii(x, n_coeffs):
+    N = len(x)
+    return [
+        sum(x[n] * math.cos(math.pi * k * (2 * n + 1) / (2 * N)) for n in range(N))
+        for k in range(n_coeffs)
+    ]</code></pre>
+      </div>
+    <p>Apply DCT to each log-mel frame, keep the first 13 coefficients. That is your MFCC matrix. The first coefficient is usually dropped (it encodes overall energy).</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>The 2026 stack:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Features</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ASR (Whisper, Parakeet, SeamlessM4T)</td>
+<td>80 log-mels, 10 ms hop, 25 ms window</td>
+</tr>
+<tr>
+<td>TTS acoustic model (VITS, F5-TTS, Kokoro)</td>
+<td>80 mels, 5–12 ms hop for fine temporal control</td>
+</tr>
+<tr>
+<td>Audio classification (AST, PANNs, BEATs)</td>
+<td>128 log-mels, 10 ms hop</td>
+</tr>
+<tr>
+<td>Speaker embedding (ECAPA-TDNN, WavLM)</td>
+<td>80 log-mels or raw-waveform SSL</td>
+</tr>
+<tr>
+<td>Music (MusicGen, Stable Audio 2)</td>
+<td>EnCodec discrete tokens (not mels)</td>
+</tr>
+<tr>
+<td>Keyword spotting</td>
+<td>40 MFCCs for tiny devices</td>
+</tr>
+</tbody></table>
+<p>Rule of thumb: <strong>if you are not working on music, start with 80 log-mels.</strong> The burden of proof is on any deviation.</p>
+<h2 id="pitfalls-that-still-ship-in-2026"><a class="anchor" href="#pitfalls-that-still-ship-in-2026">#</a> Pitfalls that still ship in 2026</h2>
+<ul>
+<li><strong>Mel count mismatch.</strong> Training with 80 mels, inference with 128 mels. Silent failure. Log the feature shape at both ends.</li>
+<li><strong>Sample-rate mismatch upstream.</strong> Mels computed at 22.05 kHz look different from 16 kHz. Fix SR <em>before</em> featurization.</li>
+<li><strong>dB vs log.</strong> Whisper expects log-mel, not dB-mel. Some HF pipelines autodetect; your custom code will not.</li>
+<li><strong>Normalization drift.</strong> Per-utterance normalization during training, global normalization during inference. Production bug that doubles WER.</li>
+<li><strong>Leakage from padding.</strong> Zero-padding the end of a clip produces a flat spectrum in the trailing frames. Pad symmetrically or replicate.</li>
+</ul>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-feature-extractor.md</code>. The skill picks feature type, mel count, frame/hop, and normalization for a given model target.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. It synthesizes a chirp (frequency swept 200 → 4000 Hz) and prints the argmax mel bin per frame. Plot (optional) and confirm it matches the sweep.</li>
+<li><strong>Medium.</strong> Re-run with <code>n_mels</code> in <code>{40, 80, 128}</code> and <code>frame_len</code> in <code>{200, 400, 800}</code>. Measure sharp-peak bandwidth across the time axis. Which combo resolves the chirp the best?</li>
+<li><strong>Hard.</strong> Implement <code>power_to_db</code> and compare ASR accuracy of a tiny CNN classifier on AudioMNIST using (a) raw log-mel, (b) dB-mel with <code>ref=max</code>, (c) MFCC-13 + delta + delta-delta. Report top-1 accuracy.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Frame</td>
+<td>A slice</td>
+<td>25 ms chunk of waveform fed to one FFT.</td>
+</tr>
+<tr>
+<td>Hop</td>
+<td>Stride</td>
+<td>Samples between consecutive frames; 10 ms is ASR default.</td>
+</tr>
+<tr>
+<td>Window</td>
+<td>Hann/Hamming thing</td>
+<td>Point-wise multiplier that tapers the frame edges to zero.</td>
+</tr>
+<tr>
+<td>STFT</td>
+<td>Spectrogram generator</td>
+<td>Framed + windowed FFT; yields time × frequency matrix.</td>
+</tr>
+<tr>
+<td>Mel</td>
+<td>Warped frequency</td>
+<td>Log-perception scale; <code>m = 2595·log10(1 + f/700)</code>.</td>
+</tr>
+<tr>
+<td>Filterbank</td>
+<td>The matrix</td>
+<td>Triangular filters that project STFT onto mel bins.</td>
+</tr>
+<tr>
+<td>Log-mel</td>
+<td>Whisper&#39;s input</td>
+<td><code>log(mel_spec + eps)</code>; standardized in 2026.</td>
+</tr>
+<tr>
+<td>MFCC</td>
+<td>Old-school feature</td>
+<td>DCT of log-mel; 13 coeffs, decorrelated.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://ieeexplore.ieee.org/document/1163420">Davis, Mermelstein (1980). Comparison of parametric representations for monosyllabic word recognition</a> — the MFCC paper.</li>
+<li><a href="https://pubs.aip.org/asa/jasa/article-abstract/8/3/185/735757/">Stevens, Volkmann, Newman (1937). A Scale for the Measurement of the Psychological Magnitude Pitch</a> — the original mel scale.</li>
+<li><a href="https://github.com/openai/whisper/blob/main/whisper/audio.py">OpenAI — Whisper source, log_mel_spectrogram</a> — read the reference implementation.</li>
+<li><a href="https://librosa.org/doc/main/feature.html">librosa feature extraction docs</a> — reference for <code>mfcc</code>, <code>melspectrogram</code>, and hop/window.</li>
+<li><a href="https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/main/asr/asr_all.html#featurizers">NVIDIA NeMo — audio preprocessing</a> — production-scale pipeline for Parakeet + Canary models.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./01-audio-fundamentals.html"><span>← Previous</span><b>audio fundamentals</b></a>
+      <a class="next" href="./03-audio-classification.html"><span>Next →</span><b>audio classification</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

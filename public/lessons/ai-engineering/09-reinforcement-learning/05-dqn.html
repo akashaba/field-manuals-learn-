@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deep Q-Networks (DQN) — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/09-reinforcement-learning/05-dqn/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Reinforcement Learning</div>
+    <ol class="toc"><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#pitfalls">Pitfalls</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Reinforcement Learning</div>
+    <h1 class="lesson-title">Deep Q-Networks (DQN)</h1>
+    <p class="lesson-sub">2013: Mnih trained one Q-learning network on raw pixels, beat every classical RL agent on seven Atari games. 2015: extended to 49 games, published in Nature, sparked the deep-RL era. DQN is Q-learning plus three tricks that make function approximation stable.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 3 · 03 (Backpropagation), Phase 9 · 04 (Q-learning, SARSA)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Reinforcement Learning 05">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="38.1" y="39.9" width="32.5" height="32.5" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(222 54.3 56.1)"/>
+        <rect x="33.3" y="35.6" width="31.2" height="31.2" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(204 48.9 51.2)"/>
+        <rect x="28.5" y="31.3" width="29.9" height="29.9" rx="2" fill="none" stroke="#1a3556" stroke-width="1.1" opacity="0.55" transform="rotate(187 43.5 46.3)"/>
+        <rect x="23.8" y="127.0" width="28.6" height="28.6" rx="2" fill="none" stroke="#55503f" stroke-width="1.1" opacity="0.55" transform="rotate(169 38.1 141.3)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#1a3556" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#1a3556" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#1a3556" letter-spacing="-2">05</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">REINFORCEMENT LEARNING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Deep Q-Networks</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">(DQN)</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Tabular Q-learning needs a separate Q-value for every (state, action) pair. A chess board has ~10⁴³ states. An Atari frame is 210×160×3 = 100,800 features. Tabular RL dies at thousands of states, let alone billions.</p>
+<p>The fix is obvious in hindsight: replace the Q-table with a neural network, <code>Q(s, a; θ)</code>. But obvious-in-hindsight took decades. Naive function approximation with Q-learning diverges under the &quot;deadly triad&quot; — function approximation + bootstrapping + off-policy learning. Mnih et al. (2013, 2015) identified three engineering tricks that stabilize learning:</p>
+<ol>
+<li><strong>Experience replay</strong> decorrelates transitions.</li>
+<li><strong>Target network</strong> freezes the bootstrap target.</li>
+<li><strong>Reward clipping</strong> normalizes gradient magnitudes.</li>
+</ol>
+<p>DQN on Atari was the first time a single architecture with a single hyperparameter set solved dozens of control problems from raw pixels. Everything &quot;deep-RL&quot; built since — DDQN, Rainbow, Dueling, Distributional, R2D2, Agent57 — is stacked on top of this three-trick base.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<p><figure class="ext-image"><img src="https://raw.githubusercontent.com/rohitg00/ai-engineering-from-scratch/main/phases/09-reinforcement-learning/05-dqn/assets/dqn.svg" alt="DQN training loop: env, replay buffer, online net, target net, Bellman TD loss" loading="lazy" /></figure></p>
+<p><strong>The objective.</strong> DQN minimizes the one-step TD loss on a neural Q-function:</p>
+<p><code>L(θ) = E_{(s,a,r,s&#39;)~D} [ (r + γ max_{a&#39;} Q(s&#39;, a&#39;; θ^-) - Q(s, a; θ))² ]</code></p>
+<p><code>θ</code> = online network, updated every step by gradient descent. <code>θ^-</code> = target network, periodically copied from <code>θ</code> (every ~10,000 steps). <code>D</code> = replay buffer of past transitions.</p>
+<p><strong>The three tricks, in order of importance:</strong></p>
+<p><strong>Experience replay.</strong> A ring buffer of <code>~10⁶</code> transitions. Each training step samples a minibatch uniformly at random. This breaks temporal correlation (successive frames are nearly identical), lets the network learn from rare rewarding transitions many times, and decorrelates consecutive gradient updates. Without it, on-policy TD with a neural net diverges on Atari.</p>
+<p><strong>Target network.</strong> Using the same network <code>Q(·; θ)</code> on both sides of the Bellman equation makes the target move every update — &quot;chasing your own tail.&quot; The fix: keep a second network <code>Q(·; θ^-)</code> with frozen weights. Every <code>C</code> steps, copy <code>θ → θ^-</code>. This stabilizes the regression target for thousands of gradient steps at a time. Soft updates <code>θ^- ← τ θ + (1-τ) θ^-</code> (used in DDPG, SAC) are a smoother variant.</p>
+<p><strong>Reward clipping.</strong> Atari reward magnitudes vary from 1 to 1000+. Clipping to <code>{-1, 0, +1}</code> stops any single game from dominating the gradient. Wrong when reward magnitude matters; fine for Atari where only sign matters.</p>
+<p><strong>Double DQN.</strong> Hasselt (2016) fixes maximization bias: use the online net to <em>select</em> the action, the target net to <em>evaluate</em> it.</p>
+<p><code>target = r + γ Q(s&#39;, argmax_{a&#39;} Q(s&#39;, a&#39;; θ); θ^-)</code></p>
+<p>Drop-in replacement, consistently better. Use it by default.</p>
+<p><strong>Other improvements (Rainbow, 2017):</strong> prioritized replay (sample high-TD-error transitions more), dueling architecture (separate <code>V(s)</code> and advantage heads), noisy networks (learned exploration), n-step returns, distributional Q (C51/QR-DQN), multi-step bootstrapping. Each adds a few percent; the gains are roughly additive.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">f3-dqn-stability</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<p>The code here is stdlib-only numpy-free — we use a hand-rolled single-hidden-layer MLP on a tiny continuous GridWorld, so every training step runs in microseconds. The algorithm is identical to Atari DQN at scale.</p>
+<h3 id="step-1-replay-buffer"><a class="anchor" href="#step-1-replay-buffer">#</a> Step 1: replay buffer</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class ReplayBuffer:
+    def __init__(self, capacity):
+        self.buf = []
+        self.capacity = capacity
+    def push(self, s, a, r, s_next, done):
+        if len(self.buf) == self.capacity:
+            self.buf.pop(0)
+        self.buf.append((s, a, r, s_next, done))
+    def sample(self, batch, rng):
+        return rng.sample(self.buf, batch)</code></pre>
+      </div>
+    <p>~50,000 capacity for Atari; 5,000 suffices for our toy env.</p>
+<h3 id="step-2-a-tiny-q-network-manual-mlp"><a class="anchor" href="#step-2-a-tiny-q-network-manual-mlp">#</a> Step 2: a tiny Q-network (manual MLP)</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class QNet:
+    def __init__(self, n_in, n_hidden, n_actions, rng):
+        self.W1 = [[rng.gauss(0, 0.3) for _ in range(n_in)] for _ in range(n_hidden)]
+        self.b1 = [0.0] * n_hidden
+        self.W2 = [[rng.gauss(0, 0.3) for _ in range(n_hidden)] for _ in range(n_actions)]
+        self.b2 = [0.0] * n_actions
+    def forward(self, x):
+        h = [max(0.0, sum(w * xi for w, xi in zip(row, x)) + b) for row, b in zip(self.W1, self.b1)]
+        q = [sum(w * hi for w, hi in zip(row, h)) + b for row, b in zip(self.W2, self.b2)]
+        return q, h</code></pre>
+      </div>
+    <p>Forward pass: linear → ReLU → linear. That is the entire net.</p>
+<h3 id="step-3-the-dqn-update"><a class="anchor" href="#step-3-the-dqn-update">#</a> Step 3: the DQN update</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def train_step(online, target, batch, gamma, lr):
+    grads = zeros_like(online)
+    for s, a, r, s_next, done in batch:
+        q, h = online.forward(s)
+        if done:
+            y = r
+        else:
+            q_next, _ = target.forward(s_next)
+            y = r + gamma * max(q_next)
+        td_error = q[a] - y
+        accumulate_grads(grads, online, s, h, a, td_error)
+    apply_sgd(online, grads, lr / len(batch))</code></pre>
+      </div>
+    <p>The shape is Q-learning from Lesson 04 with two differences: (a) we backprop through a differentiable <code>Q(·; θ)</code> instead of indexing a table, (b) the target uses <code>Q(·; θ^-)</code>.</p>
+<h3 id="step-4-the-outer-loop"><a class="anchor" href="#step-4-the-outer-loop">#</a> Step 4: the outer loop</h3>
+<p>For each episode, act ε-greedy on <code>Q(·; θ)</code>, push transitions into the buffer, sample a minibatch, take a gradient step, periodically sync <code>θ^- ← θ</code>. The pattern:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">for episode in range(N):
+    s = env.reset()
+    while not done:
+        a = epsilon_greedy(online, s, epsilon)
+        s_next, r, done = env.step(s, a)
+        buffer.push(s, a, r, s_next, done)
+        if len(buffer) &gt;= batch:
+            train_step(online, target, buffer.sample(batch), gamma, lr)
+        if steps % sync_every == 0:
+            target = copy(online)
+        s = s_next</code></pre>
+      </div>
+    <p>On our tiny GridWorld with a 16-dim one-hot state, the agent learns a near-optimal policy in ~500 episodes. On Atari, scale this to 200M frames and add a CNN feature extractor.</p>
+<h2 id="pitfalls"><a class="anchor" href="#pitfalls">#</a> Pitfalls</h2>
+<ul>
+<li><strong>Deadly triad.</strong> Function approximation + off-policy + bootstrapping can diverge. DQN mitigates with target net + replay; do not remove either.</li>
+<li><strong>Exploration.</strong> ε must decay, typically from 1.0 to 0.01 over the first ~10% of training. Without enough early exploration the Q-net converges to a local basin.</li>
+<li><strong>Overestimation.</strong> <code>max</code> over noisy Q is upward-biased. Always use Double DQN in production.</li>
+<li><strong>Reward scale.</strong> Clip or normalize rewards; the gradient magnitude is proportional to reward magnitude.</li>
+<li><strong>Replay buffer coldstart.</strong> Don&#39;t train until the buffer has a few thousand transitions. Early gradients on ~20 samples overfit.</li>
+<li><strong>Target sync frequency.</strong> Too frequent ≈ no target net; too infrequent ≈ stale targets. Atari DQN uses 10,000 env steps. Rule of thumb: sync every ~1/100 of training horizon.</li>
+<li><strong>Observation preprocessing.</strong> Atari DQN stacks 4 frames to make state Markov. Any env with velocity info needs frame-stacking or recurrent state.</li>
+</ul>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>In 2026, DQN is rarely state-of-the-art but remains the reference off-policy algorithm:</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Method of choice</th>
+<th>Why not DQN?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Discrete-action Atari-like</td>
+<td>Rainbow DQN or Muesli</td>
+<td>Same framework, more tricks.</td>
+</tr>
+<tr>
+<td>Continuous control</td>
+<td>SAC / TD3 (Phase 9 · 07)</td>
+<td>DQN has no policy network.</td>
+</tr>
+<tr>
+<td>On-policy / high-throughput</td>
+<td>PPO (Phase 9 · 08)</td>
+<td>No replay buffer; easier to scale.</td>
+</tr>
+<tr>
+<td>Offline RL</td>
+<td>CQL / IQL / Decision Transformer</td>
+<td>Conservative Q targets, no bootstrapping blowups.</td>
+</tr>
+<tr>
+<td>Large discrete action spaces (recommender)</td>
+<td>DQN with action embedding, or IMPALA</td>
+<td>Fine; decoration matters.</td>
+</tr>
+<tr>
+<td>LLM RL</td>
+<td>PPO / GRPO</td>
+<td>Sequence-level, not step-level; different loss.</td>
+</tr>
+</tbody></table>
+<p>The lessons still travel. Replay and target networks appear in SAC, TD3, DDPG, SAC-X, AlphaZero&#39;s self-play buffer, and every offline RL method. Reward clipping lives on as advantage normalization in PPO. The architecture is the blueprint.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>Save as <code>outputs/skill-dqn-trainer.md</code>:</p>
+
+      <div class="codeblock" data-lang="markdown">
+        <span class="cb-label">markdown</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-markdown hljs">---
+name: dqn-trainer
+description: Produce a DQN training config (buffer, target sync, ε schedule, reward clipping) for a discrete-action RL task.
+version: 1.0.0
+phase: 9
+lesson: 5
+tags: [rl, dqn, deep-rl]
+---
+
+Given a discrete-action environment (observation shape, action count, horizon, reward scale), output:
+
+1. Network. Architecture (MLP / CNN / Transformer), feature dim, depth.
+2. Replay buffer. Capacity, minibatch size, warmup size.
+3. Target network. Sync strategy (hard every C steps or soft τ).
+4. Exploration. ε start / end / schedule length.
+5. Loss. Huber vs MSE, gradient clip value, reward clipping rule.
+6. Double DQN. On by default unless explicit reason to disable.
+
+Refuse to ship a DQN with no target network, no replay buffer, or ε held at 1. Refuse continuous-action tasks (route to SAC / TD3). Flag any reward range &gt; 10× per-step mean as needing clipping or scale normalization.</code></pre>
+      </div>
+    <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>Easy.</strong> Run <code>code/main.py</code>. Plot the per-episode return curve. How many episodes until the running mean exceeds -10?</li>
+<li><strong>Medium.</strong> Disable the target network (use the online net for both sides of the Bellman target). Measure training instability — does return oscillate or diverge?</li>
+<li><strong>Hard.</strong> Add Double DQN: use the online net to pick <code>argmax a&#39;</code>, target net to evaluate. Compare bias of <code>Q(s_0, best_a)</code> vs true <code>V*(s_0)</code> after 1,000 episodes with vs without Double DQN on a noisy-reward GridWorld.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DQN</td>
+<td>&quot;Deep Q-learning&quot;</td>
+<td>Q-learning with a neural Q-function, replay buffer, and target network.</td>
+</tr>
+<tr>
+<td>Experience replay</td>
+<td>&quot;Shuffled transitions&quot;</td>
+<td>Ring buffer sampled uniformly each gradient step; decorrelates data.</td>
+</tr>
+<tr>
+<td>Target network</td>
+<td>&quot;Frozen bootstrap&quot;</td>
+<td>Periodic copy of Q used in the Bellman target; stabilizes training.</td>
+</tr>
+<tr>
+<td>Deadly triad</td>
+<td>&quot;Why RL diverges&quot;</td>
+<td>Function approximation + bootstrapping + off-policy = no convergence guarantee.</td>
+</tr>
+<tr>
+<td>Double DQN</td>
+<td>&quot;Fix for maximization bias&quot;</td>
+<td>Online net selects action, target net evaluates it.</td>
+</tr>
+<tr>
+<td>Dueling DQN</td>
+<td>&quot;V and A heads&quot;</td>
+<td>Decompose Q = V + A - mean(A); same output, better gradient flow.</td>
+</tr>
+<tr>
+<td>Rainbow</td>
+<td>&quot;All the tricks&quot;</td>
+<td>DDQN + PER + dueling + n-step + noisy + distributional in one.</td>
+</tr>
+<tr>
+<td>PER</td>
+<td>&quot;Prioritized Replay&quot;</td>
+<td>Sample transitions proportional to TD-error magnitude.</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1312.5602">Mnih et al. (2013). Playing Atari with Deep Reinforcement Learning</a> — the 2013 NeurIPS workshop paper that kicked off deep RL.</li>
+<li><a href="https://www.nature.com/articles/nature14236">Mnih et al. (2015). Human-level control through deep reinforcement learning</a> — the Nature paper, 49-game DQN.</li>
+<li><a href="https://arxiv.org/abs/1509.06461">Hasselt, Guez, Silver (2016). Deep Reinforcement Learning with Double Q-learning</a> — DDQN.</li>
+<li><a href="https://arxiv.org/abs/1511.06581">Wang et al. (2016). Dueling Network Architectures</a> — dueling DQN.</li>
+<li><a href="https://arxiv.org/abs/1710.02298">Hessel et al. (2018). Rainbow: Combining Improvements in Deep RL</a> — the stacked-tricks paper.</li>
+<li><a href="https://spinningup.openai.com/en/latest/algorithms/dqn.html">OpenAI Spinning Up — DQN</a> — clear modern exposition.</li>
+<li><a href="http://incompleteideas.net/book/RLbook2020.pdf">Sutton &amp; Barto (2018). Ch. 9 — On-policy Prediction with Approximation</a> — the textbook treatment of the &quot;deadly triad&quot; (function approximation + bootstrapping + off-policy) that DQN&#39;s target network and replay buffer are designed to tame.</li>
+<li><a href="https://docs.cleanrl.dev/rl-algorithms/dqn/">CleanRL DQN implementation</a> — reference single-file DQN used in ablation studies; good to read alongside this lesson&#39;s from-scratch version.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./04-q-learning-sarsa.html"><span>← Previous</span><b>q learning sarsa</b></a>
+      <a class="next" href="./06-policy-gradients-reinforce.html"><span>Next →</span><b>policy gradients reinforce</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

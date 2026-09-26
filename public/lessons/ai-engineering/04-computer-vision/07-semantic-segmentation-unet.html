@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Semantic Segmentation — U-Net — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/04-computer-vision/07-semantic-segmentation-unet/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Computer Vision</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Computer Vision</div>
+    <h1 class="lesson-title">Semantic Segmentation — U-Net</h1>
+    <p class="lesson-sub">Segmentation is classification at every pixel. U-Net makes it work by pairing a downsampling encoder with an upsampling decoder and wiring skip connections between them.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 4 Lesson 03 (CNNs), Phase 4 Lesson 04 (Image Classification)</b></div><div><span>Time</span><b>~75 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Computer Vision 07">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <circle cx="18.6" cy="123.6" r="12.0" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="123.2" cy="118.7" r="11.4" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="117.8" cy="113.8" r="10.7" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="112.4" cy="108.9" r="10.1" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="106.9" cy="103.9" r="9.5" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <circle cx="101.5" cy="99.0" r="8.8" fill="none" stroke="#37613b" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">07</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">COMPUTER VISION</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Semantic</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Segmentation — U-Net</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Distinguish semantic, instance, and panoptic segmentation and pick the right task for a given problem</li>
+<li>Build a U-Net from scratch in PyTorch with encoder blocks, a bottleneck, a decoder with transposed convolutions, and skip connections</li>
+<li>Implement pixel-wise cross-entropy, Dice loss, and the combined loss that is the current default for medical and industrial segmentation</li>
+<li>Read IoU and Dice metrics per class and diagnose whether a bad score comes from small-object recall, boundary accuracy, or class imbalance</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>Classification outputs one label per image. Detection outputs a handful of boxes per image. Segmentation outputs one label per pixel. For an input of size <code>H x W</code>, the output is a tensor of shape <code>H x W</code> (semantic) or <code>H x W x N_instances</code> (instance). That is millions of predictions per image, not one.</p>
+<p>The structure of segmentation is why it powers almost every dense-prediction vision product: medical imaging (tumour masks), autonomous driving (road, lane, obstacle), satellite (building footprints, crop boundaries), document parsing (layout zones), robotics (graspable regions). None of those tasks can be solved by putting a box around the object; they need the exact silhouette.</p>
+<p>The architectural problem is simple to state and not simple to solve: you need the network to see the global context of an image (what kind of scene is this) and the local pixel detail (exactly which pixel is road vs pavement) simultaneously. A standard CNN compresses spatially to gain context, which throws away the detail. U-Net was the design that got both.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="semantic-vs-instance-vs-panoptic"><a class="anchor" href="#semantic-vs-instance-vs-panoptic">#</a> Semantic vs instance vs panoptic</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    IN[&quot;Input image&quot;] --&gt; SEM[&quot;Semantic&lt;br/&gt;(pixel → class)&quot;]
+    IN --&gt; INS[&quot;Instance&lt;br/&gt;(pixel → object id,&lt;br/&gt;only foreground classes)&quot;]
+    IN --&gt; PAN[&quot;Panoptic&lt;br/&gt;(every pixel → class + id)&quot;]
+
+    style SEM fill:#dbeafe,stroke:#2563eb
+    style INS fill:#fef3c7,stroke:#d97706
+    style PAN fill:#dcfce7,stroke:#16a34a</pre></div><ul>
+<li><strong>Semantic</strong> says &quot;this pixel is road, that pixel is car.&quot; Two cars next to each other collapse into a single blob.</li>
+<li><strong>Instance</strong> says &quot;this pixel is car #3, that pixel is car #5.&quot; Ignores background stuff (&quot;stuff&quot; = sky, road, grass).</li>
+<li><strong>Panoptic</strong> unifies both: every pixel gets a class label, every instance gets a unique id, stuff and things both segmented.</li>
+</ul>
+<p>This lesson covers semantic. The next lesson (Mask R-CNN) covers instance.</p>
+<h3 id="the-u-net-shape"><a class="anchor" href="#the-u-net-shape">#</a> The U-Net shape</h3>
+<div class="fig"><pre class="mermaid">flowchart LR
+    subgraph ENC[&quot;Encoder (contracting)&quot;]
+        E1[&quot;64&lt;br/&gt;H x W&quot;] --&gt; E2[&quot;128&lt;br/&gt;H/2 x W/2&quot;]
+        E2 --&gt; E3[&quot;256&lt;br/&gt;H/4 x W/4&quot;]
+        E3 --&gt; E4[&quot;512&lt;br/&gt;H/8 x W/8&quot;]
+    end
+    subgraph BOT[&quot;Bottleneck&quot;]
+        B1[&quot;1024&lt;br/&gt;H/16 x W/16&quot;]
+    end
+    subgraph DEC[&quot;Decoder (expanding)&quot;]
+        D4[&quot;512&lt;br/&gt;H/8 x W/8&quot;] --&gt; D3[&quot;256&lt;br/&gt;H/4 x W/4&quot;]
+        D3 --&gt; D2[&quot;128&lt;br/&gt;H/2 x W/2&quot;]
+        D2 --&gt; D1[&quot;64&lt;br/&gt;H x W&quot;]
+    end
+    E4 --&gt; B1 --&gt; D4
+    E1 -. skip .-&gt; D1
+    E2 -. skip .-&gt; D2
+    E3 -. skip .-&gt; D3
+    E4 -. skip .-&gt; D4
+    D1 --&gt; OUT[&quot;1x1 conv&lt;br/&gt;classes&quot;]
+
+    style ENC fill:#dbeafe,stroke:#2563eb
+    style BOT fill:#fef3c7,stroke:#d97706
+    style DEC fill:#dcfce7,stroke:#16a34a</pre></div><p>The encoder halves spatial resolution four times and doubles channels. The decoder reverses: doubles spatial resolution four times and halves channels. The skip connections concatenate matching encoder features with decoder features at every resolution. The final 1x1 conv maps <code>64 -&gt; num_classes</code> at full resolution.</p>
+<p>Why skip connections are necessary: the decoder has seen only small feature maps by the time it tries to output pixel-level predictions. Without the skips it cannot localise edges accurately because that information was compressed away in the encoder. Skip connections hand it the high-resolution feature maps the encoder computed on the way down.</p>
+<h3 id="transposed-vs-bilinear-upsample"><a class="anchor" href="#transposed-vs-bilinear-upsample">#</a> Transposed vs bilinear upsample</h3>
+<p>The decoder has to expand spatial dimensions. Two options:</p>
+<ul>
+<li><strong>Transposed convolution</strong> (<code>nn.ConvTranspose2d</code>) — learnable upsample. Historical U-Net default. Can produce checkerboard artifacts if stride and kernel size do not divide evenly.</li>
+<li><strong>Bilinear upsample + 3x3 conv</strong> — smooth upsample followed by a conv. Fewer artifacts, fewer parameters, now the modern default.</li>
+</ul>
+<p>Both appear in the wild. For a first U-Net, bilinear is safer.</p>
+<h3 id="cross-entropy-on-a-pixel-grid"><a class="anchor" href="#cross-entropy-on-a-pixel-grid">#</a> Cross-entropy on a pixel grid</h3>
+<p>For semantic segmentation with C classes, the model output is <code>(N, C, H, W)</code>. The target is <code>(N, H, W)</code> with integer class IDs. Cross-entropy is identical to the classification case, just applied at every spatial position:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Loss = mean over (n, h, w) of -log( softmax(logits[n, :, h, w])[target[n, h, w]] )</code></pre>
+      </div>
+    <p><code>F.cross_entropy</code> in PyTorch handles this shape natively. No reshape needed.</p>
+<h3 id="dice-loss-and-why-you-need-it"><a class="anchor" href="#dice-loss-and-why-you-need-it">#</a> Dice loss and why you need it</h3>
+<p>Cross-entropy treats every pixel equally. That is wrong when one class dominates the frame (medical imaging: 99% background, 1% tumour). The network can score 99% accuracy by predicting background everywhere and still be useless.</p>
+<p>Dice loss solves this by directly optimising the overlap between predicted and true mask:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">Dice(p, y) = 2 * sum(p * y) / (sum(p) + sum(y) + epsilon)
+Dice_loss = 1 - Dice</code></pre>
+      </div>
+    <p>where <code>p</code> is the sigmoid/softmax probability map for a class and <code>y</code> is the binary ground-truth mask. The loss is zero only when the overlap is perfect. Because it is ratio-based, class imbalance is irrelevant.</p>
+<p>In practice, use the <strong>combined loss</strong>:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">L = L_cross_entropy + lambda * L_dice       (lambda ~ 1)</code></pre>
+      </div>
+    <p>Cross-entropy gives stable gradients early in training; Dice focuses the tail of training on actually matching the mask shape. This combination is the medical-imaging default and hard to beat on any class-imbalanced dataset.</p>
+<h3 id="evaluation-metrics"><a class="anchor" href="#evaluation-metrics">#</a> Evaluation metrics</h3>
+<ul>
+<li><strong>Pixel accuracy</strong> — percent of pixels predicted correctly. Cheap. Broken on imbalanced data for the same reason as accuracy in classification.</li>
+<li><strong>IoU per class</strong> — intersection over union for each class&#39;s mask; average across classes = mIoU.</li>
+<li><strong>Dice (F1 on pixels)</strong> — similar to IoU; <code>Dice = 2 * IoU / (1 + IoU)</code>. Medical imaging prefers Dice, driving community prefers IoU; they are monotonically related.</li>
+<li><strong>Boundary F1</strong> — measures how close predicted boundaries are to ground-truth boundaries, penalising even small shifts. Important for high-precision tasks like semiconductor inspection.</li>
+</ul>
+<p>Report IoU per class, not just mIoU. Mean IoU hides a class at 15% when nine others are at 85%.</p>
+<h3 id="input-resolution-trade-off"><a class="anchor" href="#input-resolution-trade-off">#</a> Input resolution trade-off</h3>
+<p>U-Net&#39;s encoder halves resolution four times, so the input must be divisible by 16. Medical images are often 512x512 or 1024x1024. Autonomous-driving crops are 2048x1024. The memory cost of U-Net scales with <code>H * W * C_max</code>, and at 1024x1024 with 1024 bottleneck channels the forward pass already uses gigabytes of VRAM.</p>
+<p>Two standard workarounds:</p>
+<ol>
+<li>Tile the input — process 256x256 tiles with overlap and stitch.</li>
+<li>Replace the bottleneck with dilated convolutions that keep spatial resolution higher but widen receptive field (the DeepLab family).</li>
+</ol>
+<p>For a first model, a 256x256 input with a 64-channel-base U-Net trains comfortably on 8 GB VRAM.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">segmentation-flood</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-encoder-block"><a class="anchor" href="#step-1-encoder-block">#</a> Step 1: Encoder block</h3>
+<p>Two 3x3 convs with batch norm and ReLU. The first conv changes channel count; the second keeps it.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DoubleConv(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_c, out_c, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_c, out_c, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.net(x)</code></pre>
+      </div>
+    <p>This block is reused throughout. <code>bias=False</code> because BN&#39;s beta handles the bias.</p>
+<h3 id="step-2-down-and-up-blocks"><a class="anchor" href="#step-2-down-and-up-blocks">#</a> Step 2: Down and up blocks</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class Down(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_c, out_c),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Up(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.up = nn.Upsample(scale_factor=2, mode=&quot;bilinear&quot;, align_corners=False)
+        self.conv = DoubleConv(in_c, out_c)
+
+    def forward(self, x, skip):
+        x = self.up(x)
+        if x.shape[-2:] != skip.shape[-2:]:
+            x = F.interpolate(x, size=skip.shape[-2:], mode=&quot;bilinear&quot;, align_corners=False)
+        x = torch.cat([skip, x], dim=1)
+        return self.conv(x)</code></pre>
+      </div>
+    <p>The spatial-only shape check (<code>shape[-2:]</code>) handles inputs whose dimensions are not divisible by 16; a safe <code>F.interpolate</code> aligns the tensor before the concat. Comparing the full shape would also trigger on channel-count differences, which should be a loud error, not a silent interpolate.</p>
+<h3 id="step-3-the-u-net"><a class="anchor" href="#step-3-the-u-net">#</a> Step 3: The U-Net</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class UNet(nn.Module):
+    def __init__(self, in_channels=3, num_classes=2, base=64):
+        super().__init__()
+        self.inc = DoubleConv(in_channels, base)
+        self.d1 = Down(base, base * 2)
+        self.d2 = Down(base * 2, base * 4)
+        self.d3 = Down(base * 4, base * 8)
+        self.d4 = Down(base * 8, base * 16)
+        self.u1 = Up(base * 16 + base * 8, base * 8)
+        self.u2 = Up(base * 8 + base * 4, base * 4)
+        self.u3 = Up(base * 4 + base * 2, base * 2)
+        self.u4 = Up(base * 2 + base, base)
+        self.outc = nn.Conv2d(base, num_classes, kernel_size=1)
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        x2 = self.d1(x1)
+        x3 = self.d2(x2)
+        x4 = self.d3(x3)
+        x5 = self.d4(x4)
+        x = self.u1(x5, x4)
+        x = self.u2(x, x3)
+        x = self.u3(x, x2)
+        x = self.u4(x, x1)
+        return self.outc(x)
+
+net = UNet(in_channels=3, num_classes=2, base=32)
+x = torch.randn(1, 3, 256, 256)
+print(f&quot;output: {net(x).shape}&quot;)
+print(f&quot;params: {sum(p.numel() for p in net.parameters()):,}&quot;)</code></pre>
+      </div>
+    <p>Output shape <code>(1, 2, 256, 256)</code> — same spatial size as the input, <code>num_classes</code> channels. About 7.7M parameters at <code>base=32</code>.</p>
+<h3 id="step-4-losses"><a class="anchor" href="#step-4-losses">#</a> Step 4: Losses</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def dice_loss(logits, targets, num_classes, eps=1e-6):
+    probs = F.softmax(logits, dim=1)
+    targets_one_hot = F.one_hot(targets, num_classes).permute(0, 3, 1, 2).float()
+    dims = (0, 2, 3)
+    intersection = (probs * targets_one_hot).sum(dim=dims)
+    denom = probs.sum(dim=dims) + targets_one_hot.sum(dim=dims)
+    dice = (2 * intersection + eps) / (denom + eps)
+    return 1 - dice.mean()
+
+
+def combined_loss(logits, targets, num_classes, lam=1.0):
+    ce = F.cross_entropy(logits, targets)
+    dc = dice_loss(logits, targets, num_classes)
+    return ce + lam * dc, {&quot;ce&quot;: ce.item(), &quot;dice&quot;: dc.item()}</code></pre>
+      </div>
+    <p>Dice is computed per class then averaged (macro Dice). The <code>eps</code> prevents division by zero on classes absent from the batch.</p>
+<h3 id="step-5-iou-metric"><a class="anchor" href="#step-5-iou-metric">#</a> Step 5: IoU metric</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">@torch.no_grad()
+def iou_per_class(logits, targets, num_classes):
+    preds = logits.argmax(dim=1)
+    ious = torch.zeros(num_classes)
+    for c in range(num_classes):
+        pred_c = (preds == c)
+        true_c = (targets == c)
+        inter = (pred_c &amp; true_c).sum().float()
+        union = (pred_c | true_c).sum().float()
+        ious[c] = (inter / union) if union &gt; 0 else torch.tensor(float(&quot;nan&quot;))
+    return ious</code></pre>
+      </div>
+    <p>Returns a vector of length C. <code>nan</code> marks classes absent from the batch — do not average over those when computing mIoU.</p>
+<h3 id="step-6-synthetic-dataset-for-end-to-end-verification"><a class="anchor" href="#step-6-synthetic-dataset-for-end-to-end-verification">#</a> Step 6: Synthetic dataset for end-to-end verification</h3>
+<p>Generate shapes on coloured backgrounds so the network has to learn shape, not pixel colour.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import numpy as np
+from torch.utils.data import Dataset, DataLoader
+
+def synthetic_segmentation(num_samples=200, size=64, seed=0):
+    rng = np.random.default_rng(seed)
+    images = np.zeros((num_samples, size, size, 3), dtype=np.float32)
+    masks = np.zeros((num_samples, size, size), dtype=np.int64)
+    for i in range(num_samples):
+        bg = rng.uniform(0, 1, (3,))
+        images[i] = bg
+        masks[i] = 0
+        num_shapes = rng.integers(1, 4)
+        for _ in range(num_shapes):
+            cls = int(rng.integers(1, 3))
+            color = rng.uniform(0, 1, (3,))
+            cx, cy = rng.integers(10, size - 10, size=2)
+            r = int(rng.integers(4, 12))
+            yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing=&quot;ij&quot;)
+            if cls == 1:
+                mask = (xx - cx) ** 2 + (yy - cy) ** 2 &lt; r ** 2
+            else:
+                mask = (np.abs(xx - cx) &lt; r) &amp; (np.abs(yy - cy) &lt; r)
+            images[i][mask] = color
+            masks[i][mask] = cls
+        images[i] += rng.normal(0, 0.02, images[i].shape)
+        images[i] = np.clip(images[i], 0, 1)
+    return images, masks
+
+
+class SegDataset(Dataset):
+    def __init__(self, images, masks):
+        self.images = images
+        self.masks = masks
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, i):
+        img = torch.from_numpy(self.images[i]).permute(2, 0, 1).float()
+        mask = torch.from_numpy(self.masks[i]).long()
+        return img, mask</code></pre>
+      </div>
+    <p>Three classes: background (0), circles (1), squares (2). The network must learn to distinguish shape.</p>
+<h3 id="step-7-training-loop"><a class="anchor" href="#step-7-training-loop">#</a> Step 7: Training loop</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def train_one_epoch(model, loader, optimizer, device, num_classes):
+    model.train()
+    loss_sum, total = 0.0, 0
+    iou_sum = torch.zeros(num_classes)
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+        loss, _ = combined_loss(logits, y, num_classes)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        loss_sum += loss.item() * x.size(0)
+        total += x.size(0)
+        iou_sum += iou_per_class(logits, y, num_classes).nan_to_num(0)
+    return loss_sum / total, iou_sum / len(loader)</code></pre>
+      </div>
+    <p>Run this for 10-30 epochs on the synthetic dataset and watch mIoU climb past 0.9 for the shape classes. Note the <code>nan_to_num(0)</code> treats classes absent from a batch as zero; for accurate per-class IoU, mask by presence and use <code>torch.nanmean</code> across batches at evaluation time rather than averaging here.</p>
+<h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p>For production, <code>segmentation_models_pytorch</code> (&quot;smp&quot;) wraps every standard segmentation architecture with any torchvision or timm backbone. Three lines:</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import segmentation_models_pytorch as smp
+
+model = smp.Unet(
+    encoder_name=&quot;resnet34&quot;,
+    encoder_weights=&quot;imagenet&quot;,
+    in_channels=3,
+    classes=3,
+)</code></pre>
+      </div>
+    <p>Also worth knowing for real work:</p>
+<ul>
+<li><strong>DeepLabV3+</strong> replaces max-pool-based downsampling with dilated convs so the bottleneck keeps resolution; faster boundaries on satellite and driving data.</li>
+<li><strong>SegFormer</strong> swaps the conv encoder for a hierarchical transformer; current SOTA on many benchmarks.</li>
+<li><strong>Mask2Former</strong> / <strong>OneFormer</strong> unify semantic, instance, and panoptic segmentation in a single architecture.</li>
+</ul>
+<p>All three are drop-in replacements in <code>smp</code> or <code>transformers</code> with the same data loader.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces:</p>
+<ul>
+<li><code>outputs/prompt-segmentation-task-picker.md</code> — a prompt that picks between semantic, instance, and panoptic segmentation and names the architecture for a given task.</li>
+<li><code>outputs/skill-segmentation-mask-inspector.md</code> — a skill that reports class distribution, predicted-mask statistics, and the classes that are under-predicted or boundary-blurred.</li>
+</ul>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><strong>(Easy)</strong> Implement <code>bce_dice_loss</code> for a binary segmentation task (foreground vs background). Verify on a synthetic two-class dataset that the combined loss converges faster than BCE alone when the foreground is 5% of pixels.</li>
+<li><strong>(Medium)</strong> Replace the <code>nn.Upsample + conv</code> up-block with a <code>nn.ConvTranspose2d</code> up-block. Train both on the synthetic dataset and compare mIoU. Observe where checkerboard artifacts appear in the transposed-conv version.</li>
+<li><strong>(Hard)</strong> Take a real segmentation dataset (Oxford-IIIT Pets, Cityscapes mini split, or a medical subset) and train the U-Net to within 2 IoU points of the <code>smp.Unet</code> reference. Report per-class IoU and identify which classes benefit most from adding Dice to the loss.</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Semantic segmentation</td>
+<td>&quot;Label every pixel&quot;</td>
+<td>Per-pixel classification into C classes; instances of the same class merge</td>
+</tr>
+<tr>
+<td>Instance segmentation</td>
+<td>&quot;Label every object&quot;</td>
+<td>Separates distinct instances of the same class; foreground-only</td>
+</tr>
+<tr>
+<td>Panoptic segmentation</td>
+<td>&quot;Semantic + instance&quot;</td>
+<td>Every pixel gets a class; every thing instance also gets a unique id</td>
+</tr>
+<tr>
+<td>Skip connection</td>
+<td>&quot;U-Net bridge&quot;</td>
+<td>Concatenation of encoder features into matching-resolution decoder features; preserves high-frequency detail</td>
+</tr>
+<tr>
+<td>Transposed conv</td>
+<td>&quot;Deconvolution&quot;</td>
+<td>Learnable upsampling; can produce checkerboard artifacts</td>
+</tr>
+<tr>
+<td>Dice loss</td>
+<td>&quot;Overlap loss&quot;</td>
+<td>1 - 2</td>
+</tr>
+<tr>
+<td>mIoU</td>
+<td>&quot;Mean intersection over union&quot;</td>
+<td>Average IoU across classes; the community-standard metric for segmentation</td>
+</tr>
+<tr>
+<td>Boundary F1</td>
+<td>&quot;Boundary accuracy&quot;</td>
+<td>F1 score computed on boundary pixels only; matters for precision-critical tasks</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/1505.04597">U-Net: Convolutional Networks for Biomedical Image Segmentation (Ronneberger et al., 2015)</a> — the original paper; the figure everyone copies is on page 2</li>
+<li><a href="https://arxiv.org/abs/1411.4038">Fully Convolutional Networks (Long et al., 2015)</a> — the paper that first made segmentation an end-to-end conv problem</li>
+<li><a href="https://github.com/qubvel/segmentation_models.pytorch">segmentation_models_pytorch</a> — the reference for production segmentation; every standard architecture plus every standard loss</li>
+<li><a href="https://www.kaggle.com/code/iafoss/carvana-unet-pytorch">Lessons learned from training SOTA segmentation (kaggle.com competitions)</a> — a walkthrough of why TTA, pseudo-labeling, and class weights matter on real data</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./06-object-detection-yolo.html"><span>← Previous</span><b>object detection yolo</b></a>
+      <a class="next" href="./08-instance-segmentation-mask-rcnn.html"><span>Next →</span><b>instance segmentation mask rcnn</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

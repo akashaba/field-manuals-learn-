@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Structured Outputs: JSON, Schema Validation, Constrained Decoding — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/11-llm-engineering/03-structured-outputs/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">LLM Engineering</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#build-it">Build It</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · LLM Engineering</div>
+    <h1 class="lesson-title">Structured Outputs: JSON, Schema Validation, Constrained Decoding</h1>
+    <p class="lesson-sub">Your LLM returns a string. Your application needs JSON. That gap has crashed more production systems than any model hallucination. Structured output is the bridge between natural language and typed data. Get it right and your LLM becomes a reliable API. Get it wrong and you&#39;re parsing free-text with regex at 3am.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Build</b></div><div><span>Languages</span><b>Python</b></div><div><span>Prerequisites</span><b>Phase 10, Lessons 01-05 (LLMs from Scratch)</b></div><div><span>Time</span><b>~90 minutes</b></div><div><span>Related</span><b>Phase 5 · 20 (Structured Outputs &amp; Constrained Decoding) covers the decoder-level theory (FSM/CFG logit processors, Outlines, XGrammar). This lesson focuses on the production SDK surface (OpenAI `response_format`, Anthropic tool use, Instructor) — read Phase 5 · 20 first if you want to understand what is happening below the API.</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — LLM Engineering 03">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <path d="M44.5,73.0 L61.6,47.4 L78.7,73.0 Z" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55"/>
+        <rect x="39.8" y="41.4" width="32.9" height="32.9" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(228 56.2 57.8)"/>
+        <rect x="35.0" y="37.1" width="31.6" height="31.6" rx="2" fill="none" stroke="#a97817" stroke-width="1.1" opacity="0.55" transform="rotate(211 50.8 52.9)"/>
+        <rect x="30.2" y="32.8" width="30.4" height="30.4" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(193 45.4 48.0)"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#a97817" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#a97817" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#a97817" letter-spacing="-2">03</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="120" lengthAdjust="spacingAndGlyphs">LLM ENGINEERING</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Structured Outputs:</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">JSON, Schema…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Implement JSON-mode and schema-constrained outputs using OpenAI and Anthropic API parameters</li>
+<li>Build a Pydantic validation layer that rejects malformed LLM outputs and retries with error feedback</li>
+<li>Explain how constrained decoding forces valid JSON at the token level without post-processing</li>
+<li>Design robust extraction prompts that reliably convert unstructured text into typed data structures</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>You ask an LLM: &quot;Extract the product name, price, and availability from this text.&quot; It responds:</p>
+
+      <div class="codeblock" data-lang="">
+        
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="hljs">The product is the Sony WH-1000XM5 headphones, which cost $348.00 and are currently in stock.</code></pre>
+      </div>
+    <p>That is a perfectly correct answer. It is also completely useless to your application. Your inventory system needs <code>{&quot;product&quot;: &quot;Sony WH-1000XM5&quot;, &quot;price&quot;: 348.00, &quot;in_stock&quot;: true}</code>. You need a JSON object with specific keys, specific types, and specific value constraints. You do not need a sentence.</p>
+<p>The naive solution: add &quot;Respond in JSON&quot; to your prompt. This works 90% of the time. The other 10% the model wraps the JSON in markdown code fences, or adds a preamble like &quot;Here&#39;s the JSON:&quot;, or produces syntactically invalid JSON because it closed a bracket early. Your JSON parser crashes. Your pipeline breaks. You add try/except and a retry loop. The retry sometimes produces different data. Now you have a consistency problem on top of a parsing problem.</p>
+<p>This is not a prompt engineering problem. It is a decoding problem. The model generates tokens left to right. At each position, it picks the most likely next token from a vocabulary of 100K+ options. Most of those options would produce invalid JSON at any given position. If the model just emitted <code>{&quot;price&quot;:</code>, the next token must be a digit, a quote (for string), <code>null</code>, <code>true</code>, <code>false</code>, or a negative sign. Anything else produces invalid JSON. Without constraints, the model might pick a perfectly reasonable English word that is catastrophically wrong syntactically.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-structured-output-spectrum"><a class="anchor" href="#the-structured-output-spectrum">#</a> The Structured Output Spectrum</h3>
+<p>There are four levels of structured output control, each more reliable than the last.</p>
+<div class="fig"><pre class="mermaid">graph LR
+    subgraph Spectrum[&quot;Structured Output Spectrum&quot;]
+        direction LR
+        A[&quot;Prompt-based\n&#39;Return JSON&#39;\n~90% valid&quot;] --&gt; B[&quot;JSON Mode\nGuaranteed valid JSON\nNo schema guarantee&quot;]
+        B --&gt; C[&quot;Schema Mode\nJSON + matches schema\nGuaranteed compliance&quot;]
+        C --&gt; D[&quot;Constrained Decoding\nToken-level enforcement\n100% compliance&quot;]
+    end
+
+    style A fill:#1a1a2e,stroke:#ff6b6b,color:#fff
+    style B fill:#1a1a2e,stroke:#ffa500,color:#fff
+    style C fill:#1a1a2e,stroke:#51cf66,color:#fff
+    style D fill:#1a1a2e,stroke:#0f3460,color:#fff</pre></div><p><strong>Prompt-based</strong> (&quot;Respond in valid JSON&quot;): no enforcement. The model usually complies but sometimes does not. Reliability: ~90%. Failure mode: markdown fences, preamble text, truncated output, wrong structure.</p>
+<p><strong>JSON mode</strong>: the API guarantees the output is valid JSON. OpenAI&#39;s <code>response_format: { type: &quot;json_object&quot; }</code> enables this. The output will parse without errors. But it may not match your expected schema -- extra keys, wrong types, missing fields.</p>
+<p><strong>Schema mode</strong>: the API takes a JSON Schema and guarantees the output matches it. In 2026 every major provider supports this natively: OpenAI&#39;s <code>response_format: { type: &quot;json_schema&quot;, json_schema: {...} }</code> (also as <code>tool_choice=&quot;required&quot;</code>), Anthropic&#39;s tool use with <code>input_schema</code>, and Gemini&#39;s <code>response_schema</code> + <code>response_mime_type: &quot;application/json&quot;</code>. The output has the exact keys, types, and constraints you specified.</p>
+<p><strong>Constrained decoding</strong>: at each token position during generation, the decoder masks out all tokens that would produce invalid output. If the schema requires a number and the model is about to emit a letter, that token is set to probability zero. The model can only produce tokens that lead to valid output. This is what OpenAI&#39;s structured output mode and libraries like Outlines and Guidance implement under the hood.</p>
+<h3 id="json-schema-the-contract-language"><a class="anchor" href="#json-schema-the-contract-language">#</a> JSON Schema: The Contract Language</h3>
+<p>JSON Schema is how you tell the model (or validation layer) what shape the output must have. Every major structured output system uses it.</p>
+
+      <div class="codeblock" data-lang="json">
+        <span class="cb-label">json</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-json hljs">{
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;properties&quot;: {
+    &quot;product&quot;: { &quot;type&quot;: &quot;string&quot; },
+    &quot;price&quot;: { &quot;type&quot;: &quot;number&quot;, &quot;minimum&quot;: 0 },
+    &quot;in_stock&quot;: { &quot;type&quot;: &quot;boolean&quot; },
+    &quot;categories&quot;: {
+      &quot;type&quot;: &quot;array&quot;,
+      &quot;items&quot;: { &quot;type&quot;: &quot;string&quot; }
+    }
+  },
+  &quot;required&quot;: [&quot;product&quot;, &quot;price&quot;, &quot;in_stock&quot;]
+}</code></pre>
+      </div>
+    <p>This schema says: the output must be an object with a string <code>product</code>, a non-negative number <code>price</code>, a boolean <code>in_stock</code>, and an optional array of string <code>categories</code>. Any output that does not match gets rejected.</p>
+<p>Schemas handle the hard cases: nested objects, arrays with typed items, enums (constrain a string to specific values), pattern matching (regex on strings), and combinators (oneOf, anyOf, allOf for polymorphic outputs).</p>
+<h3 id="the-pydantic-pattern"><a class="anchor" href="#the-pydantic-pattern">#</a> The Pydantic Pattern</h3>
+<p>In Python, you do not write JSON Schema by hand. You define a Pydantic model and it generates the schema for you.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">from pydantic import BaseModel
+
+class Product(BaseModel):
+    product: str
+    price: float
+    in_stock: bool
+    categories: list[str] = []</code></pre>
+      </div>
+    <p>This produces the same JSON Schema as above. The Instructor library (and OpenAI&#39;s SDK) accept Pydantic models directly: pass the model class, get back a validated instance. If the LLM output does not match, Instructor retries automatically.</p>
+<h3 id="function-calling-tool-use"><a class="anchor" href="#function-calling-tool-use">#</a> Function Calling / Tool Use</h3>
+<p>An alternative interface for the same problem. Instead of asking the model to produce JSON directly, you define &quot;tools&quot; (functions) with typed parameters. The model outputs a function call with structured arguments. OpenAI calls this &quot;function calling.&quot; Anthropic calls it &quot;tool use.&quot; The result is the same: structured data.</p>
+<div class="fig"><pre class="mermaid">graph TD
+    subgraph ToolUse[&quot;Tool Use Flow&quot;]
+        U[&quot;User: Extract product info\nfrom this review text&quot;] --&gt; M[&quot;Model processes input&quot;]
+        M --&gt; TC[&quot;Tool Call:\nextract_product(\n  product=&#39;Sony WH-1000XM5&#39;,\n  price=348.00,\n  in_stock=true\n)&quot;]
+        TC --&gt; V[&quot;Validate against\nfunction schema&quot;]
+        V --&gt; R[&quot;Structured Result:\n{product, price, in_stock}&quot;]
+    end
+
+    style U fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style TC fill:#1a1a2e,stroke:#e94560,color:#fff
+    style V fill:#1a1a2e,stroke:#ffa500,color:#fff
+    style R fill:#1a1a2e,stroke:#51cf66,color:#fff</pre></div><p>Tool use is preferred when the model needs to choose which function to call, not just fill in parameters. If you have 10 different extraction schemas and the model must pick the right one based on the input, tool use gives you both the schema selection and the structured output.</p>
+<h3 id="common-failure-modes"><a class="anchor" href="#common-failure-modes">#</a> Common Failure Modes</h3>
+<p>Even with schema enforcement, structured outputs can fail in subtle ways.</p>
+<p><strong>Hallucinated values</strong>: the output matches the schema but contains invented data. The model produces <code>{&quot;price&quot;: 299.99}</code> when the text says $348. Schema validation cannot catch this -- the type is correct, the value is wrong.</p>
+<p><strong>Enum confusion</strong>: you constrain a field to <code>[&quot;in_stock&quot;, &quot;out_of_stock&quot;, &quot;preorder&quot;]</code>. The model outputs <code>&quot;available&quot;</code> -- semantically correct, but not in the allowed set. Good constrained decoding prevents this. Prompt-based approaches do not.</p>
+<p><strong>Nested object depth</strong>: deeply nested schemas (4+ levels) produce more errors. Each level of nesting is another place where the model can lose track of structure.</p>
+<p><strong>Array length</strong>: the model may produce too many or too few items in an array. Schemas support <code>minItems</code> and <code>maxItems</code> but not all providers enforce them at the decoding level.</p>
+<p><strong>Optional field omission</strong>: the model omits fields that are technically optional but semantically important for your use case. Set them as required in the schema even if the data is sometimes missing -- force the model to produce <code>null</code> explicitly.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">mx-schema-funnel</code></pre>
+      </div>
+    <h2 id="build-it"><a class="anchor" href="#build-it">#</a> Build It</h2>
+<h3 id="step-1-json-schema-validator"><a class="anchor" href="#step-1-json-schema-validator">#</a> Step 1: JSON Schema Validator</h3>
+<p>Build a validator from scratch that checks whether a Python object matches a JSON Schema. This is what runs on the output side to verify compliance.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">import json
+
+def validate_schema(data, schema):
+    errors = []
+    _validate(data, schema, &quot;&quot;, errors)
+    return errors
+
+def _validate(data, schema, path, errors):
+    schema_type = schema.get(&quot;type&quot;)
+
+    if schema_type == &quot;object&quot;:
+        if not isinstance(data, dict):
+            errors.append(f&quot;{path}: expected object, got {type(data).__name__}&quot;)
+            return
+        for key in schema.get(&quot;required&quot;, []):
+            if key not in data:
+                errors.append(f&quot;{path}.{key}: required field missing&quot;)
+        properties = schema.get(&quot;properties&quot;, {})
+        for key, value in data.items():
+            if key in properties:
+                _validate(value, properties[key], f&quot;{path}.{key}&quot;, errors)
+
+    elif schema_type == &quot;array&quot;:
+        if not isinstance(data, list):
+            errors.append(f&quot;{path}: expected array, got {type(data).__name__}&quot;)
+            return
+        min_items = schema.get(&quot;minItems&quot;, 0)
+        max_items = schema.get(&quot;maxItems&quot;, float(&quot;inf&quot;))
+        if len(data) &lt; min_items:
+            errors.append(f&quot;{path}: array has {len(data)} items, minimum is {min_items}&quot;)
+        if len(data) &gt; max_items:
+            errors.append(f&quot;{path}: array has {len(data)} items, maximum is {max_items}&quot;)
+        items_schema = schema.get(&quot;items&quot;, {})
+        for i, item in enumerate(data):
+            _validate(item, items_schema, f&quot;{path}[{i}]&quot;, errors)
+
+    elif schema_type == &quot;string&quot;:
+        if not isinstance(data, str):
+            errors.append(f&quot;{path}: expected string, got {type(data).__name__}&quot;)
+            return
+        enum_values = schema.get(&quot;enum&quot;)
+        if enum_values and data not in enum_values:
+            errors.append(f&quot;{path}: &#39;{data}&#39; not in allowed values {enum_values}&quot;)
+
+    elif schema_type == &quot;number&quot;:
+        if not isinstance(data, (int, float)):
+            errors.append(f&quot;{path}: expected number, got {type(data).__name__}&quot;)
+            return
+        minimum = schema.get(&quot;minimum&quot;)
+        maximum = schema.get(&quot;maximum&quot;)
+        if minimum is not None and data &lt; minimum:
+            errors.append(f&quot;{path}: {data} is less than minimum {minimum}&quot;)
+        if maximum is not None and data &gt; maximum:
+            errors.append(f&quot;{path}: {data} is greater than maximum {maximum}&quot;)
+
+    elif schema_type == &quot;boolean&quot;:
+        if not isinstance(data, bool):
+            errors.append(f&quot;{path}: expected boolean, got {type(data).__name__}&quot;)
+
+    elif schema_type == &quot;integer&quot;:
+        if not isinstance(data, int) or isinstance(data, bool):
+            errors.append(f&quot;{path}: expected integer, got {type(data).__name__}&quot;)</code></pre>
+      </div>
+    <h3 id="step-2-pydantic-style-model-to-schema"><a class="anchor" href="#step-2-pydantic-style-model-to-schema">#</a> Step 2: Pydantic-Style Model to Schema</h3>
+<p>Build a minimal class-to-schema converter. Define a Python class and generate its JSON Schema automatically.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">class SchemaField:
+    def __init__(self, field_type, required=True, default=None, enum=None, minimum=None, maximum=None):
+        self.field_type = field_type
+        self.required = required
+        self.default = default
+        self.enum = enum
+        self.minimum = minimum
+        self.maximum = maximum
+
+def python_type_to_schema(field):
+    type_map = {
+        str: &quot;string&quot;,
+        int: &quot;integer&quot;,
+        float: &quot;number&quot;,
+        bool: &quot;boolean&quot;,
+    }
+
+    schema = {}
+
+    if field.field_type in type_map:
+        schema[&quot;type&quot;] = type_map[field.field_type]
+    elif field.field_type == list:
+        schema[&quot;type&quot;] = &quot;array&quot;
+        schema[&quot;items&quot;] = {&quot;type&quot;: &quot;string&quot;}
+    elif isinstance(field.field_type, dict):
+        schema = field.field_type
+
+    if field.enum:
+        schema[&quot;enum&quot;] = field.enum
+    if field.minimum is not None:
+        schema[&quot;minimum&quot;] = field.minimum
+    if field.maximum is not None:
+        schema[&quot;maximum&quot;] = field.maximum
+
+    return schema
+
+def model_to_schema(name, fields):
+    properties = {}
+    required = []
+
+    for field_name, field in fields.items():
+        properties[field_name] = python_type_to_schema(field)
+        if field.required:
+            required.append(field_name)
+
+    return {
+        &quot;type&quot;: &quot;object&quot;,
+        &quot;properties&quot;: properties,
+        &quot;required&quot;: required,
+    }</code></pre>
+      </div>
+    <h3 id="step-3-constrained-token-filter"><a class="anchor" href="#step-3-constrained-token-filter">#</a> Step 3: Constrained Token Filter</h3>
+<p>Simulate constrained decoding. Given a partial JSON string and a schema, determine which token categories are valid at the current position.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def next_valid_tokens(partial_json, schema):
+    stripped = partial_json.strip()
+
+    if not stripped:
+        return [&quot;{&quot;]
+
+    try:
+        json.loads(stripped)
+        return [&quot;&lt;EOS&gt;&quot;]
+    except json.JSONDecodeError:
+        pass
+
+    last_char = stripped[-1] if stripped else &quot;&quot;
+
+    if last_char == &quot;{&quot;:
+        return [&#39;&quot;&#39;, &quot;}&quot;]
+    elif last_char == &#39;&quot;&#39;:
+        if stripped.endswith(&#39;&quot;:&#39;):
+            return [&#39;&quot;&#39;, &quot;0-9&quot;, &quot;true&quot;, &quot;false&quot;, &quot;null&quot;, &quot;[&quot;, &quot;{&quot;]
+        return [&quot;a-z&quot;, &#39;&quot;&#39;]
+    elif last_char == &quot;:&quot;:
+        return [&quot; &quot;, &#39;&quot;&#39;, &quot;0-9&quot;, &quot;true&quot;, &quot;false&quot;, &quot;null&quot;, &quot;[&quot;, &quot;{&quot;]
+    elif last_char == &quot;,&quot;:
+        return [&quot; &quot;, &#39;&quot;&#39;, &quot;{&quot;, &quot;[&quot;]
+    elif last_char in &quot;0123456789&quot;:
+        return [&quot;0-9&quot;, &quot;.&quot;, &quot;,&quot;, &quot;}&quot;, &quot;]&quot;]
+    elif last_char == &quot;}&quot;:
+        return [&quot;,&quot;, &quot;}&quot;, &quot;]&quot;, &quot;&lt;EOS&gt;&quot;]
+    elif last_char == &quot;]&quot;:
+        return [&quot;,&quot;, &quot;}&quot;, &quot;&lt;EOS&gt;&quot;]
+    elif last_char == &quot;[&quot;:
+        return [&#39;&quot;&#39;, &quot;0-9&quot;, &quot;true&quot;, &quot;false&quot;, &quot;null&quot;, &quot;{&quot;, &quot;[&quot;, &quot;]&quot;]
+    else:
+        return [&quot;any&quot;]
+
+def demonstrate_constrained_decoding():
+    partial_states = [
+        &#39;&#39;,
+        &#39;{&#39;,
+        &#39;{&quot;product&quot;&#39;,
+        &#39;{&quot;product&quot;:&#39;,
+        &#39;{&quot;product&quot;: &quot;Sony&quot;&#39;,
+        &#39;{&quot;product&quot;: &quot;Sony&quot;,&#39;,
+        &#39;{&quot;product&quot;: &quot;Sony&quot;, &quot;price&quot;:&#39;,
+        &#39;{&quot;product&quot;: &quot;Sony&quot;, &quot;price&quot;: 348&#39;,
+        &#39;{&quot;product&quot;: &quot;Sony&quot;, &quot;price&quot;: 348}&#39;,
+    ]
+
+    print(f&quot;{&#39;Partial JSON&#39;:&lt;45} {&#39;Valid Next Tokens&#39;}&quot;)
+    print(&quot;-&quot; * 80)
+    for state in partial_states:
+        valid = next_valid_tokens(state, {})
+        display = state if state else &quot;(empty)&quot;
+        print(f&quot;{display:&lt;45} {valid}&quot;)</code></pre>
+      </div>
+    <h3 id="step-4-extraction-pipeline"><a class="anchor" href="#step-4-extraction-pipeline">#</a> Step 4: Extraction Pipeline</h3>
+<p>Combine everything into an extraction pipeline: define a schema, simulate an LLM producing structured output, validate the output, and handle retries.</p>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def simulate_llm_extraction(text, schema, attempt=0):
+    if &quot;headphones&quot; in text.lower() or &quot;sony&quot; in text.lower():
+        if attempt == 0:
+            return &#39;{&quot;product&quot;: &quot;Sony WH-1000XM5&quot;, &quot;price&quot;: 348.00, &quot;in_stock&quot;: true, &quot;categories&quot;: [&quot;audio&quot;, &quot;headphones&quot;]}&#39;
+        return &#39;{&quot;product&quot;: &quot;Sony WH-1000XM5&quot;, &quot;price&quot;: 348.00, &quot;in_stock&quot;: true}&#39;
+
+    if &quot;laptop&quot; in text.lower():
+        return &#39;{&quot;product&quot;: &quot;MacBook Pro 16&quot;, &quot;price&quot;: 2499.00, &quot;in_stock&quot;: false, &quot;categories&quot;: [&quot;computers&quot;]}&#39;
+
+    return &#39;{&quot;product&quot;: &quot;Unknown&quot;, &quot;price&quot;: 0, &quot;in_stock&quot;: false}&#39;
+
+def extract_with_retry(text, schema, max_retries=3):
+    for attempt in range(max_retries):
+        raw = simulate_llm_extraction(text, schema, attempt)
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            print(f&quot;  Attempt {attempt + 1}: JSON parse error -- {e}&quot;)
+            continue
+
+        errors = validate_schema(data, schema)
+        if not errors:
+            return data
+
+        print(f&quot;  Attempt {attempt + 1}: Schema validation errors -- {errors}&quot;)
+
+    return None
+
+product_schema = {
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;properties&quot;: {
+        &quot;product&quot;: {&quot;type&quot;: &quot;string&quot;},
+        &quot;price&quot;: {&quot;type&quot;: &quot;number&quot;, &quot;minimum&quot;: 0},
+        &quot;in_stock&quot;: {&quot;type&quot;: &quot;boolean&quot;},
+        &quot;categories&quot;: {&quot;type&quot;: &quot;array&quot;, &quot;items&quot;: {&quot;type&quot;: &quot;string&quot;}},
+    },
+    &quot;required&quot;: [&quot;product&quot;, &quot;price&quot;, &quot;in_stock&quot;],
+}</code></pre>
+      </div>
+    <h3 id="step-5-run-the-full-pipeline"><a class="anchor" href="#step-5-run-the-full-pipeline">#</a> Step 5: Run the Full Pipeline</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs">def run_demo():
+    print(&quot;=&quot; * 60)
+    print(&quot;  Structured Output Pipeline Demo&quot;)
+    print(&quot;=&quot; * 60)
+
+    print(&quot;\n--- Schema Definition ---&quot;)
+    product_fields = {
+        &quot;product&quot;: SchemaField(str),
+        &quot;price&quot;: SchemaField(float, minimum=0),
+        &quot;in_stock&quot;: SchemaField(bool),
+        &quot;categories&quot;: SchemaField(list, required=False),
+    }
+    generated_schema = model_to_schema(&quot;Product&quot;, product_fields)
+    print(json.dumps(generated_schema, indent=2))
+
+    print(&quot;\n--- Schema Validation ---&quot;)
+    test_cases = [
+        ({&quot;product&quot;: &quot;Test&quot;, &quot;price&quot;: 10.0, &quot;in_stock&quot;: True}, &quot;Valid object&quot;),
+        ({&quot;product&quot;: &quot;Test&quot;, &quot;price&quot;: -5.0, &quot;in_stock&quot;: True}, &quot;Negative price&quot;),
+        ({&quot;product&quot;: &quot;Test&quot;, &quot;in_stock&quot;: True}, &quot;Missing price&quot;),
+        ({&quot;product&quot;: &quot;Test&quot;, &quot;price&quot;: &quot;ten&quot;, &quot;in_stock&quot;: True}, &quot;String as price&quot;),
+        (&quot;not an object&quot;, &quot;String instead of object&quot;),
+    ]
+
+    for data, label in test_cases:
+        errors = validate_schema(data, product_schema)
+        status = &quot;PASS&quot; if not errors else f&quot;FAIL: {errors}&quot;
+        print(f&quot;  {label}: {status}&quot;)
+
+    print(&quot;\n--- Constrained Decoding Simulation ---&quot;)
+    demonstrate_constrained_decoding()
+
+    print(&quot;\n--- Extraction Pipeline ---&quot;)
+    texts = [
+        &quot;The Sony WH-1000XM5 headphones are priced at $348 and currently available.&quot;,
+        &quot;The new MacBook Pro 16-inch laptop costs $2499 but is sold out.&quot;,
+        &quot;This is a random sentence with no product info.&quot;,
+    ]
+
+    for text in texts:
+        print(f&quot;\n  Input: {text[:60]}...&quot;)
+        result = extract_with_retry(text, product_schema)
+        if result:
+            print(f&quot;  Output: {json.dumps(result)}&quot;)
+        else:
+            print(f&quot;  Output: FAILED after retries&quot;)</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<h3 id="openai-structured-outputs"><a class="anchor" href="#openai-structured-outputs">#</a> OpenAI Structured Outputs</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># from openai import OpenAI
+# from pydantic import BaseModel
+#
+# client = OpenAI()
+#
+# class Product(BaseModel):
+#     product: str
+#     price: float
+#     in_stock: bool
+#
+# response = client.beta.chat.completions.parse(
+#     model=&quot;gpt-5-mini&quot;,
+#     messages=[
+#         {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;Extract product information.&quot;},
+#         {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Sony WH-1000XM5, $348, in stock&quot;},
+#     ],
+#     response_format=Product,
+# )
+#
+# product = response.choices[0].message.parsed
+# print(product.product, product.price, product.in_stock)</code></pre>
+      </div>
+    <p>OpenAI&#39;s structured output mode uses constrained decoding internally. Every token the model generates is guaranteed to produce output matching the Pydantic schema. No retries needed. No validation needed. The constraint is baked into the decoding process.</p>
+<h3 id="anthropic-tool-use"><a class="anchor" href="#anthropic-tool-use">#</a> Anthropic Tool Use</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># import anthropic
+#
+# client = anthropic.Anthropic()
+#
+# response = client.messages.create(
+#     model=&quot;claude-opus-4-7&quot;,
+#     max_tokens=1024,
+#     tools=[{
+#         &quot;name&quot;: &quot;extract_product&quot;,
+#         &quot;description&quot;: &quot;Extract product information from text&quot;,
+#         &quot;input_schema&quot;: {
+#             &quot;type&quot;: &quot;object&quot;,
+#             &quot;properties&quot;: {
+#                 &quot;product&quot;: {&quot;type&quot;: &quot;string&quot;},
+#                 &quot;price&quot;: {&quot;type&quot;: &quot;number&quot;},
+#                 &quot;in_stock&quot;: {&quot;type&quot;: &quot;boolean&quot;},
+#             },
+#             &quot;required&quot;: [&quot;product&quot;, &quot;price&quot;, &quot;in_stock&quot;],
+#         },
+#     }],
+#     messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Extract: Sony WH-1000XM5, $348, in stock&quot;}],
+# )</code></pre>
+      </div>
+    <p>Anthropic achieves structured output through tool use. The model emits a tool call with structured arguments that match the input_schema. Same result, different API surface.</p>
+<h3 id="instructor-library"><a class="anchor" href="#instructor-library">#</a> Instructor Library</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># pip install instructor
+# import instructor
+# from openai import OpenAI
+# from pydantic import BaseModel
+#
+# client = instructor.from_openai(OpenAI())
+#
+# class Product(BaseModel):
+#     product: str
+#     price: float
+#     in_stock: bool
+#
+# product = client.chat.completions.create(
+#     model=&quot;gpt-5-mini&quot;,
+#     response_model=Product,
+#     messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Sony WH-1000XM5, $348, in stock&quot;}],
+# )</code></pre>
+      </div>
+    <p>Instructor wraps any LLM client and adds automatic retries with validation. If the first attempt fails validation, it sends the errors back to the model as context and asks it to fix the output. This works with any provider, not just OpenAI.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/prompt-structured-extractor.md</code> -- a reusable prompt template that extracts structured data from any text given a schema definition. Feed it a JSON Schema and unstructured text, and it returns validated JSON.</p>
+<p>It also produces <code>outputs/skill-structured-outputs.md</code> -- a decision framework for choosing the right structured output strategy based on your provider, reliability requirements, and schema complexity.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Extend the schema validator to support <code>oneOf</code> (the data must match exactly one of several schemas). This handles polymorphic outputs -- for example, a field that can be either a <code>Product</code> or a <code>Service</code> object with different shapes.</p>
+</li>
+<li><p>Build a &quot;schema diff&quot; tool that compares two schemas and identifies breaking changes (removed required fields, changed types) versus non-breaking changes (added optional fields, relaxed constraints). This is essential for versioning your extraction schemas in production.</p>
+</li>
+<li><p>Implement a more realistic constrained decoding simulator. Given a JSON Schema and a vocabulary of 100 tokens (letters, digits, punctuation, keywords), walk through generation step by step, masking invalid tokens at each position. Measure what percentage of the vocabulary is valid at each step.</p>
+</li>
+<li><p>Build an extraction eval suite. Create 50 product descriptions with hand-labeled JSON outputs. Run your extraction pipeline on all 50 and measure exact match, field-level accuracy, and type compliance. Identify which fields are hardest to extract correctly.</p>
+</li>
+<li><p>Add &quot;confidence scores&quot; to your extraction pipeline. For each extracted field, estimate how confident the model is (based on token probabilities, or by running extraction 3 times and measuring consistency). Flag low-confidence fields for human review.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>JSON mode</td>
+<td>&quot;Returns JSON&quot;</td>
+<td>API flag that guarantees syntactically valid JSON output, but does not enforce any particular schema</td>
+</tr>
+<tr>
+<td>Structured output</td>
+<td>&quot;Typed JSON&quot;</td>
+<td>Output that matches a specific JSON Schema with correct keys, types, and constraints</td>
+</tr>
+<tr>
+<td>Constrained decoding</td>
+<td>&quot;Guided generation&quot;</td>
+<td>At each token position, mask out tokens that would produce invalid output -- guarantees 100% schema compliance</td>
+</tr>
+<tr>
+<td>JSON Schema</td>
+<td>&quot;A JSON template&quot;</td>
+<td>A declarative language for describing the structure, types, and constraints of JSON data (used by OpenAPI, JSON Forms, etc.)</td>
+</tr>
+<tr>
+<td>Pydantic</td>
+<td>&quot;Python dataclasses+&quot;</td>
+<td>Python library that defines data models with type validation, used by FastAPI and Instructor to generate JSON Schemas</td>
+</tr>
+<tr>
+<td>Function calling</td>
+<td>&quot;Tool use&quot;</td>
+<td>LLM outputs a structured function invocation (name + typed arguments) instead of free text -- OpenAI and Anthropic both support this</td>
+</tr>
+<tr>
+<td>Instructor</td>
+<td>&quot;Pydantic for LLMs&quot;</td>
+<td>Python library that wraps LLM clients to return validated Pydantic instances, with automatic retry on validation failure</td>
+</tr>
+<tr>
+<td>Token masking</td>
+<td>&quot;Filtering the vocabulary&quot;</td>
+<td>Setting specific token probabilities to zero during generation so the model cannot produce them</td>
+</tr>
+<tr>
+<td>Schema compliance</td>
+<td>&quot;Matches the shape&quot;</td>
+<td>The output has every required field, correct types, values within constraints, and no extra disallowed fields</td>
+</tr>
+<tr>
+<td>Retry loop</td>
+<td>&quot;Try again until it works&quot;</td>
+<td>Send validation errors back to the model and ask it to fix the output -- Instructor does this automatically, up to a configurable max</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://platform.openai.com/docs/guides/structured-outputs">OpenAI Structured Outputs Guide</a> -- official documentation for JSON Schema-based constrained decoding in the OpenAI API</li>
+<li><a href="https://arxiv.org/abs/2307.09702">Willard &amp; Louf, 2023 -- &quot;Efficient Guided Generation for Large Language Models&quot;</a> -- the Outlines paper, describing how to compile JSON Schemas into finite state machines for token-level constraints</li>
+<li><a href="https://python.useinstructor.com/">Instructor documentation</a> -- the standard library for getting structured outputs from any LLM with Pydantic validation and retries</li>
+<li><a href="https://docs.anthropic.com/en/docs/tool-use">Anthropic Tool Use Guide</a> -- how Claude implements structured output via tool use with JSON Schema input_schema</li>
+<li><a href="https://json-schema.org/">JSON Schema specification</a> -- the full spec for the schema language used by every major structured output system</li>
+<li><a href="https://github.com/outlines-dev/outlines">Outlines library</a> -- open-source constrained generation using regex and JSON Schema compiled to finite state machines</li>
+<li><a href="https://arxiv.org/abs/2411.15100">Dong et al., &quot;XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models&quot; (MLSys 2025)</a> -- the current state-of-the-art grammar engine; pushdown-automaton compilation that masks tokens at ~100 ns / token.</li>
+<li><a href="https://arxiv.org/abs/2212.06094">Beurer-Kellner et al., &quot;Prompting Is Programming: A Query Language for Large Language Models&quot; (LMQL)</a> -- the LMQL paper framing constrained decoding as a query language with type and value constraints.</li>
+<li><a href="https://github.com/guidance-ai/guidance">Microsoft Guidance (framework docs)</a> -- template-driven constrained generation; vendor-agnostic complement to Outlines and XGrammar.</li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./02-few-shot-cot.html"><span>← Previous</span><b>few shot cot</b></a>
+      <a class="next" href="./04-embeddings.html"><span>Next →</span><b>embeddings</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>

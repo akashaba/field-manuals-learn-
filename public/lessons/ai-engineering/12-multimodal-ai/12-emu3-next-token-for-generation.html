@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Emu3: Next-Token Prediction for Image and Video Generation — AI Engineering</title>
+<link rel="stylesheet" href="/lesson.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<style>:root{--accent:#2a4c72;--accent-2:#1a3556;}</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="topbar">
+  <a class="home" href="/">Field manuals</a>
+  <span class="topbar-sep">›</span>
+  <a class="home" href="/ai-engineering"><b>AI Engineering</b></a>
+  <nav>
+    <a href="/ai-engineering">Index</a>
+    <a href="https://github.com/rohitg00/ai-engineering-from-scratch/blob/main/phases/12-multimodal-ai/12-emu3-next-token-for-generation/docs/en.md" target="_blank" rel="noreferrer">Source</a>
+  </nav>
+</header>
+<div class="page">
+  <aside class="sidenav">
+    <div class="crumbs">
+      <a href="/">Home</a>
+      <span>›</span>
+      <a href="/ai-engineering">AI Engineering</a>
+    </div>
+    <div class="phase-label">Multimodal AI</div>
+    <ol class="toc"><li><a href="#learning-objectives">Learning Objectives</a></li><li><a href="#the-problem">The Problem</a></li><li><a href="#the-concept">The Concept</a></li><li><a href="#use-it">Use It</a></li><li><a href="#ship-it">Ship It</a></li><li><a href="#exercises">Exercises</a></li><li><a href="#key-terms">Key Terms</a></li><li><a href="#further-reading">Further Reading</a></li></ol>
+  </aside>
+
+  <article id="content" class="prose">
+    <div class="eyebrow">AI Engineering · Multimodal AI</div>
+    <h1 class="lesson-title">Emu3: Next-Token Prediction for Image and Video Generation</h1>
+    <p class="lesson-sub">BAAI&#39;s Emu3 (Wang et al., September 2024) is the 2024 result that should have ended the diffusion-versus-autoregressive debate. A single Llama-style decoder-only transformer, trained only on the next-token-prediction objective, across a unified vocabulary of text + VQ image tokens + 3D VQ video tokens, beats SDXL on image generation and LLaVA-1.6 on perception. No CLIP loss. No diffusion schedule. Classifier-free guidance is used at inference for quality, but the core training objective is next-token prediction with teacher forcing. Published in Nature. This lesson reads the Emu3 thesis — why a better tokenizer plus scale is all you need — and contrasts with diffusion approaches.</p>
+    <div class="meta-strip"><div><span>Type</span><b>Learn</b></div><div><span>Languages</span><b>Python (stdlib, 3D video tokenizer math + autoregressive sampler skeleton)</b></div><div><span>Prerequisites</span><b>Phase 12 · 11 (Chameleon)</b></div><div><span>Time</span><b>~120 minutes</b></div></div>
+    
+    <figure class="sigil">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI Engineering — Multimodal AI 12">
+        <rect width="320" height="180" fill="#ebe4d5"/>
+        <rect x="21.4" y="124.9" width="28.0" height="28.0" rx="2" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55" transform="rotate(160 35.4 138.9)"/>
+        <rect x="16.6" y="120.6" width="26.7" height="26.7" rx="2" fill="none" stroke="#8f2f20" stroke-width="1.1" opacity="0.55" transform="rotate(142 30.0 134.0)"/>
+        <circle cx="24.5" cy="129.0" r="12.7" fill="none" stroke="#2a4c72" stroke-width="1.1" opacity="0.55"/>
+        <text x="160" y="20" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#2a4c72" textLength="112" lengthAdjust="spacingAndGlyphs">AI ENGINEERING</text>
+        <circle cx="70" cy="100" r="44" fill="none" stroke="#2a4c72" stroke-width="1" stroke-dasharray="2 4"/>
+        <text x="70" y="114" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="900" font-size="48" fill="#2a4c72" letter-spacing="-2">12</text>
+        <text x="70" y="160" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.2" fill="#55503f" textLength="104" lengthAdjust="spacingAndGlyphs">MULTIMODAL AI</text>
+        <line x1="148" y1="44" x2="148" y2="156" stroke="#d6ceba"/>
+        <text y="78" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-size="16" fill="#1c1a17"><tspan x="230" dy="0" textLength="150" lengthAdjust="spacingAndGlyphs">Emu3: Next-Token</tspan><tspan x="230" dy="22" textLength="150" lengthAdjust="spacingAndGlyphs">Prediction for Image…</tspan></text>
+        <text x="230" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="0.6" fill="#55503f">field manual</text>
+      </svg>
+    </figure>
+  
+    <h2 id="learning-objectives"><a class="anchor" href="#learning-objectives">#</a> Learning Objectives</h2>
+<ul>
+<li>Explain why Emu3&#39;s single-loss next-token objective works despite the long-held assumption that diffusion is required for image quality.</li>
+<li>Describe the 3D video tokenizer: what a spatiotemporal VQ codebook looks like, why patches span time.</li>
+<li>Compare Emu3 vs Stable Diffusion XL on (training compute, inference cost, quality ceiling).</li>
+<li>Name the three roles the same Emu3 model plays: Emu3-Gen (image gen), Emu3-Chat (perception), Emu3-Stage2 (video gen).</li>
+</ul>
+<h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
+<p>The conventional wisdom through 2024: image generation needs diffusion. The argument: discrete image tokens lose too much information to reconstruct detail, and autoregressive sampling accumulates error across thousands of tokens. Stable Diffusion, DALL-E 3, Imagen, Midjourney all use some form of diffusion. Chameleon (Lesson 12.11) partially disproved this at small scale but did not match SDXL on quality.</p>
+<p>Emu3 attacked the argument head-on. The claim: better visual tokenizer + enough scale + next-token loss = diffusion-beating image generation in the same model that also does perception.</p>
+<p>The bet was controversial when it published. Two years on, the open-source unified-generation family (Emu3, Show-o, Janus-Pro, Transfusion) is the default path for research; production frontier models appear to use some variant.</p>
+<h2 id="the-concept"><a class="anchor" href="#the-concept">#</a> The Concept</h2>
+<h3 id="the-emu3-tokenizer"><a class="anchor" href="#the-emu3-tokenizer">#</a> The Emu3 tokenizer</h3>
+<p>The key ingredient is the visual tokenizer. Emu3 trains a custom IBQ-class tokenizer (Inverse Bottleneck Quantizer, SBER-MoVQGAN family) at 8x8 resolution-reduction per token. A 512x512 image becomes 64x64 = 4096 tokens at codebook size 32768.</p>
+<p>This is larger than Chameleon&#39;s 1024 tokens per 512x512 at K=8192 but cheaper per token (smaller codebook lookups, simpler codec). The key metric: reconstruction PSNR at 30.5 dB, competitive with Stable Diffusion&#39;s continuous latent space at 32 dB.</p>
+<p>For video: a 3D VQ tokenizer encodes a spatiotemporal patch (4x4x4 pixels) to one integer. A 4s clip at 8 FPS has 32 frames; at 256x256 with 4x spatial and 4x temporal reduction, the token count is (256/4) * (256/4) * (32/4) = 64 * 64 * 8 = 32,768 tokens.</p>
+<p>Tokenizer quality is the ceiling. Emu3&#39;s contribution is partly &quot;we trained a very good tokenizer.&quot;</p>
+<h3 id="single-loss-training"><a class="anchor" href="#single-loss-training">#</a> Single-loss training</h3>
+<p>Emu3 uses one objective: next-token prediction on a shared vocabulary across text tokens, 2D image tokens, and 3D video tokens. Weights are multiplied by modality-specific factors during training to balance contribution, but the loss function is identical.</p>
+<p>Train on a mix of:</p>
+<ul>
+<li>Image gen: <code>&lt;text caption&gt; &lt;image&gt; image_tokens &lt;/image&gt;</code></li>
+<li>Image perception: <code>&lt;image&gt; image_tokens &lt;/image&gt; &lt;question&gt; text_tokens</code></li>
+<li>Video gen: <code>&lt;text caption&gt; &lt;video&gt; video_tokens &lt;/video&gt;</code></li>
+<li>Video perception: analogous.</li>
+<li>Text only: standard NTP.</li>
+</ul>
+<p>The model learns when to emit image tokens vs text tokens from the data distribution. Generation emerges from the model predicting image tokens after the <code>&lt;image&gt;</code> tag.</p>
+<h3 id="classifier-free-guidance-and-temperature"><a class="anchor" href="#classifier-free-guidance-and-temperature">#</a> Classifier-free guidance and temperature</h3>
+<p>Autoregressive image generation gets much better with classifier-free guidance (CFG) at inference. Emu3 uses it: generate twice, once with the full caption, once with an empty caption, mix the logits with a guidance weight (typical 3.0-7.0). This is the same CFG trick diffusion uses, borrowed to the autoregressive setting.</p>
+<p>Temperature matters: too high, artifacts; too low, mode collapse. Emu3&#39;s recommended temperature is 1.0 for perception, 0.8 for image generation.</p>
+<h3 id="three-roles-one-model"><a class="anchor" href="#three-roles-one-model">#</a> Three roles, one model</h3>
+<p>Emu3 ships as three functionally distinct APIs but one underlying weight set:</p>
+<ul>
+<li>Emu3-Gen. Image generation. Input text, output image tokens.</li>
+<li>Emu3-Chat. VQA and captioning. Input image (tokens), output text.</li>
+<li>Emu3-Stage2. Video generation and video VQA. Input text or video, output text or video.</li>
+</ul>
+<p>No task-specific heads. Just different prompt templates. Same checkpoint.</p>
+<h3 id="benchmarks"><a class="anchor" href="#benchmarks">#</a> Benchmarks</h3>
+<p>From Emu3 paper (September 2024):</p>
+<ul>
+<li>Image generation: beats SDXL on MJHQ-30K FID (5.4 vs 5.6), GenEval overall (0.54 vs 0.55 — statistical tie), and Deep-Eval&#39;s composite on-par.</li>
+<li>Image perception: beats LLaVA-1.6 on VQAv2 (75.1 vs 72.4) and roughly matches on MMMU.</li>
+<li>Video generation: 4-second-clip quality at competitive FVD with Sora-era publicly benchmarked models.</li>
+</ul>
+<p>The numbers are not always winning — Emu3 trades a point here for a point there — but the claim &quot;next-token prediction is all you need&quot; is defensible across modalities.</p>
+<h3 id="compute-cost"><a class="anchor" href="#compute-cost">#</a> Compute cost</h3>
+<p>Emu3 was trained on ~300 billion multimodal tokens with a 7B-parameter model. GPU-hours roughly comparable to Llama-2-7B pretraining (2k-4k GPU-years on A100-class silicon). Diffusion models like Stable Diffusion 3 train in similar budgets but need separate text encoders and more complex pipelines.</p>
+<p>At inference, Emu3 is slower than SDXL per image: 4096 image tokens at 30 tok/s is ~2 minutes per 512x512 image, vs 2-5 seconds for SDXL. Speculative decoding and KV-cache optimization narrow the gap but do not close it. Autoregressive image gen is compute-heavy; this is the standing trade-off.</p>
+<h3 id="why-it-matters"><a class="anchor" href="#why-it-matters">#</a> Why it matters</h3>
+<p>Emu3&#39;s deep contribution is conceptual. If next-token prediction scales to match diffusion on image generation, the unified-model path (one loss, one backbone, any modality) is viable. Future models do not need separate text encoders, separate diffusion schedulers, separate VAEs. One transformer, one tokenizer per modality, scale.</p>
+<p>Show-o, Janus-Pro, and InternVL-U all build on or challenge this thesis. Chinese labs (BAAI, DeepSeek) publish more aggressively in this direction than US labs through 2025.</p>
+
+      <div class="codeblock" data-lang="figure">
+        <span class="cb-label">figure</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-figure hljs">l5-emu3-next-token</code></pre>
+      </div>
+    <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
+<p><code>code/main.py</code> builds two toy pieces:</p>
+<ul>
+<li>A 2D vs 3D VQ tokenizer count calculator: given (resolution, patch, clip_length, FPS), compute token counts for image vs video.</li>
+<li>An autoregressive image-token sampler with classifier-free guidance at temperature.</li>
+</ul>
+<p>The CFG implementation matches Emu3&#39;s recipe — mix conditional and unconditional logits with a guidance weight.</p>
+<h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
+<p>This lesson produces <code>outputs/skill-token-gen-cost-analyzer.md</code>. Given a generation product spec (image or video, target resolution, quality tier, latency budget), it computes token counts, inference cost, and picks Emu3-family vs diffusion.</p>
+<h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>
+<ol>
+<li><p>Emu3 produces 4096 tokens per 512x512 image at 8x8 reduction. Compute the equivalent for 1024x1024 and 2048x2048. What happens to inference latency?</p>
+</li>
+<li><p>Read Emu3 Section 3.3 on the video tokenizer. Describe the 3D VQ patch shape and why it is 4x4x4 not 8x8x1.</p>
+</li>
+<li><p>Classifier-free guidance weight 5.0 vs 3.0: what visual effect? Trace the math in <code>code/main.py</code>.</p>
+</li>
+<li><p>Compute training FLOPs for Emu3-7B at 300B tokens and compare to Stable Diffusion 3. Which was more expensive to train?</p>
+</li>
+<li><p>Emu3 beats SDXL on FID but not on VQAv2 vs specialized VLMs. Explain why the unified-loss approach shows different strengths vs specialists on different benchmarks.</p>
+</li>
+</ol>
+<h2 id="key-terms"><a class="anchor" href="#key-terms">#</a> Key Terms</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>What people say</th>
+<th>What it actually means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Next-token prediction</td>
+<td>&quot;NTP&quot;</td>
+<td>Standard autoregressive loss: predict token[i+1] given token[0..i]; works for every modality when tokenized</td>
+</tr>
+<tr>
+<td>IBQ tokenizer</td>
+<td>&quot;Inverse bottleneck quantizer&quot;</td>
+<td>A class of VQ-VAE with larger codebooks (32768+) and better reconstruction than Chameleon&#39;s</td>
+</tr>
+<tr>
+<td>3D VQ</td>
+<td>&quot;Spatiotemporal quantizer&quot;</td>
+<td>Codebook indexed by (time, row, col); one token covers a 4x4x4 pixel cube</td>
+</tr>
+<tr>
+<td>Classifier-free guidance</td>
+<td>&quot;CFG&quot;</td>
+<td>Mix conditional and unconditional logits with weight gamma; boosts image quality at inference</td>
+</tr>
+<tr>
+<td>Unified vocabulary</td>
+<td>&quot;Shared tokens&quot;</td>
+<td>Text + image + video all draw from the same integer space; model predicts whichever modality comes next</td>
+</tr>
+<tr>
+<td>MJHQ-30K</td>
+<td>&quot;Image gen benchmark&quot;</td>
+<td>Midjourney-quality benchmark with 30k prompts; Emu3 reports FID here</td>
+</tr>
+</tbody></table>
+<h2 id="further-reading"><a class="anchor" href="#further-reading">#</a> Further Reading</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2409.18869">Wang et al. — Emu3: Next-Token Prediction is All You Need (arXiv:2409.18869)</a></li>
+<li><a href="https://arxiv.org/abs/2307.05222">Sun et al. — Emu: Generative Pretraining in Multimodality (arXiv:2307.05222)</a></li>
+<li><a href="https://arxiv.org/abs/2402.08268">Liu et al. — LWM (arXiv:2402.08268)</a></li>
+<li><a href="https://arxiv.org/abs/2310.05737">Yu et al. — MAGVIT-v2 (arXiv:2310.05737)</a></li>
+<li><a href="https://arxiv.org/abs/2404.02905">Tian et al. — VAR (arXiv:2404.02905)</a></li>
+</ul>
+
+
+    <nav class="paginate">
+      <a class="prev" href="./11-chameleon-early-fusion-tokens.html"><span>← Previous</span><b>chameleon early fusion tokens</b></a>
+      <a class="next" href="./13-transfusion-autoregressive-diffusion.html"><span>Next →</span><b>transfusion autoregressive diffusion</b></a>
+    </nav>
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true, theme: "base", fontFamily: "JetBrains Mono, monospace",
+    themeVariables: {
+      background: "#ebe4d5", primaryColor: "#f2ede4", primaryTextColor: "#1c1a17",
+      primaryBorderColor: "#2a4c72", secondaryColor: "#faf1de",
+      secondaryBorderColor: "#a97817", tertiaryColor: "#eaf1e9", tertiaryBorderColor: "#37613b",
+      lineColor: "#55503f", textColor: "#1c1a17", mainBkg: "#f2ede4",
+      nodeBorder: "#2a4c72", clusterBkg: "#ebe4d5", clusterBorder: "#c4baa1",
+      titleColor: "#1c1a17", edgeLabelBackground: "#ebe4d5", fontSize: "13px",
+    },
+    flowchart: { curve: "basis", htmlLabels: true, padding: 12 },
+  });
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
+<script>
+  hljs.highlightAll();
+  document.querySelectorAll(".cb-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.parentElement.querySelector("code")?.innerText || "";
+      try { await navigator.clipboard.writeText(code); btn.textContent = "copied"; }
+      catch { btn.textContent = "err"; }
+      setTimeout(() => (btn.textContent = "copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>
