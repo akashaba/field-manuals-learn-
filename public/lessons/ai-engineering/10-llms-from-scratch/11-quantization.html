@@ -842,63 +842,75 @@ if __name__ == &quot;__main__&quot;:
     print(&quot;=&quot; * 70)</code></pre>
       </div>
     <h2 id="use-it"><a class="anchor" href="#use-it">#</a> Use It</h2>
-<h3 id="quantizing-with-autogptq"><a class="anchor" href="#quantizing-with-autogptq">#</a> Quantizing with AutoGPTQ</h3>
+<h3 id="quantizing-with-gptqmodel"><a class="anchor" href="#quantizing-with-gptqmodel">#</a> Quantizing with GPTQModel</h3>
 
       <div class="codeblock" data-lang="python">
         <span class="cb-label">python</span>
         <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
-        <pre><code class="language-python hljs"># pip install auto-gptq transformers
-# from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-# from transformers import AutoTokenizer
+        <pre><code class="language-python hljs"># pip install gptqmodel
+# from gptqmodel import GPTQConfig, GPTQModel
 #
 # model_id = &quot;meta-llama/Llama-3.1-8B&quot;
-# quantize_config = BaseQuantizeConfig(
-#     bits=4,
-#     group_size=128,
-#     desc_act=False,
+# quant_config = GPTQConfig(bits=4, group_size=128)
+#
+# model = GPTQModel.load(model_id, quant_config)
+# model.quantize(calibration_texts[:128], batch_size=1)
+# model.save(&quot;llama-8b-gptq-int4&quot;)</code></pre>
+      </div>
+    <h3 id="quantizing-to-awq-with-llm-compressor"><a class="anchor" href="#quantizing-to-awq-with-llm-compressor">#</a> Quantizing to AWQ with LLM Compressor</h3>
+
+      <div class="codeblock" data-lang="python">
+        <span class="cb-label">python</span>
+        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
+        <pre><code class="language-python hljs"># pip install llmcompressor
+# from transformers import AutoModelForCausalLM, AutoTokenizer
+# from llmcompressor import oneshot
+# from llmcompressor.modifiers.quantization import QuantizationModifier
+# from llmcompressor.modifiers.transform.awq import AWQModifier
+#
+# model_id = &quot;meta-llama/Llama-3.1-8B&quot;
+# model = AutoModelForCausalLM.from_pretrained(model_id)
+# tokenizer = AutoTokenizer.from_pretrained(model_id)
+#
+# recipe = [
+#     AWQModifier(duo_scaling=&quot;both&quot;),
+#     QuantizationModifier(ignore=[&quot;lm_head&quot;], scheme=&quot;W4A16_ASYM&quot;, targets=[&quot;Linear&quot;]),
+# ]
+# oneshot(
+#     model=model,
+#     dataset=&quot;perfectblend&quot;,
+#     splits=&quot;train[:512]&quot;,
+#     recipe=recipe,
+#     max_seq_length=512,
+#     num_calibration_samples=256,
 # )
-#
-# tokenizer = AutoTokenizer.from_pretrained(model_id)
-# model = AutoGPTQForCausalLM.from_pretrained(model_id, quantize_config)
-#
-# calibration = [tokenizer(t, return_tensors=&quot;pt&quot;) for t in calibration_texts[:128]]
-# model.quantize(calibration)
-# model.save_quantized(&quot;llama-8b-gptq-int4&quot;)</code></pre>
+# model.save_pretrained(&quot;llama-8b-awq-int4&quot;, save_compressed=True)
+# tokenizer.save_pretrained(&quot;llama-8b-awq-int4&quot;)</code></pre>
       </div>
-    <h3 id="quantizing-with-autoawq"><a class="anchor" href="#quantizing-with-autoawq">#</a> Quantizing with AutoAWQ</h3>
-
-      <div class="codeblock" data-lang="python">
-        <span class="cb-label">python</span>
-        <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
-        <pre><code class="language-python hljs"># pip install autoawq
-# from awq import AutoAWQForCausalLM
-# from transformers import AutoTokenizer
-#
-# model_id = &quot;meta-llama/Llama-3.1-8B&quot;
-# model = AutoAWQForCausalLM.from_pretrained(model_id)
-# tokenizer = AutoTokenizer.from_pretrained(model_id)
-#
-# model.quantize(tokenizer, quant_config={&quot;zero_point&quot;: True, &quot;q_group_size&quot;: 128, &quot;w_bit&quot;: 4})
-# model.save_quantized(&quot;llama-8b-awq-int4&quot;)</code></pre>
-      </div>
-    <h3 id="converting-to-gguf"><a class="anchor" href="#converting-to-gguf">#</a> Converting to GGUF</h3>
+    <p>AutoGPTQ and AutoAWQ, the original tools for these two methods, are archived. GPTQModel and LLM Compressor are the maintained successors.</p>
+<h3 id="converting-to-gguf"><a class="anchor" href="#converting-to-gguf">#</a> Converting to GGUF</h3>
 
       <div class="codeblock" data-lang="bash">
         <span class="cb-label">bash</span>
         <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
-        <pre><code class="language-bash hljs"># pip install llama-cpp-python
-# python convert_hf_to_gguf.py meta-llama/Llama-3.1-8B --outtype q4_k_m --outfile llama-8b-q4km.gguf
-# llama-server -m llama-8b-q4km.gguf -c 4096 -ngl 99</code></pre>
+        <pre><code class="language-bash hljs"># git clone https://github.com/ggml-org/llama.cpp
+# cmake -S llama.cpp -B llama.cpp/build &amp;&amp; cmake --build llama.cpp/build --config Release
+# pip install -r llama.cpp/requirements.txt
+# hf download meta-llama/Llama-3.1-8B --local-dir Llama-3.1-8B
+# python llama.cpp/convert_hf_to_gguf.py Llama-3.1-8B --outtype f16 --outfile llama-8b-f16.gguf
+# llama.cpp/build/bin/llama-quantize llama-8b-f16.gguf llama-8b-q4km.gguf Q4_K_M
+# llama.cpp/build/bin/llama-server -m llama-8b-q4km.gguf -c 4096 -ngl 99</code></pre>
       </div>
-    <h3 id="serving-quantized-models"><a class="anchor" href="#serving-quantized-models">#</a> Serving quantized models</h3>
+    <p>The converter has no K-quant output (<code>--outtype</code> accepts <code>f32</code>, <code>f16</code>, <code>bf16</code>, <code>q8_0</code>, <code>tq1_0</code>, <code>tq2_0</code>, or <code>auto</code>), so <code>llama-quantize</code> produces the Q4_K_M file.</p>
+<h3 id="serving-quantized-models"><a class="anchor" href="#serving-quantized-models">#</a> Serving quantized models</h3>
 
       <div class="codeblock" data-lang="python">
         <span class="cb-label">python</span>
         <button class="cb-copy" type="button" aria-label="Copy code">copy</button>
         <pre><code class="language-python hljs"># pip install vllm
-# vllm serve model-awq --quantization awq --dtype half --max-model-len 8192</code></pre>
+# vllm serve llama-8b-awq-int4 --max-model-len 8192</code></pre>
       </div>
-    <p>vLLM natively supports AWQ and GPTQ models. It handles the dequantization during matrix multiplication and uses paged attention for the KV cache. For FP8 on H100, add <code>--dtype float8_e4m3fn</code>.</p>
+    <p>vLLM natively supports AWQ and GPTQ models and reads the quantization method from the checkpoint&#39;s config, so no <code>--quantization</code> flag is needed. It handles the dequantization during matrix multiplication and uses paged attention for the KV cache. For FP8 on H100, add <code>--quantization fp8_per_tensor</code> to quantize a 16-bit checkpoint&#39;s weights at load time.</p>
 <h2 id="ship-it"><a class="anchor" href="#ship-it">#</a> Ship It</h2>
 <p>This lesson produces <code>outputs/skill-quantization.md</code>, a decision framework for choosing the right quantization strategy. Given your model size, target hardware, and quality requirements, it tells you which format, method, and validation steps to use. It includes memory budget calculations, per-component precision recommendations, and deployment recipes for vLLM, llama.cpp, and TensorRT-LLM.</p>
 <h2 id="exercises"><a class="anchor" href="#exercises">#</a> Exercises</h2>

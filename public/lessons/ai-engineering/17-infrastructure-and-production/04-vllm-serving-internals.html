@@ -58,7 +58,7 @@
 <li>Explain PagedAttention as a KV cache allocator: blocks, block tables, and why fragmentation stays under 4% at production load.</li>
 <li>Diagram continuous batching at the iteration level: how finished sequences leave the batch and new ones join without draining.</li>
 <li>Describe chunked prefill in one sentence and name which latency metric it protects (hint: it is TTFT tail, not mean throughput).</li>
-<li>Name the 2026 vLLM v0.18.0 gotcha that bites teams enabling every optimization at once.</li>
+<li>Check a vLLM feature combination against the compatibility matrix for your version before enabling every optimization at once.</li>
 </ul>
 <h2 id="the-problem"><a class="anchor" href="#the-problem">#</a> The Problem</h2>
 <p>A naive PyTorch serve loop runs one request at a time: tokenize, prefill, decode until EOS, return. At one user this works. At one hundred, it is a queue of patient people. The obvious fix — static batching — pads every request to the longest prompt in the window, pads every decode to the longest expected output, and stalls the whole batch on the slowest sequence. You pay for padding you never use, and fast requests wait for slow ones.</p>
@@ -84,8 +84,8 @@
 <h3 id="the-three-defaults-interact"><a class="anchor" href="#the-three-defaults-interact">#</a> The three defaults interact</h3>
 <p>All three features assume each other. PagedAttention gives the scheduler a fine-grained KV resource to trade against. Continuous batching needs that fine-grained resource so admitting a new sequence does not force a global reshuffle. Chunked prefill is a decision the scheduler makes on the same <code>RUNNING</code> list — it is one more scheduler policy, not a separate system.</p>
 <p>You do not need to know every flag. You need to know what the scheduler optimizes: goodput under KV-block budget, subject to chunked prefill slicing.</p>
-<h3 id="the-2026-v0180-gotcha"><a class="anchor" href="#the-2026-v0180-gotcha">#</a> The 2026 v0.18.0 gotcha</h3>
-<p>In vLLM v0.18.0 you cannot combine <code>--enable-chunked-prefill</code> with draft-model speculative decoding (<code>--speculative-model</code>). The documented exception is N-gram GPU speculative decoding in the V1 scheduler. Teams that flip every flag on without reading the release notes get a run-time error at startup, not a soft regression. If your speculative gain was worth enabling chunked prefill for, revisit the choice — the right answer in 2026 is often EAGLE-3 without chunked prefill, not a draft model plus chunked prefill that does not compile.</p>
+<h3 id="check-the-compatibility-matrix"><a class="anchor" href="#check-the-compatibility-matrix">#</a> Check the compatibility matrix</h3>
+<p>Check every feature combination against the compatibility matrix for your exact vLLM version before enabling all of them at once, because what composes changes between releases. In v0.18.0 the feature matrix marks speculative decoding as compatible with chunked prefill and prefix caching, and the speculative-decoding page lists two known incompatibilities: pipeline parallelism through v0.15.0, and draft-model speculation through v0.10.0. For the draft method itself, the 2026 default is often EAGLE-3 (<code>&quot;method&quot;: &quot;eagle3&quot;</code>), covered in Phase 17 · 05.</p>
 <h3 id="numbers-you-should-remember"><a class="anchor" href="#numbers-you-should-remember">#</a> Numbers you should remember</h3>
 <ul>
 <li>Llama 3.3 70B FP8, H100 SXM5, 128 concurrent, all three on: 2,200-2,400 tok/s.</li>
@@ -191,7 +191,7 @@
 <tr>
 <td>V1 scheduler</td>
 <td>&quot;the new scheduler&quot;</td>
-<td>vLLM&#39;s 2026 scheduler; N-gram spec decode is the chunked-prefill-compatible path</td>
+<td>vLLM&#39;s 2026 scheduler; runs continuous batching with chunked prefill</td>
 </tr>
 <tr>
 <td><code>--gpu-memory-utilization</code></td>
